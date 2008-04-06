@@ -1,0 +1,159 @@
+
+
+
+*** src/search.c.orig	Tue Jul 18 08:44:08 2006
+--- src/search.c	Tue Jul 18 08:55:22 2006
+***************
+*** 1286,1294 ****
+--- 1286,1296 ----
+  		/* to the left, check for start of file */
+  		else
+  		{
++ #ifndef FEAT_MBYTE
+  		    if ((c = pos.col + spats[0].off.off) >= 0)
+  			pos.col = c;
+  		    else
++ #endif
+  			for (c = spats[0].off.off; c; ++c)
+  			    if (decl(&pos) == -1)
+  				break;
+*** src/syntax.c.orig	Tue Jul 18 07:51:49 2006
+--- src/syntax.c	Tue Jul 18 18:33:05 2006
+***************
+*** 2965,2998 ****
+      int		extra;		/* extra chars for offset to start */
+  {
+      int		col;
+!     int		len;
+  
+      if (spp->sp_off_flags & (1 << idx))
+      {
+  	result->lnum = regmatch->startpos[0].lnum;
+! 	col = regmatch->startpos[0].col + extra;
+      }
+      else
+      {
+  	result->lnum = regmatch->endpos[0].lnum;
+  	col = regmatch->endpos[0].col;
+      }
+!     col += spp->sp_offsets[idx];
+!     if (col < 0)
+! 	result->col = 0;
+!     else
+      {
+! 	/* Don't go past the end of the line.  Matters for "rs=e+2" when there
+! 	 * is a matchgroup. Watch out for match with last NL in the buffer. */
+! 	if (result->lnum > syn_buf->b_ml.ml_line_count)
+! 	    len = 0;
+! 	else
+! 	    len = (int)STRLEN(ml_get_buf(syn_buf, result->lnum, FALSE));
+! 	if (col > len)
+! 	    result->col = len;
+! 	else
+! 	    result->col = col;
+      }
+  }
+  
+  /*
+--- 2965,3003 ----
+      int		extra;		/* extra chars for offset to start */
+  {
+      int		col;
+!     int		off;
+!     char_u	*base;
+!     char_u	*p;
+  
+      if (spp->sp_off_flags & (1 << idx))
+      {
+  	result->lnum = regmatch->startpos[0].lnum;
+! 	col = regmatch->startpos[0].col;
+! 	off = spp->sp_offsets[idx] + extra;
+      }
+      else
+      {
+  	result->lnum = regmatch->endpos[0].lnum;
+  	col = regmatch->endpos[0].col;
++ 	off = spp->sp_offsets[idx];
+      }
+!     /* Don't go past the end of the line.  Matters for "rs=e+2" when there
+!      * is a matchgroup. Watch out for match with last NL in the buffer. */
+!     if (result->lnum > syn_buf->b_ml.ml_line_count)
+! 	col = 0;
+!     else if (off != 0)
+      {
+! 	base = ml_get_buf(syn_buf, result->lnum, FALSE);
+! 	p = base + col;
+! 	if (off > 0)
+! 	    while (off-- && *p != NUL)
+! 		mb_ptr_adv(p);
+! 	else if (off < 0)
+! 	    while (off++ && base < p)
+! 		mb_ptr_back(base, p);
+! 	col = (int)(p - base);
+      }
++     result->col = col;
+  }
+  
+  /*
+***************
+*** 3008,3029 ****
+      int		extra;	    /* extra chars for offset to end */
+  {
+      int		col;
+  
+      if (spp->sp_off_flags & (1 << (idx + SPO_COUNT)))
+      {
+  	result->lnum = regmatch->endpos[0].lnum;
+! 	col = regmatch->endpos[0].col + extra;
+      }
+      else
+      {
+  	result->lnum = regmatch->startpos[0].lnum;
+  	col = regmatch->startpos[0].col;
+      }
+!     col += spp->sp_offsets[idx];
+!     if (col < 0)
+! 	result->col = 0;
+!     else
+! 	result->col = col;
+  }
+  
+  /*
+--- 3013,3047 ----
+      int		extra;	    /* extra chars for offset to end */
+  {
+      int		col;
++     int		off;
++     char_u	*base;
++     char_u	*p;
+  
+      if (spp->sp_off_flags & (1 << (idx + SPO_COUNT)))
+      {
+  	result->lnum = regmatch->endpos[0].lnum;
+! 	col = regmatch->endpos[0].col;
+! 	off = spp->sp_offsets[idx] + extra;
+      }
+      else
+      {
+  	result->lnum = regmatch->startpos[0].lnum;
+  	col = regmatch->startpos[0].col;
++ 	off = spp->sp_offsets[idx];
+      }
+!     if (off != 0)
+!     {
+! 	base = ml_get_buf(syn_buf, result->lnum, FALSE);
+! 	p = base + col;
+! 	if (off > 0)
+! 	    while (off-- && *p != NUL)
+! 		mb_ptr_adv(p);
+! 	else if (off < 0)
+! 	    while (off++ && base < p)
+! 		mb_ptr_back(base, p);
+! 	col = (int)(p - base);
+!     }
+!     result->col = col;
+  }
+  
+  /*
+
+
