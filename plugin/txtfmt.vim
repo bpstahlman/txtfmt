@@ -8,7 +8,7 @@
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:TXTFMT_VERSION = "1.0a"
+let g:TXTFMT_VERSION = "1.0b"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()

@@ -1875,43 +1875,9 @@ fu! s:Set_mapwarn()
 	endif
 endfu
 " >>>
-" Function: s:Do_config() <<<
-" Purpose: Set script local variables, taking into account whether user has
-" overriden via txtfmt globals.
-fu! s:Do_config()
-	" set vim 'iskeyword' option <<<
-	" Exclude the special tokens from iskeyword option, so that word movement
-	" normal commands will work intuitively. (Recall that the delimiters will
-	" appear as space characters.)
-	" IMPORTANT NOTE: Ideally, we would be able to have the tokens treated
-	" just like whitespace, from the standpoint of word and WORD motions;
-	" unfortunately, we can't instruct Vim to do this - the best we can do is
-	" make them non-keyword, which means they'll be treated like punctation;
-	" i.e., word motions will stop on them and on the beginning of subsequent
-	" word.
-	" IMPORTANT TODO: Vim doesn't allow multi-byte characters to be excluded!
-	" Decide whether there's a workaround. For now, don't do this if we're
-	" dealing with tokens above 255.
-	if (b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1 <= 255) 
-		let val = '^'.b:txtfmt_cfg_starttok.'-'.
-					\(''.(b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1))
-		exe 'setlocal iskeyword+='.val
-		call s:Add_undo('setlocal iskeyword-='.val)
-	endif
-	" >>>
-	" Process txtfmtMapwarn option <<<
-	call s:Set_mapwarn()
-	" >>>
-	" txtfmtUsermaplimit: Max # of user maps that will be checked <<<
-	" Allow nonnegative dec, hex, or oct
-	" Cannot set from modeline
-	if exists('g:txtfmtUsermaplimit') && g:txtfmtUsermaplimit =~ '^\%(0[xX]\)\?[0-9]\+$'
-		let s:txtfmtUsermaplimit = g:txtfmtUsermaplimit
-	else
-		" Set to reasonable default
-		let s:txtfmtUsermaplimit = 25
-	endif
-	" >>>
+" Function: s:Define_user_map_defaults() <<<
+" Purpose: Set up some default user maps for testing...
+fu! s:Define_user_map_defaults()
 	" User map definition examples for test <<<
 
 	" Map CTRL-B in insert mode to start and terminate a 'bold' region,
@@ -1982,6 +1948,48 @@ fu! s:Do_config()
 	" specification of a count with an insert-token expansion macro.)
 	let g:txtfmtUsermap11 =
 	    \'nnoremap <LocalLeader>_ <<n4\s:fb.f->>'
+	" >>>
+endfu
+" >>>
+" Function: s:Do_config() <<<
+" Purpose: Set script local variables, taking into account whether user has
+" overriden via txtfmt globals.
+fu! s:Do_config()
+	" set vim 'iskeyword' option <<<
+	" Exclude the special tokens from iskeyword option, so that word movement
+	" normal commands will work intuitively. (Recall that the delimiters will
+	" appear as space characters.)
+	" IMPORTANT NOTE: Ideally, we would be able to have the tokens treated
+	" just like whitespace, from the standpoint of word and WORD motions;
+	" unfortunately, we can't instruct Vim to do this - the best we can do is
+	" make them non-keyword, which means they'll be treated like punctation;
+	" i.e., word motions will stop on them and on the beginning of subsequent
+	" word.
+	" IMPORTANT TODO: Vim doesn't allow multi-byte characters to be excluded!
+	" Decide whether there's a workaround. For now, don't do this if we're
+	" dealing with tokens above 255.
+	if (b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1 <= 255) 
+		let val = '^'.b:txtfmt_cfg_starttok.'-'.
+					\(''.(b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1))
+		exe 'setlocal iskeyword+='.val
+		call s:Add_undo('setlocal iskeyword-='.val)
+	endif
+	" >>>
+	" Process txtfmtMapwarn option <<<
+	call s:Set_mapwarn()
+	" >>>
+	" txtfmtUsermaplimit: Max # of user maps that will be checked <<<
+	" Allow nonnegative dec, hex, or oct
+	" Cannot set from modeline
+	if exists('g:txtfmtUsermaplimit') && g:txtfmtUsermaplimit =~ '^\%(0[xX]\)\?[0-9]\+$'
+		let s:txtfmtUsermaplimit = g:txtfmtUsermaplimit
+	else
+		" Set to reasonable default
+		let s:txtfmtUsermaplimit = 25
+	endif
+	" >>>
+	" TEST ONLY: Define some default user-maps for testing <<<
+	" call s:Define_user_map_defaults()
 	" >>>
 	" Process any user-defined maps <<<
 	call s:Do_user_maps()
