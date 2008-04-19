@@ -44,7 +44,10 @@ Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
      Creating token strings......................: |txtfmt-create-tok-str||
        Txtfmt_GetTokStr()........................: |txtfmt-GetTokStr()|
      Querying token type.........................: |txtfmt-query-tok-type|
-       Txtfmt_GetTokInfo().......................: |txtfmt-GetTokInfo()|
+       Format of token description string........: |txtfmt-tok-desc|
+       \ga.......................................: |txtfmt-get-tok-info|
+       :GetTokInfo...............................: |txtfmt-:GetTokInfo|
+       Txtfmt_GetTokInfo()....!!!DEPRECATED!!!...: |txtfmt-GetTokInfo()|
      Viewing token map...........................: |txtfmt-view-tok-map|
        :ShowTokenMap.............................: |txtfmt-:ShowTokenMap|
      Testing current settings....................: |txtfmt-test-cur-settings|
@@ -781,14 +784,14 @@ Example txtfmtColor{} elements: >
     '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
     
 The default values for the 8 colors are given below: >
-	txtfmtColor{0} = '^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000'
-	txtfmtColor{1} = '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
-	txtfmtColor{2} = '^g\\%[reen]$,c:DarkGreen,g:#00FF00'
-	txtfmtColor{3} = '^t\\%[urquoise]$,c:LightGreen,g:#00FFFF'
-	txtfmtColor{4} = '^r\\%[ed]$,c:DarkRed,g:#FF0000'
-	txtfmtColor{5} = '^v\\%[iolet]$,c:DarkMagenta,g:#FF00FF'
-	txtfmtColor{6} = '^y\\%[ellow]$,c:DarkYellow,g:#FFFF00'
-	txtfmtColor{7} = '^w\\%[hite]$,c:White,g:#FFFFFF'
+	txtfmtColor{1} = '^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000'
+	txtfmtColor{2} = '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
+	txtfmtColor{3} = '^g\\%[reen]$,c:DarkGreen,g:#00FF00'
+	txtfmtColor{4} = '^t\\%[urquoise]$,c:LightGreen,g:#00FFFF'
+	txtfmtColor{5} = '^r\\%[ed]$,c:DarkRed,g:#FF0000'
+	txtfmtColor{6} = '^v\\%[iolet]$,c:DarkMagenta,g:#FF00FF'
+	txtfmtColor{7} = '^y\\%[ellow]$,c:DarkYellow,g:#FFFF00'
+	txtfmtColor{8} = '^w\\%[hite]$,c:White,g:#FFFFFF'
 
 You may override none, some or all of the defaults. It is even permissible to
 override only part of an element; you could, for example, override the
@@ -1700,7 +1703,74 @@ Txtfmt_GetTokStr({fmt-clr-spec-list})		*txtfmt-GetTokStr()*
 	Note: May be called only from a txtfmt buffer.
 
 QUERYING TOKEN TYPE				*txtfmt-query-tok-type*
-Txtfmt_GetTokInfo([{line} {char}])		*txtfmt-GetTokInfo()*
+
+In most cases, the role played by a txtfmt token will be evident from the
+highlighting of the text that follows it. There are at least two scenarios,
+however, in which the role played by a particular format or color token may
+not be evident: 1) there is no text following the token; 2) adjacent format
+and color tokens make it difficult to tell which is which, since the
+formatting of the subsequent text does not depend upon the order of the
+tokens. Although you can always look up the character code (obtained from
+Vim's ga command) in the output of the :ShowTokenMap command, this section
+presents some more convenient methods of determining a token's type...
+
+						*txtfmt-tok-desc*
+A {token-descriptor} is returned or displayed by all of the mappings, commands
+and functions discussed in this section. A {token-descriptor} is simply a
+string providing information about a particular character or token in a txtfmt
+buffer. Its format depends upon how the character is used in the buffer. The
+possibilities are listed below...
+
+	    format token		A |txtfmt-fmt-spec| in fiducial form
+					(e.g. "fubi")
+	    color token			A string of the form "c{colornum}",
+					where {colornum} is a value between 1
+					and 8 representing the index of the
+					color in the color config array
+					txtfmtColor{}.
+					:help txtfmtColor{}
+	    non-txtfmt char		A character code value in decimal
+					format (e.g. 'a' => 97)
+	    invalid char position	"NUL" (just like Vim's ga command)
+
+<LocalLeader>ga    <Plug>TxtfmtGetTokInfo	*\ga* 	*txtfmt-get-tok-info*
+	This mapping echoes the {token-descriptor} (discussed above) of the
+	character under the cursor. Analogous to Vim's builtin ga command, it
+	provides the most convenient way to obtain information about the token
+	under the cursor. The primary difference between it and the builtin
+	version is that the txtfmt version is aware of the special role played
+	by txtfmt formatting tokens.
+	
+	Note: The <Plug> form of the mapping may be used for customization.
+	For details on customizing maps, refer to section |txtfmt-map-config|.
+
+						*txtfmt-:GetTokInfo*
+:GetTokInfo [ [ {line} ] [ {col} ] ]
+	This buffer-local command echoes the {token-descriptor} corresponding
+	to the character/token at the requested {line} and {col} in the
+	current buffer. If {line} and {col} are not supplied, the cursor
+	location is assumed; i.e., calling :GetTokInfo without args is
+	equivalent to executing the \ga mapping.
+	Note: If either {line} or {col} is specified, both must be specified.
+	Note: {col} is a 1-based byte index, such as would be returned by
+	Vim's col() function. Note that this index may differ from both the
+	virtual column index and the character index.
+
+Txtfmt_GetTokInfo([{line}, {char}])		*txtfmt-GetTokInfo()*
+	!!!!!!!!!!!!!!!!!!
+	<<< DEPRECATED >>>
+	!!!!!!!!!!!!!!!!!!
+
+	IMPORTANT NOTE: I have marked this function as deprecated because both
+	the mapping and command (discussed above) provide similar
+	functionality and are easier to use; however, on the off-chance that
+	someone created a mapping to this function in one of the initial
+	versions of txtfmt, I have not (yet) removed it. Note that the 2nd
+	argument to this function is a character index, which is fundamentally
+	different from the byte index provided to the :GetTokInfo command. As
+	a general rule, supplying byte indices, (which may be obtained with
+	Vim's col() function), is easier for the plugin user.
+
 	This function returns a string describing the token specified by
 	{line} and {char}. Note that both {line} and {char} are optional.
 	Either both or neither should be specified. If neither is specified,
@@ -1711,18 +1781,7 @@ Txtfmt_GetTokInfo([{line} {char}])		*txtfmt-GetTokInfo()*
 	differ from the values returned by virtcol() (screen column index) and
 	col() (byte index).
 	The format of the return string depends upon the type of token
-	being queried:
-
-	    format token		A |txtfmt-fmt-spec| in fiducial form
-					(e.g. "fubi")
-	    color token			A string of the form "c{colornum}",
-					where {colornum} is a value between 1
-					and 8 representing the index of the
-					color in the color config array
-					txtfmtColor{}.
-	    non-txtfmt char		A character code value in decimal
-					format (e.g. 180)
-	    invalid char position	Empty string
+	being queried, and is described above under |txtfmt-tok-desc|.
 
 
 VIEWING TOKEN MAP				*txtfmt-view-tok-map*

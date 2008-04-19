@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2008 Apr 06
+" Last Change: 2008 Apr 19
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:TXTFMT_VERSION = "1.0b"
+let g:TXTFMT_VERSION = "1.0c"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -954,7 +954,8 @@ fu! s:Process_color_options()
 		" Build the buffer-specific array used in syntax file...
 		" (Give preference to user overrides)
 		" Note: i-1 accounts for the fact that the arrays over which we are
-		" looping are 1-based.
+		" looping are 1-based, but the namepat, ctermfg, and guifg arrays to
+		" which we are about to assign are 0-based.
 		"echomsg 'np0: '.namepat0.' np1: '.namepat1
 		let b:txtfmt_clr_namepat{i-1} = namepat0 == '' ? namepat1 : namepat0
 		let b:txtfmt_clr_ctermfg{i-1} = ctermclr0 == '' ? ctermclr1 : ctermclr0
@@ -1785,9 +1786,8 @@ fu! s:MakeTestPage(...)
 	" Determine line on which to start the fmt/clr table
 	let iLine = line('.')
 	" Put the text into the buffer
-	" Note: iClr in the loop below corresponds not to color index (which is
-	" 0-based), but to color token offset (which is 1-based, with 0 offset
-	" representing default (no) color).
+	" Note: iClr in the loop below is a 1-based color index, with 0 reserved
+	" for the default (no) color token.
 	let iClr = 0
 	while iClr < b:txtfmt_num_colors
 		" Build the string for this line
@@ -1795,7 +1795,7 @@ fu! s:MakeTestPage(...)
 			let s = " no color    "
 		else
 			let s = nr2char(b:txtfmt_clr_first_tok + iClr)
-			let s = s.'Color '.(iClr-1)."     "
+			let s = s.'Color '.iClr."     "
 		endif
 		" Loop over format attributes
 		let iFmt = 0

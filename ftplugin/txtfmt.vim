@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2008 Apr 6
+" Last Change: 2008 Apr 17
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
@@ -1253,7 +1253,7 @@ fu! s:ShowTokenMap()
 		endwhile
 		" Loop over all color tokens
 		" Index note: In this loop, index 0 refers to 'no color', while index
-		" 1 refers to color 0 (rgb=000000).
+		" 1 refers to txtfmtColor{1} (default rgb=000000).
 		let iClr = -1
 		while iClr < b:txtfmt_num_colors
 			let line = ''	" Initialize text for current line
@@ -1467,6 +1467,96 @@ fu! s:MoveStartTok(moveto, ...)
 	:Refresh
 endfu
 endif	" if !exists('*s:MoveStartTok')
+" >>>
+" Function: s:GetTokInfo() <<<
+" Purpose: Return a string, which gives information about a token at a
+" specific line/col. If optional line/col pair is not supplied, cursor
+" location will be assumed.
+" Inputs:
+" [line]	Optional arg #1. Line number of char for which info is desired. If
+" 			present, 2nd optional arg (col) must also be supplied.
+" [col]		Optional arg #2. Column number of char for which info is desired.
+" 			Note: This number is actually a byte index, such as would be
+" 			returned by Vim's col() function.
+" Return: Variable format string as follows:
+" *** color token ***
+" c<clr_num>
+" Note: <clr_num> is 1 based.
+" *** format token ***
+" f<[u][b][i]>
+" i.e., the format descriptor in fiducial form
+" *** non-token ***
+" <ascii_char_code>
+" *** invalid char location ***
+" 'NUL' (just like Vim's ga builtin)
+" *** invalid inputs ***
+" <empty string> (and echoerr a warning)
+" Note: Will show warning to user if inputs were invalid in a syntactical
+" sense. (No error msg for nonexistent char position.)
+" Interface note: This function is meant to be used both from a mapping (which
+" assumes cursor position) and from a command (which permits user to specify
+" position).
+" IMPORTANT NOTE: This function is multibyte-safe.
+fu! s:GetTokInfo(...)
+	" The output of the if/else will be line/col of character of interest,
+	" assuming the inputs are valid.
+	if a:0 == 0
+		" Character of interest is at cursor position
+		let line = line('.')
+		let col = col('.')
+	elseif a:0 == 1
+		" Makes no sense to supply line but not column!
+		echoerr 'GetTokInfo(): Attempt to specify line without column'
+		return ''
+	elseif a:0 == 2
+		" Check for nonnegative line number
+		if a:1 =~ '^[1-9][0-9]*$'
+			let line = a:1
+		else
+			echoerr 'GetTokInfo(): '.a:1.' is not a valid line #'
+			return ''
+		endif
+		" Check for nonnegative col number
+		if a:2 =~ '^[1-9][0-9]*$'
+			let col = a:2
+		else
+			echoerr 'GetTokInfo(): '.a:2.' is not a valid col #'
+			return ''
+		endif
+	else
+		echoerr 'GetTokInfo(): Wrong # of args - should be 0 or 2'
+		return ''
+	endif
+	" If here, inputs are syntactically valid and line/col represents the
+	" position of character about which information is desired. Obtain a
+	" string whose first character is the character of interest.
+	" Note: char2nr considers only first character in a string, so we don't
+	" need to strip subsequent characters.
+	let ch = strpart(getline(line), col - 1)
+	" Note: If input position was invalid, ch will contain empty string.
+	if ch == ''
+		" Char pos doesn't exist - not an error
+		return 'NUL'
+	endif
+	" If here, we have a character! Get its character code.
+	let char_nr = char2nr(ch)
+	" Determine the range within which token lies
+	if char_nr >= b:txtfmt_fmt_first_tok && char_nr <= b:txtfmt_fmt_last_tok
+		" fmt token
+		return 'f'.b:ubisrc_fmt{char_nr - b:txtfmt_fmt_first_tok}
+	elseif char_nr >= b:txtfmt_clr_first_tok && char_nr <= b:txtfmt_clr_last_tok
+		" clr token
+		" offset 0 = 'no color', represented by 'c-'
+		" offset i = txtfmtColor{i}
+		" Note: User-visible array is 1-based, though internal array is
+		" 0-based.
+		let offset = char_nr - b:txtfmt_clr_first_tok
+		return 'c'.(offset == 0 ? '-' : ''.offset.'')
+	else
+		" Not a txtfmt token - just return ascii value
+		return ''.char_nr.''
+	endif
+endfu
 " >>>
 " >>>
 " Configuration <<<
@@ -2121,6 +2211,7 @@ endfu
 " Public-interface commands <<<
 com! -buffer ShowTokenMap call <SID>ShowTokenMap()
 com! -buffer -nargs=? MoveStartTok call <SID>MoveStartTok(<f-args>)
+com! -buffer -nargs=* GetTokInfo echo <SID>GetTokInfo(<f-args>)
 " >>>
 " MAPS: LEVEL 1 & 2 (reconfig): normal/insert mode --> <Plug>... mappings <<<
 " Note: <C-R> used (rather than <C-O>) to prevent side-effect when insert-mode
@@ -2316,6 +2407,10 @@ call s:Def_map('n', '<LocalLeader>vs', '<Plug>TxtfmtInsertTok_vs',
 call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\"<C-R>=<SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
+" >>>
+" normal mode get token info mapping <<<
+call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
+			\":<C-U>echo <SID>GetTokInfo()<CR>")
 " >>>
 " NOTES <<<
 " -enterinsert default is 'i'
