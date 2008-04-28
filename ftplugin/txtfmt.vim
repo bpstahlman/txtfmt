@@ -1131,7 +1131,7 @@ fu! s:Def_map(mode, lhs1, lhs2, rhs2)
 	" Assumption: Second-level mappings have long <Scriptname><...> names,
 	" preceded by <Plug>. It is safe to assume user hasn't mapped one to
 	" something else...
-	exe cmd2.' <buffer> '.a:lhs2.' '.a:rhs2
+	exe cmd2.' <silent> <buffer> '.a:lhs2.' '.a:rhs2
 	" Create undo action for the map just created
 	call s:Undef_map(a:lhs2, a:rhs2, a:mode)
 	" >>>
