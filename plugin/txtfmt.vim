@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2008 Apr 19
+" Last Change: 2008 May 10
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:TXTFMT_VERSION = "1.0d"
+let g:TXTFMT_VERSION = "1.0e"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -88,7 +88,6 @@ com! -buffer Refresh call s:Txtfmt_refresh()
 " Note: This autocmd allows user simply to do ":e" at the Vim command line to
 " resource everything, including the option processing in common config.
 augroup TxtfmtCommonConfig
-	au!
 	au BufReadPre <buffer> :unlet! b:txtfmt_did_common_config
 augroup END
 " >>>
@@ -865,101 +864,100 @@ fu! s:Translate_color_optstr(optstr)
 endfu
 " >>>
 " Function: s:Process_color_options() <<<
-" Purpose: Process the special global array txtfmtColor{1..8} (if it exists).
-" This is the array used by user to override the default colors. The override
-" is done separately for cterm and gui (and may even take into account the
-" value of &term). Note that for each possible element in the array, there is
-" a default element (in s:txtfmt_clr{1..8}), which will be used if user has
-" not overriden the global version.
+" Purpose: Process the special color definition arrays:
+" b:txtfmtColor{1..8}
+" g:txtfmtColor{1..8}
+" s:txtfmt_clr{1..8}
+" Note that the b: and g: versions may be used to override the defaults. Cterm
+" and gui may be overridden separately, and color definition strings may even
+" take into account the value of &term. Note that for each possible element in
+" the array, there is a default element (in s:txtfmt_clr{1..8}), which will be
+" used if user has not overriden.
 " Return: indirect only
 " Builds the following buffer-scope arrays: (indexed by color)
-" b:txtfmt_clr_namepat{}, b:txtfmt_clr_ctermfg{}, b:txtfmt_clr_guifg{}
+" b:txtfmt_clr_namepat{}, b:txtfmt_clr{}
 " Details: The format of the color array is as follows:
 " The array has 8 elements (1..8), each of which represents a color region
 " begun with one of the 8 successive color tokens in the token range. Each
 " element is a string whose format is described in header of
 " s:Translate_color_optstr()
-" Rules: Precedence is given to color definitions made by user in global
-" version of g:txtfmtColor{}. For each color in the array, here's how it
-" works:
-" We attempt to get a valid rhs for both guifg and ctermfg, regardless of
-" which will actually be used. Priority is given to any specifications made in
-" the global txtfmtColor{} array. If an element for current color does not
-" exist in the global array, or either ctermfg and/or guifg is not set after
-" processing an existing element, we turn to the static (default) element for
-" the current color and attempt to fill in what is missing by processing it.
+" Rules: For each color index in range i = 1..8, check up to 3 color
+" definition elements in the following order:
+" b:txtfmtColor{i}
+" g:txtfmtColor{i}
+" s:txtfmt_clr{i}
+" Set b:txtfmt_clr{} and move to next color index as soon as a suitable
+" definition is found. Suitability is determined by checking
+" has('gui_running') against the 'g:' or 'c:' in the color definition string,
+" and if necessary, by matching the current value of 'term' against a 'term'
+" pattern in the color definition string.
+" Note: This function was rewritten on 10May2008. A corresponding partial
+" rewrite of s:Translate_color_optstr is probably in order, but is not
+" necessary, so I've left the latter function completely intact for now. (We
+" don't really need both ctermfg and guifg values any more, but
+" s:Translate_color_optstr still returns both...)
 fu! s:Process_color_options()
 	let i = 1
 	" Loop over all colors (1st non-default color at index 1)
 	while i < b:txtfmt_num_colors
 		" Init strings to value signifying not specified or error
-		let namepat0 = '' | let ctermclr0 = '' | let guiclr0 = ''
-		let namepat1 = '' | let ctermclr1 = '' | let guiclr1 = ''
-		if exists('g:txtfmtColor'.i)
-			" User overrode this one - Attempt to translate. (Validation is
-			" performed by translate routine.)
-			"echomsg "Overriding ".i."..."
-			"echomsg "Value: ".g:txtfmtColor{i}
-			let s = s:Translate_color_optstr(g:txtfmtColor{i})
-			if s != ''
-			"echomsg "No error ".i."..."
-				" Extract fields from the escaped return string (which is
-				" internally generated, and hence, does not require
-				" validation)
-				" TODO - Perhaps standardize this in one spot (function or
-				" static return variables)
-				let re_fld = '\%(\%(\\.\|[^,]\)*\)'
-				let re_sfld = '\(\%(\\.\|[^,]\)*\)'
-				let namepat0 = substitute(s, re_sfld.'.*', '\1', '')
-				let ctermclr0 = substitute(s, re_fld.','.re_sfld.'.*', '\1', '')
-				let guiclr0 = substitute(s, re_fld.','.re_fld.','.re_sfld, '\1', '')
-				" Remove extra level of backslashes
-				let namepat0 = substitute(namepat0, '\\\(.\)', '\1', 'g')
-				let ctermclr0 = substitute(ctermclr0, '\\\(.\)', '\1', 'g')
-				let guiclr0 = substitute(guiclr0, '\\\(.\)', '\1', 'g')
-			else
-				" Problem with user-specified color definition - warn and use
-				" default.
-				echomsg "Error in user-specified color def txtfmtColors".i.": "
-					\.s:err_str.". Using default..."
+		let namepat = '' | let clr_rhs = ''
+		" Loop over b:, g:, s:
+		let array{0} = 'b:txtfmtColor'
+		let array{1} = 'g:txtfmtColor'
+		let array{2} = 's:txtfmt_clr'
+		let j = 0
+		while j < 3
+			" Skip nonexistent color definitions
+			if exists(array{j}.'{'.i.'}')
+				exe 'let l:el = '.array{j}.'{'.i.'}'
+				" If here, color definition exists. Let's see whether it contains
+				" a match...
+				let s = s:Translate_color_optstr(el)
+				if s != ''
+					" Extract fields from the escaped return string (which is
+					" internally generated, and hence, does not require
+					" validation)
+					" TODO - Perhaps standardize this in one spot (function or
+					" static return variables)
+					let re_fld = '\%(\%(\\.\|[^,]\)*\)'
+					let re_sfld = '\(\%(\\.\|[^,]\)*\)'
+					let namepat = substitute(s, re_sfld.'.*', '\1', '')
+					if has('gui_running')
+						let clr_rhs = substitute(s, re_fld.','.re_fld.','.re_sfld, '\1', '')
+					else
+						let clr_rhs = substitute(s, re_fld.','.re_sfld.'.*', '\1', '')
+					endif
+					" Note: clr_rhs may be null at this point; if so, there
+					" was no applicable color definition, though the color def
+					" element was valid
+					if strlen(clr_rhs)
+						" Remove extra level of backslashes
+						let namepat = substitute(namepat, '\\\(.\)', '\1', 'g')
+						let clr_rhs = substitute(clr_rhs, '\\\(.\)', '\1', 'g')
+					endif
+				elseif array{j}[0] == 'b' || array{j}[0] == 'g'
+					echomsg "Ignoring invalid user-specified color def ".array{j}.i." due to error: "
+						\.s:err_str
+				else
+					" Shouldn't get here! Problem with defaults...
+					echomsg "Internal error within Process_color_options - bad default for txtfmtColors"
+						\.i." - contact developer."
+				endif
+				" Are we done yet?
+				if strlen(clr_rhs)
+					break
+				endif
 			endif
-		endif
-		" If global override didn't exist OR had errors, or didn't specify
-		" both cterm and gui...
-		if ctermclr0 == '' || guiclr0 == ''
-			" Need to get at least one from the default
-			let s = s:Translate_color_optstr(s:txtfmt_clr{i})
-			if s != ''
-				" Extract fields from the escaped return string (which is
-				" internally generated, and hence, does not require
-				" validation)
-				" TODO - Perhaps standardize this in one spot (function or
-				" static return variables)
-				let re_fld = '\%(\%(\\.\|[^,]\)*\)'
-				let re_sfld = '\(\%(\\.\|[^,]\)*\)'
-				let namepat1 = substitute(s, re_sfld.'.*', '\1', '')
-				let ctermclr1 = substitute(s, re_fld.','.re_sfld.'.*', '\1', '')
-				let guiclr1 = substitute(s, re_fld.','.re_fld.','.re_sfld, '\1', '')
-				" Remove extra level of backslashes
-				let namepat1 = substitute(namepat1, '\\\(.\)', '\1', 'g')
-				let ctermclr1 = substitute(ctermclr1, '\\\(.\)', '\1', 'g')
-				let guiclr1 = substitute(guiclr1, '\\\(.\)', '\1', 'g')
-			else
-				let namepat1 = '' | let ctermclr1 = '' | let guiclr1 = ''
-				" Shouldn't get here! Problem with defaults...
-				echomsg "Internal error within Process_color_options - bad default for txtfmtColors"
-					\.i." - contact developer."
-			endif
-		endif
+			let j = j + 1
+		endwhile
+		" Assumption: Lack of color rhs at this point implies internal error.
 		" Build the buffer-specific array used in syntax file...
-		" (Give preference to user overrides)
 		" Note: i-1 accounts for the fact that the arrays over which we are
-		" looping are 1-based, but the namepat, ctermfg, and guifg arrays to
-		" which we are about to assign are 0-based.
-		"echomsg 'np0: '.namepat0.' np1: '.namepat1
-		let b:txtfmt_clr_namepat{i-1} = namepat0 == '' ? namepat1 : namepat0
-		let b:txtfmt_clr_ctermfg{i-1} = ctermclr0 == '' ? ctermclr1 : ctermclr0
-		let b:txtfmt_clr_guifg{i-1} = guiclr0 == '' ? guiclr1 : guiclr0
+		" looping are 1-based, but the namepat and fg arrays to which we are
+		" about to assign are 0-based.
+		let b:txtfmt_clr_namepat{i-1} = namepat
+		let b:txtfmt_clr{i-1} = clr_rhs
 		" Advance to next color
 		let i = i + 1
 	endwhile

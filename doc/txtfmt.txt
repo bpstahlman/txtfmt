@@ -25,6 +25,7 @@ Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
        Option list...............................: |txtfmt-opt-list|
      Choosing a token range......................: |txtfmt-choosing-token-range|
      Colors......................................: |txtfmt-color-config|
+       Colorscheme considerations................: |txtfmt-colorschemes|
      Customizing the default maps................: |txtfmt-map-config|
        Handling conflicts and ambiguities........: |txtfmt-map-conflict|
   6. User interface..............................: |txtfmt-user-interface|
@@ -261,7 +262,7 @@ approach such as this: >
 	au  BufRead,BufNewFile *.c    runtime ftplugin/txtfmt.vim
     augroup END
 
-Of course, it's probably easier just to apply the patch;)
+Of course, it's probably easier just to apply the patch;-)
 
 Loading						*txtfmt-loading*
 
@@ -737,20 +738,23 @@ By default, txtfmt picks these colors according to RGB values: #000000
 be desirable for all systems; hence, txtfmt provides a rather flexible
 mechanism by which the user can configure the colors used for his system. In
 fact, the user can configure different sets of colors for different terminals
-or GUI's. This configuration is accomplished via the global old-style Vim
-array g:txtfmtColor{1..8}. This array has a static counterpart, initialized
-to default values by txtfmt, so the user can override only the elements he
-wishes to change.
+or GUI's. This configuration is accomplished via the old-style Vim array
+txtfmtColor{1..8}, which may be set either buf-locally or globally. If a given
+element has both a buf-local and a global setting, the buf-local setting is
+given priority. This array has a static counterpart, initialized to default
+values by txtfmt, so the user can override only the elements he wishes to
+change.
 
-Each element of the "array" corresponds to 1 of the 8 possible colors. Its
-value is a string consisting of at least 2 comma-separated parts. The first
-part is a Vim regular expression that determines how the color may be
-specified in a "color spec". (See |txtfmt-clr-spec| for more information.)
-Each of the subsequent parts contains a prefix indicating the cterm or gui to
-which the definition applies, and the actual color string to be used as the
-rhs of a "ctermfg=" or "guifg=" in a :highlight command.
+Each element of the txtfmtColor{} array corresponds to 1 of the 8 possible
+colors. Its value is a string consisting of at least 2 comma-separated parts.
+The first part is a Vim regular expression that determines how the color may
+be specified in a "color spec". (See |txtfmt-clr-spec| for more information.)
+Each of the subsequent parts contains a prefix indicating whether the
+definition applies to cterm's or gui's, an optional list of patterns
+specifying the applicable values of 'term', and the actual color string to be
+used as the rhs of a "ctermfg=" or "guifg=" in a :highlight command.
 
-Here is the definition of a single string in the txtfmtColor{} array:
+Here is the formal definition of a single string in the txtfmtColor{} array:
 {namepat},{clrdef1}[,{clrdef2},...,{clrdefN}]
 
     {clrdef} :=
@@ -780,7 +784,7 @@ appearing within those fields should be preceded with a single backslash. (See
 examples below...)
 
 Example txtfmtColor{} elements: >
-    'red,c:xterm:dosterm:DarkRed,g:builtin_gui:other_gui:#FF0000'
+    'red,c:xterm:dosterm:DarkRed,g:#FF0000,g:builtin_gui:other_gui:#FF1010'
     '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
     
 The default values for the 8 colors are given below: >
@@ -796,7 +800,120 @@ The default values for the 8 colors are given below: >
 You may override none, some or all of the defaults. It is even permissible to
 override only part of an element; you could, for example, override the
 definition of "red" for a "dosterm" color terminal, but use the default red
-definition for other cterm's and GUI's.
+definition for other cterm's and gui's.
+
+Colorscheme considerations			*txtfmt-colorschemes*
+
+Although the simplest way to override the default colors is to set the global
+version of txtfmtColor{} once and for all in your vimrc, there may be times
+when this simple solution is inadequate. Consider the following scenario...
+You use txtfmt to create some blue text in a buffer with a light background.
+You then decide you wish to view the txtfmt buffer with the "blue"
+colorscheme. The blue text you created is no longer visible! Of course, you
+can make it visible again by redefining the "blue" element in the global
+txtfmtColor{} array and re-editing or :Refresh'ing the txtfmt buffer, but
+changing g:txtfmtColor{} everytime you change colorschemes could become
+tedious. A better solution is to use autocommands to change the color
+definitions automatically whenever the colorscheme changes. Although you could
+set the global version of txtfmtColor{} in the autocommand, setting the
+buf-local version instead lets you reserve the global version for defaults
+that will be used with filetypes for which an autocommand has not been
+defined.
+
+For the sake of example, let us assume that you use txtfmt to edit *.txt
+files, and that you wish to vary the color definitions according to current
+colorscheme for all such files. To keep the example simple, I will consider
+only the following 3 cases:
+
+	1) "default" colorscheme
+		txtfmt defaults are acceptable
+	2) "blue" and "darkblue" colorscheme
+		Change black to orange
+		Change blue to brown
+	3) all other colorschemes
+		Change black to orange
+		Leave blue at the txtfmt default
+
+The following sample implementation shows one possible strategy for
+configuring the txtfmt colors as described above...
+>
+	" INSIDE YOUR USER FILETYPE.VIM
+	augroup filetypedetect
+		au! ColorScheme        *.txt    call Define_colors(1)
+		au! BufRead,BufNewFile *.txt    call Define_colors(0)
+		au  BufRead,BufNewFile *.txt    setfiletype txtfmt
+	augroup END
+<
+-------------------------------
+Explanation of the autocommands
+-------------------------------
+All assignments to the buf-local txtfmtColor{} array occur within the
+Define_colors function (shown below). A call to Define_colors has been placed
+in a BufRead,BufNewFile autocommand to ensure that colors can be set
+appropriately even when :colorscheme has never been called. The call from
+within the ColorScheme autocommand ensures that the colors are recomputed
+whenever the colorscheme is changed. >
+Note: It is not necessary that the ColorScheme autocommand be placed within
+the filetypedetect group.
+>
+	" IN A FILE SOURCED AT STARTUP (E.G., VIMRC)
+	" Configure colors in response to colorscheme change or txtfmt buffer load
+	" Note: 'refresh' input will be true if and only if the function is
+	" called in response to colorscheme change
+	fu! Define_colors(refresh)
+		if !exists('g:colors_name') || g:colors_name == 'default'
+			" Use defaults
+			let b:txtfmtColor{1} = '^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000'
+			let b:txtfmtColor{2} = '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
+		elseif g:colors_name == 'blue' || g:colors_name == 'darkblue'
+			" Replace black with orange
+			let b:txtfmtColor{1} = '^o\\%[range]$,c:Yellow,g:#FF8040'
+			" Replace blue with brown
+			let b:txtfmtColor{2} = '^b\\%[rown]$,c:Brown,g:#804000'
+		else
+			" Replace black with orange, but leave blue at txtfmt
+			" default
+			let b:txtfmtColor{1} = '^o\\%[range]$,c:Yellow,g:#FF8040'
+			let b:txtfmtColor{2} = '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
+		endif
+		" We shouldn't get here if this isn't a txtfmt buffer, but check to be
+		" safe since :Refresh is defined only for txtfmt buffers
+		if a:refresh && b:current_syntax =~ '\<txtfmt\>'
+			" Important: We must reload the txtfmt plugin because
+			" :colorscheme clears the old highlight groups
+			:Refresh
+		endif
+	endfu
+
+------------------------------
+Explanation of Define_colors()
+------------------------------
+In the example, I use g:colors_name (which, if it exists, holds the name of
+the currently active colorscheme) to decide which elements of the buf-local
+txtfmtColor{} array need to be overridden, and what color values should be
+used. It would also be possible to take 'background' into account, but be
+aware that not all colorschemes set this option. You can make the color
+configuration logic as simple or as complex as you like.
+Note: Because txtfmt processes each element of the txtfmtColor{} array as a
+separate entity, it is necessary to set only the elements you wish to change
+from the txtfmt defaults. Of course, if one of the if/else blocks sets a
+particular element, the others should set it as well, even if they do not need
+to override the default. Alternatively, a block that wishes to use the default
+could simply unlet! the corresponding element to ensure that the txtfmt
+default is used.
+
+It is important to note that simply changing the buf-local version of
+txtfmtColor{} has no effect on an existing txtfmt buffer; the txtfmt plugin
+must be reloaded (i.e., "refreshed") before the color changes can take effect.
+When Define_colors() is called in response to a BufRead or BufNewFile event,
+the required reload happens automatically because of the subsequent
+"setfiletype txtfmt". In the case of the ColorScheme event, however, there is
+no such automatic reload. To ensure that the user will not need to do anything
+special to see the results of changing the colorscheme, I have added the
+conditional :Refresh to Define_colors(). The test of the boolean "refresh"
+argument ensures that the :Refresh command will be invoked only when the
+colorscheme is changing and we are within a txtfmt buffer.
+	:help txtfmt-:Refresh
 
 CUSTOMIZING MAPPINGS				*txtfmt-map-config*
 
@@ -1674,16 +1791,24 @@ Example: >
 
 STEP #3
 =======
-Ensure that each special-purpose map function is called from a BufReadPre
-autocommand specific to the filetype that will need the user-maps it defines.
-Note: The BufReadPre event is used (rather than BufRead) to ensure that the
-changes to txtfmtUsermap{} occur before txtfmt is loaded.
+Ensure that each special-purpose map function is called from an autocommand
+specific to the filetype that will need the user-maps it defines.
+
+Note: It is necessary to define these autocommands prior to the ones that set
+filetype to txtfmt, so that the changes to txtfmtUsermap{} occur before txtfmt
+is loaded. An easy way to ensure the proper sequence is to place the
+autocommands that call the map definition functions within the same
+autocommand group as the setfiletype autocommand (see example below).
 
 Example: >
 	" Inside $VIM/vimfiles/filetype.vim
 	augroup filetypedetect
-	    au! BufReadPre *.abc    call Define_txtfmt_abc_usermaps()
-	    au! BufReadPre *.xyz    call Define_txtfmt_xyz_usermaps()
+	    au! BufRead,BufNewFile *.abc    call Define_txtfmt_abc_usermaps()
+	    au! BufRead,BufNewFile *.xyz    call Define_txtfmt_xyz_usermaps()
+	    .
+	    .
+	    " Set up detection for txtfmt files
+	    au! BufRead,BufNewFile *.txt    setfiletype txtfmt
 	augroup END
 
 It should be noted that the strategy outlined above is simply one of many
@@ -1800,10 +1925,10 @@ VIEWING TOKEN MAP				*txtfmt-view-tok-map*
 	.
 	.
 	=== COLORS ===
-	char-nr  description		clr-pattern	     ctermfg   guifg
-	180	 no color		-		     N.A.      N.A.
-	181	 Color1			^\%(k\|bla\%[ck]\)$  Black     #000000
-	182	 Color2			^^b\%[lue]$	     DarkBlue  #0000FF
+	char-nr  description		clr-pattern	     clr-def
+	180	 no color		-		     N.A.
+	181	 Color1			^\%(k\|bla\%[ck]\)$  #000000
+	182	 Color2			^^b\%[lue]$	     #0000FF
 	.
 	.
 
@@ -1818,12 +1943,12 @@ VIEWING TOKEN MAP				*txtfmt-view-tok-map*
 	-The clr-pattern column represents the Vim regular expression that is
 	used to recognize a color name in a |txtfmt-clr-spec|.
 
-	-The final two columns under the "COLORS" section represent the actual
-	color definitions supplied to Vim for both color terminals (ctermfg)
-	and GUI's (guifg).
-	Note: The values may be either literal RGB values (e.g. #0000FF for
-	blue), or symbolic color names (e.g. DarkBlue).
-	Note: All of the values in the final 3 columns of the "COLORS" section
+	-The clr-def column under the "COLORS" section represents the actual
+	color definitions supplied to Vim; i.e., the rhs of either a "hi
+	guifg={clr-def}" or "hi ctermfg={clr-def}". For gui's, the {clr-def}
+	is either a symbolic color name (e.g., DarkBlue) or a literal RGB
+	value. For cterm's, it could be a color number or symbolic color name.
+	Note: All of the values in the final 2 columns of the "COLORS" section
 	may be overridden by the user. For details, see |txtfmt-color-config|.
 
 TESTING CURRENT SETTINGS			*txtfmt-test-cur-settings*

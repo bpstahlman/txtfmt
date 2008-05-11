@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2008 Apr 06
+" Last Change: 2008 May 10
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -115,6 +115,14 @@ fu! s:Define_syntax()
 	exe 'syn match Tf_def_tok /'.b:txtfmt_re_any_etok_atom.'/ contained'
 	hi link Tf_def_tok Tf_conceal
 	" >>>
+	" Choose cterm or gui versions of color and format assignments
+	if has('gui_running')
+		let clr_eq = ' guifg='
+		let fmt_eq = ' gui='
+	else
+		let clr_eq = ' ctermfg='
+		let fmt_eq = ' cterm='
+	endif
 	" Loop over the clr only regions <<<
 	let i = 1
 	let ch = nr2char(b:txtfmt_clr_first_tok + 1)
@@ -151,7 +159,7 @@ fu! s:Define_syntax()
 			\.contains_clr_def
 			\.' contained'
 		" Define highlighting for current format region
-		exe 'hi Tf_clr_'.i.' ctermfg='.b:txtfmt_clr_ctermfg{i-1}.' guifg='.b:txtfmt_clr_guifg{i-1}
+		exe 'hi Tf_clr_'.i.clr_eq.b:txtfmt_clr{i-1}
 		" >>>
 		" Update for next iteration
 		let i = i + 1
@@ -191,7 +199,7 @@ fu! s:Define_syntax()
 			\.contains_fmt_def
 			\.' contained'
 		" Define highlighting for current format region
-		exe 'hi Tf_fmt_'.i.' cterm='.b:txtfmt_fmt{i}.' gui='.b:txtfmt_fmt{i}
+		exe 'hi Tf_fmt_'.i.fmt_eq.b:txtfmt_fmt{i}
 		" >>>
 		" Update for next iteration
 		let i = i + 1
@@ -217,8 +225,8 @@ fu! s:Define_syntax()
 				\.contains_any_def
 				\.' contained'
 			" Define the highlighting for this clr-fmt region
-			exe 'hi Tf_clrfmt_'.i.'_'.j.' cterm='.b:txtfmt_fmt{j}.' gui='.b:txtfmt_fmt{j}
-				\.' ctermfg='.b:txtfmt_clr_ctermfg{i-1}.' guifg='.b:txtfmt_clr_guifg{i-1}
+			exe 'hi Tf_clrfmt_'.i.'_'.j.fmt_eq.b:txtfmt_fmt{j}
+				\.clr_eq.b:txtfmt_clr{i-1}
 			" Update for next iteration
 			let j = j + 1
 			let ch = nr2char(b:txtfmt_fmt_first_tok + j)
@@ -248,8 +256,8 @@ fu! s:Define_syntax()
 				\.contains_any_def
 				\.' contained'
 			" Define the highlighting for this fmt-clr region
-			exe 'hi Tf_fmtclr_'.i.'_'.j.' cterm='.b:txtfmt_fmt{i}.' gui='.b:txtfmt_fmt{i}
-				\.' ctermfg='.b:txtfmt_clr_ctermfg{j-1}.' guifg='.b:txtfmt_clr_guifg{j-1}
+			exe 'hi Tf_fmtclr_'.i.'_'.j.fmt_eq.b:txtfmt_fmt{i}
+				\.clr_eq.b:txtfmt_clr{j-1}
 			" Update for next iteration
 			let j = j + 1
 			let ch = nr2char(b:txtfmt_clr_first_tok + j)

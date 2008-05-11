@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2008 Apr 17
+" Last Change: 2008 May 10
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
@@ -326,7 +326,7 @@ fu! s:Insert_tokstr(tokstr, cmd, literal, end_in_norm, ...)
 	endif
 	" Validate current mode
 	let modestr = mode()
-	if modestr !~ '^[ni]$'
+	if modestr !~ '^[niR]$'
 		echoerr "Insert_tokstr(): May be called only from 'normal' and 'insert' modes."
 		return ''
 	endif
@@ -1163,11 +1163,11 @@ endfu
 " purposes only, and highlighting of the text is not required.
 " Format: Should be something like this...
 "=== COLORS ===
-"char-nr  description  clr-pattern                                  cterm      gui
+"char-nr  description  clr-pattern                                  clr-def
 "180      no color     -
-"181      color0        ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000   Black      #000000
-"182      color1        ^blu\\%[e]$,c:DarkBlue,g:#0000FF            DarkBlue   #0000FF
-"183      color2        ^g\\%[reen]$,c:DarkGreen,g:#00FF00          DarkGreen  #00FF00
+"181      color0        ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000   #000000
+"182      color1        ^blu\\%[e]$,c:DarkBlue,g:#0000FF            #0000FF
+"183      color2        ^g\\%[reen]$,c:DarkGreen,g:#00FF00          #00FF00
 "=== FORMAT ===
 "char-nr  description  spec
 "189      no format    -
@@ -1180,7 +1180,7 @@ endfu
 ".
 fu! s:ShowTokenMap()
 	" Loop 2 times - first time is just to calculate column widths
-	let cw1 = 0 | let cw2 = 0 | let cw3 = 0 | let cw4 = 0 | let cw5 = 0
+	let cw1 = 0 | let cw2 = 0 | let cw3 = 0 | let cw4 = 0
 	" Initialize the vars that will accumulate table text
 	let fmt_header = '' | let fmt_lines = ''
 	let clr_header = '' | let clr_lines = ''
@@ -1308,11 +1308,11 @@ fu! s:ShowTokenMap()
 			endif
 			" Column 4
 			if iClr == -1
-				let col4_text = 'ctermfg'
+				let col4_text = 'clr-def'
 			elseif iClr == 0
 				let col4_text = 'N.A.'
 			else
-				let col4_text = b:txtfmt_clr_ctermfg{iClr-1}
+				let col4_text = b:txtfmt_clr{iClr-1}
 			endif
 			if i == 0
 				" Calculate col width
@@ -1322,23 +1322,6 @@ fu! s:ShowTokenMap()
 			else
 				" Output line
 				let line = line.(col4_text.s:MakeString(' ', cw4 + 2 - strlen(col4_text)))
-			endif
-			" Column 5
-			if iClr == -1
-				let col5_text = 'guifg'
-			elseif iClr == 0
-				let col5_text = 'N.A.'
-			else
-				let col5_text = b:txtfmt_clr_guifg{iClr-1}
-			endif
-			if i == 0
-				" Calculate col width
-				if strlen(col5_text) > cw5
-					let cw5 = strlen(col5_text)
-				endif
-			else
-				" Output line
-				let line = line.(col5_text.s:MakeString(' ', cw5 + 2 - strlen(col5_text)))
 			endif
 			" Accumulate line just built into the list of lines
 			if i == 1
