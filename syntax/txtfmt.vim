@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2008 May 10
+" Last Change: 2008 May 31
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -43,6 +43,73 @@ endfu
 " >>>
 call s:Do_config()
 " >>>
+" Function: s:Is_match_offset_char_based() <<<
+" Purpose: Return nonzero if and only if the this version of Vim treats match
+" offsets as character offsets.
+" Assumption: Current encoding is multi-byte
+fu! s:Is_match_offset_char_based()
+	let s = "AB" . nr2char(0x100) . 'C'
+	" Set lazyredraw to ensure user never sees the buffer we create
+	let lazyredraw_save = &lazyredraw
+	set lazyredraw
+	" Save the old buffer number
+	let buf_nr = bufnr('%')
+	" Create a scratch buffer
+	new
+	set buftype=nofile
+	" Put the test string at the head of the new scratch buffer
+	call setline(1, s)
+	" Create syntax region that will include the last character on the line if
+	" and only if this Vim treats match offsets as char offsets
+	syn match Tf_Test /AB/me=e+2,he=e+2
+	" Is the last char in the Tf_Test syntax group?
+	if synIDattr(synID(line("."), col("$") - 1, 1), "name") == 'Tf_Test'
+		let off_is_char = 1
+	else
+		let off_is_char = 0
+	endif
+	" Delete the scratch buffer and be sure we return to the txtfmt buffer
+	bd
+	" This is probably unnecessary, but safe...
+	exe 'buffer ' . buf_nr
+	" Restore old lazyredraw setting
+	if !lazyredraw_save
+		set nolazyredraw
+	endif
+	" Return true if and only if offsets are char-based
+	return off_is_char
+endfu
+" >>>
+" Function: s:Get_bytes_per_token()
+" Purpose: Return the number of bytes used to encode the first Txtfmt token,
+" warning user if this number is different from the number of bytes used to
+" encode the last.
+" Assumption: # of bytes per token will never decrease as character codes
+" increase
+fu! s:Get_bytes_per_token()
+	let num_bytes = strlen(nr2char(b:txtfmt_clr_first_tok))
+	" Make sure first and last token comprise the same number of bytes,
+	" and warn user if not...
+	if num_bytes != strlen(nr2char(b:txtfmt_fmt_last_tok))
+		" Note: Txtfmt highlighting will probably be incorrect, but there's
+		" not much we can do about it other than warn user...
+		echohl WarningMsg
+		echomsg "Warning! The 'tokrange' setting you have chosen may not work correctly"
+		echomsg "because not all tokens within the range are encoded with the same number"
+		echomsg "of bytes. If fmt/clr regions do not display correctly, you should either"
+		echomsg "choose a different 'tokrange', or apply the multi-byte patch included with"
+		echomsg "the plugin."
+		echohl Comment
+		echomsg "    :help txtfmt-choosing-token-range"
+		echohl MoreMsg
+		echomsg "Hit any key to continue..."
+		echohl None
+		call getchar()
+	endif
+	" Return # of bytes used by first token
+	return num_bytes
+endfu
+" >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Concealment group <<<
@@ -73,6 +140,31 @@ fu! s:Define_syntax()
 		let skip_any_def = ''
 		let skip_clr_def = ''
 		let skip_fmt_def = ''
+	endif
+	" >>>
+	" Define match offset that corresponds to a single txtfmt token <<<
+	" Note: This is required because of a Vim bug: as of Vim 7.1, syntax match
+	" offsets are always treated as byte offsets, though the documentation
+	" suggests offsets are char-based. There is a patch floating around,
+	" however, which fixes this; also, Vim 7.2 *may* fix it; thus, it's not
+	" safe to assume anything about whether the running Vim uses byte or char
+	" offsets. If necessary, Is_match_offset_char_based will find out.
+	" Note: Eventually, the if and first elseif can be combined, but for now,
+	" I want to set b:txtfmt_dbg_syn_off as a debug var, in case any users
+	" experience problems...
+	if b:txtfmt_cfg_enc_class == '1'
+		let tok_off = 1
+		" Nonexistence of b:txtfmt_dbg_syn_off indicates
+		" Is_match_offset_char_based wasn't run
+		unlet! b:txtfmt_dbg_syn_off
+	elseif s:Is_match_offset_char_based()
+		let tok_off = 1
+		let b:txtfmt_dbg_syn_off = 'char'
+	else
+		" Offsets are measured in bytes; hence, we need to determine how many
+		" bytes per token
+		let tok_off = s:Get_bytes_per_token()
+		let b:txtfmt_dbg_syn_off = 'byte'
 	endif
 	" >>>
 	" 'contains' list (option dependent) <<<
@@ -140,8 +232,8 @@ fu! s:Define_syntax()
 		" fmtclr regions that begin with this fmt token.
 		exe 'syn region Tf_clr_'.i.' matchgroup=Tf_conceal start=/'.ch.'/'
 			\.skip_clr_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-1 '
-			\.' end=/'.b:txtfmt_re_clr_etok_atom.'/me=e-1 '
+			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
+			\.' end=/'.b:txtfmt_re_clr_etok_atom.'/me=e-'.tok_off.' '
 			\.nextgroup_def
 			\.contains_clr_def
 			\.containedin_def
@@ -153,8 +245,8 @@ fu! s:Define_syntax()
 		exe 'syn region Tf_clr_'.i.' matchgroup=Tf_conceal'
 			\.' start=/'.nr2char(b:txtfmt_fmt_first_tok).'/'
 			\.skip_clr_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-1 '
-			\.' end=/'.b:txtfmt_re_clr_etok_atom.'/me=e-1 '
+			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
+			\.' end=/'.b:txtfmt_re_clr_etok_atom.'/me=e-'.tok_off.' '
 			\.nextgroup_def
 			\.contains_clr_def
 			\.' contained'
@@ -183,8 +275,8 @@ fu! s:Define_syntax()
 		" clrfmt regions that begin with this fmt token.
 		exe 'syn region Tf_fmt_'.i.' matchgroup=Tf_conceal start=/'.ch.'/'
 			\.skip_fmt_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-1 '
-			\.' end=/'.b:txtfmt_re_fmt_etok_atom.'/me=e-1 '
+			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
+			\.' end=/'.b:txtfmt_re_fmt_etok_atom.'/me=e-'.tok_off.' '
 			\.nextgroup_def
 			\.contains_fmt_def
 			\.containedin_def
@@ -193,8 +285,8 @@ fu! s:Define_syntax()
 		exe 'syn region Tf_fmt_'.i.' matchgroup=Tf_conceal'
 			\.' start=/'.nr2char(b:txtfmt_clr_first_tok).'/'
 			\.skip_fmt_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-1 '
-			\.' end=/'.b:txtfmt_re_fmt_etok_atom.'/me=e-1 '
+			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
+			\.' end=/'.b:txtfmt_re_fmt_etok_atom.'/me=e-'.tok_off.' '
 			\.nextgroup_def
 			\.contains_fmt_def
 			\.' contained'
@@ -220,7 +312,7 @@ fu! s:Define_syntax()
 				\' nextgroup=Tf_clr_'.i.',Tf_fmt_'.j.',@Tf_clrfmt_'.i.'_all,@Tf_fmtclr_'.j.'_all'
 			exe 'syn region Tf_clrfmt_'.i.'_'.j.' matchgroup=Tf_conceal'
 				\.' start=/'.ch.'/'.skip_any_def
-				\.' end=/'.b:txtfmt_re_any_tok_atom.'/me=e-1'
+				\.' end=/'.b:txtfmt_re_any_tok_atom.'/me=e-'.tok_off
 				\.nextgroup_def
 				\.contains_any_def
 				\.' contained'
@@ -251,7 +343,7 @@ fu! s:Define_syntax()
 				\' nextgroup=Tf_fmt_'.i.',Tf_clr_'.j.',@Tf_fmtclr_'.i.'_all,@Tf_clrfmt_'.j.'_all'
 			exe 'syn region Tf_fmtclr_'.i.'_'.j.' matchgroup=Tf_conceal'
 				\.' start=/'.ch.'/'.skip_any_def
-				\.' end=/'.b:txtfmt_re_any_tok_atom.'/me=e-1'
+				\.' end=/'.b:txtfmt_re_any_tok_atom.'/me=e-'.tok_off
 				\.nextgroup_def
 				\.contains_any_def
 				\.' contained'
@@ -277,6 +369,8 @@ fu! s:Define_syntax()
 	" -Prevent escaped or escaping tokens from beginning a region
 	" -Prevent escaped or escaping tokens from ending a region
 	" Note: Must take into account the txtfmt 'escape' option
+	" Also note: Must take into account the size in bytes of the escape char
+	" if this Vim treats offsets as byte offsets
 	if b:txtfmt_cfg_escape == 'bslash' || b:txtfmt_cfg_escape == 'self'
 		if b:txtfmt_cfg_escape == 'self'
 			let re_outer_esc_pair = '\('.b:txtfmt_re_any_stok_atom.'\)\1'
@@ -285,22 +379,26 @@ fu! s:Define_syntax()
 				\.b:txtfmt_re_any_stok_atom.'\|'.b:txtfmt_re_fmt_etok_atom.'\)\1'
 			let re_clr_esc_pair = '\('
 				\.b:txtfmt_re_any_stok_atom.'\|'.b:txtfmt_re_clr_etok_atom.'\)\1'
+			" Escape char is same number of bytes as a token
+			let esc_off = tok_off
 		elseif b:txtfmt_cfg_escape == 'bslash'
 			let re_outer_esc_pair = '\\'.b:txtfmt_re_any_stok_atom
 			let re_any_esc_pair = '\\'.b:txtfmt_re_any_tok_atom
 			let re_fmt_esc_pair = '\\'.b:txtfmt_re_fmt_tok_atom
 			let re_clr_esc_pair = '\\'.b:txtfmt_re_clr_tok_atom
+			" Escape char is single byte
+			let esc_off = 1
 		endif
 		" The following group prevents escaping or escaped token from starting
 		" a region, and causes the escaping token to be hidden
-		exe 'syn match Tf_outer_esc /'.re_outer_esc_pair.'/he=s+1'.containedin_def
+		exe 'syn match Tf_outer_esc /'.re_outer_esc_pair.'/he=s+'.esc_off.containedin_def
 		" The following group allows escaping tokens to be hidden within a fmt/clr
 		" region.
-		exe 'syn match Tf_any_inner_esc /'.re_any_esc_pair.'/he=s+1 contains=NONE'
+		exe 'syn match Tf_any_inner_esc /'.re_any_esc_pair.'/he=s+'.esc_off.' contains=NONE'
 			\.' contained'
-		exe 'syn match Tf_fmt_inner_esc /'.re_fmt_esc_pair.'/he=s+1 contains=NONE'
+		exe 'syn match Tf_fmt_inner_esc /'.re_fmt_esc_pair.'/he=s+'.esc_off.' contains=NONE'
 			\.' contained'
-		exe 'syn match Tf_clr_inner_esc /'.re_clr_esc_pair.'/he=s+1 contains=NONE'
+		exe 'syn match Tf_clr_inner_esc /'.re_clr_esc_pair.'/he=s+'.esc_off.' contains=NONE'
 			\.' contained'
 		hi link Tf_outer_esc Tf_conceal
 		hi link Tf_any_inner_esc Tf_conceal

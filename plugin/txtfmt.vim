@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2008 May 10
+" Last Change: 2008 May 30
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:TXTFMT_VERSION = "1.0e"
+let g:TXTFMT_VERSION = "1.1"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -97,13 +97,14 @@ augroup END
 let b:txtfmt_const_vimver_undercurl = 700
 " Define several sets of constants needed by the functions used to process
 " 'tokrange' option.
-" Define the tokrange default
-let b:txtfmt_const_tokrange_def = '180S'
-" TODO - Delete the one above when I've validated the one below...
-" Define tokrange defaults according to 'starttok' and 'formats' values
-" TODO - Eventually, these may need to be encoding-specific, but not yet...
-let b:txtfmt_const_starttok_def = 180
-let b:txtfmt_const_formats_def  = 'S'
+" Define tokrange defaults (decomposed into 'starttok' and 'formats' values)
+" as a function of encoding class.
+let b:txtfmt_const_starttok_def_{'1'} = 180
+let b:txtfmt_const_formats_def_{'1'}  = 'S'
+let b:txtfmt_const_starttok_def_{'2'} = 180
+let b:txtfmt_const_formats_def_{'2'}  = 'S'
+let b:txtfmt_const_starttok_def_{'u'} = 0xE000
+let b:txtfmt_const_formats_def_{'u'}  = 'S'
 " Define the number of tokens in the txtfmt token range as a function of
 " 'formats' option: N = 2 ^ {num_attributes} + 10
 let b:txtfmt_const_tokrange_size_{'basic'}             = 18 
@@ -458,171 +459,26 @@ fu! s:Set_tokrange()
 	" encoding-class-specific default.
 	if !exists('b:txtfmt_cfg_starttok')
 		if enc_class == '1'
-			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def
-			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def)
+			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def_{'1'}
+			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def_{'1'})
 		elseif enc_class == '2'
-			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def
-			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def)
+			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def_{'2'}
+			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def_{'2'})
 		elseif enc_class == 'u'
-			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def
-			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def)
+			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def_{'u'}
+			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def_{'u'})
 		else
-			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def
-			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def)
+			let b:txtfmt_cfg_starttok = b:txtfmt_const_starttok_def_{'1'}
+			let b:txtfmt_cfg_formats  = s:Tokrange_translate_formats(b:txtfmt_const_formats_def_{'1'})
 		endif
 	endif
 	" We're done with b:txtfmt_cfg_tokrange now that it has been completely
 	" decomposed.
 	unlet! b:txtfmt_cfg_tokrange
-endfu
-" >>>
-" Function: s:Set_tokrange_old() <<<
-" Purpose: Set b:txtfmt_cfg_starttok and b:txtfmt_cfg_formats options, taking
-" into account any user-setting of 'tokrange' option, and if necessary, the
-" txtfmt defaults, which may take 'encoding' into consideration.
-" Note: If set via modeline, tokrange option value must be a literal tokrange
-" specification; however, buf-local and global option variables may be set to
-" either a valid tokrange spec, or a Vim expression that evaluates to one.
-" Permitting arbitrary Vim expressions facilitates the use of complex tokrange
-" selection logic, implemented by a user-defined expression or function.
-"  Examples:
-"      'g:My_tokrange_calculator()'
-"      '&enc == "utf-8" ? 1400l : 130s' 
-fu! s:Set_tokrange_old()
-	" Cache the 'encoding' in effect
-	let enc = &encoding
-	" Determine the corresponding encoding class
-	let enc_class = TxtfmtCommon_Encoding_get_class(enc)
-	if !exists('b:txtfmt_cfg_tokrange') || strlen(b:txtfmt_cfg_tokrange) == 0
-		" Either option wasn't set within modeline, or it was set to invalid
-		" value.
-		if exists('b:txtfmt_cfg_tokrange') && strlen(b:txtfmt_cfg_tokrange) == 0
-			" Bad modeline set
-			let l:warnmsg =
-				\"Warning: Ignoring invalid modeline value for txtfmt `tokrange' option"
-		elseif exists('b:txtfmtTokrange')
-			" User overrode buf-local option. Save the option for validation
-			" below...
-			let b:txtfmt_cfg_tokrange = b:txtfmtTokrange
-			let l:set_by = 'b'
-		elseif exists('g:txtfmtTokrange')
-			" User overrode global option. Save the option for validation
-			" below...
-			let b:txtfmt_cfg_tokrange = g:txtfmtTokrange
-			let l:set_by = 'g'
-		endif
-	endif
-	if exists('l:set_by') && (l:set_by == 'b' || l:set_by == 'g')
-		" Perform special validation for buf-local/global settings, which
-		" permits either a tokrange spec or a Vim expression that evaluates to
-		" one.
-		if !s:Tokrange_is_valid(b:txtfmt_cfg_tokrange)
-			" Not a valid tokrange literal. Let's see whether it evaluates to
-			" one.
-			let v:errmsg = ''
-			" Evaluate expression, using silent! to prevent problems in the
-			" event that rhs is invalid.
-			silent! exe 'let l:tokrange = '.b:txtfmt_cfg_tokrange
-			if v:errmsg != ''
-				" Bad expression
-				let l:warnmsg =
-					\"Warning: Ignoring invalid ".(l:set_by == 'b' ? 'buf-local' : 'global')
-					\." value for txtfmt 'tokrange' option: ".b:txtfmt_cfg_tokrange
-				" Discard the invalid setting
-				let b:txtfmt_cfg_tokrange = ''
-			else
-				" It was a valid Vim expression. Did it produce a valid
-				" tokrange spec?
-				if !s:Tokrange_is_valid(l:tokrange)
-					let l:warnmsg =
-						\"Ignoring ".(l:set_by == 'b' ? 'buf-local' : 'global')
-						\." set of txtfmt `tokrange' option: `".b:txtfmt_cfg_tokrange
-						\."' produced invalid option value: ".l:tokrange
-					" Discard the invalid setting
-					let b:txtfmt_cfg_tokrange = ''
-				else
-					" Save the valid setting
-					let b:txtfmt_cfg_tokrange = l:tokrange
-				endif
-			endif
-		endif
-	endif
-	" Warn user if invalid user-setting is about to be overridden
-	if exists('l:warnmsg')
-		echoerr l:warnmsg
-	endif
-	" Any user settings have now been processed. Loop until
-	" b:txtfmt_cfg_starttok and b:txtfmt_cfg_formats have been set. (If user
-	" has requested a starttok that causes encoding-specific upper bound to be
-	" exceeded, it will take 2 tries; otherwise, it will take only 1.)
-	while !exists('b:txtfmt_cfg_starttok')
-		" If b:txtfmt_cfg_tokrange is still undefined, see whether there's an
-		" encoding-specific default.
-		if !exists('b:txtfmt_cfg_tokrange') || strlen(b:txtfmt_cfg_tokrange) == 0
-			" TODO - Put any logic that depends upon specific encoding here...
-			" .
-			" .
-
-		endif
-		" If b:txtfmt_cfg_tokrange is still undefined, see whether there's an
-		" encoding-class-specific default.
-		if !exists('b:txtfmt_cfg_tokrange') || strlen(b:txtfmt_cfg_tokrange) == 0
-			if enc_class == '1'
-				let b:txtfmt_cfg_tokrange = b:txtfmt_const_tokrange_def
-			elseif enc_class == '2'
-				let b:txtfmt_cfg_tokrange = b:txtfmt_const_tokrange_def
-			elseif enc_class == 'u'
-				let b:txtfmt_cfg_tokrange = b:txtfmt_const_tokrange_def
-			else
-				let b:txtfmt_cfg_tokrange = b:txtfmt_const_tokrange_def
-			endif
-			let l:skip_upr_bnd_test = 1
-		endif
-		" We now have a valid tokrange spec. Split into starttok and formats
-		let b:txtfmt_cfg_starttok = s:Tokrange_get_starttok(b:txtfmt_cfg_tokrange)
-		" Formats is a bit special. For one thing, it can be omitted from a
-		" tokrange spec, in which case we'll choose a default. Also, long
-		" formats ('L') can mean either 'all' or 'all_but_undercurl',
-		" depending upon Vim version. (Undercurl was not supported until Vim
-		" version 7.0.)
-		let formats = s:Tokrange_get_formats(b:txtfmt_cfg_tokrange)
-		" If 'formats' is not yet explicit, make it so.
-		if strlen(formats) == 0
-			" Default to 'short' formats
-			let formats = 'S'
-		endif
-		" Translate formats into the appropriate b:txtfmt_cfg_formats value
-		if formats == 'L'
-			" Long formats
-			if v:version >= 700
-				let b:txtfmt_cfg_formats = 'all'
-			else
-				let b:txtfmt_cfg_formats = 'all_but_undercurl'
-			endif
-		else
-			" Short formats
-			let b:txtfmt_cfg_formats = 'basic'
-		endif
-		" Perform upper-bound validation unless we know the range is valid
-		if !exists('l:skip_upr_bnd_test')
-			if b:txtfmt_cfg_starttok + b:txtfmt_const_tokrange_size_{b:txtfmt_cfg_formats} - 1
-				\ > b:txtfmt_const_tokrange_limit_{enc_class}
-				" Warn user and use default
-				echoerr
-					\ "Warning: Tokrange value '".b:txtfmt_cfg_tokrange."' causes upper"
-					\." bound to be exceeded for encoding ".&enc
-				" Set to default
-				let b:txtfmt_cfg_tokrange = b:txtfmt_const_tokrange_def
-				" Don't bother testing next time through
-				let l:skip_upr_bnd_test = 1
-				" Make sure we go through the loop again
-				unlet! b:txtfmt_cfg_starttok b:txtfmt_cfg_formats
-			endif
-		endif
-	endwhile
-	" We're done with b:txtfmt_cfg_tokrange now that it has been completely
-	" decomposed.
-	unlet! b:txtfmt_cfg_tokrange
+	" Save the encoding class for later use (will be needed by Define_syntax
+	" logic used to determine whether syn match offsets are byte or
+	" char-based)
+	let b:txtfmt_cfg_enc_class = enc_class
 endfu
 " >>>
 " Function: s:Set_syncing() <<<
@@ -1900,7 +1756,7 @@ fu! s:MakeTestPage(...)
 		\tok_fui.'Configuration:'.tok_fb.(b:txtfmt_cfg_nested ? "nested" : "nonested").tok_fmt_end)
 	call append(line('$'), "")
 	call append(line('$'),
-		\"    :help txtfmt-escape")
+		\"    :help txtfmt-nesting")
 	" Now display text specific to the option setting
 	if b:txtfmt_cfg_nested
 		call append(line('$'), '')

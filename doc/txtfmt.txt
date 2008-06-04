@@ -13,6 +13,8 @@ Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
      Detecting/setting txtfmt filetype...........: |txtfmt-filetype|
      Combining with other filetypes..............: |txtfmt-combining|
        Nesting txtfmt regions....................: |txtfmt-nesting|
+         Using txtfmt within C comments..........: |txtfmt-nesting-c-example|
+         Using txtfmt within .otl (TVO) files....: |txtfmt-nesting-tvo-example|
      Loading.....................................: |txtfmt-loading|
   5. Configuration...............................: |txtfmt-configuration|
      Options.....................................: |txtfmt-options|
@@ -26,6 +28,7 @@ Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
      Choosing a token range......................: |txtfmt-choosing-token-range|
      Colors......................................: |txtfmt-color-config|
        Colorscheme considerations................: |txtfmt-colorschemes|
+         Achieving "colorscheme-independence"....: |txtfmt-hl-color-names|
      Customizing the default maps................: |txtfmt-map-config|
        Handling conflicts and ambiguities........: |txtfmt-map-conflict|
   6. User interface..............................: |txtfmt-user-interface|
@@ -140,11 +143,11 @@ syntax/txtfmt.vim	Txtfmt syntax file (defines the txtfmt syntax
 plugin/txtfmt.vim	Txtfmt common configuration code (contains
 			configuration script needed by both the filetype and
 			syntax plugins)
-mb_patch.txt		Yukihiro Nakadaira's patch to fix handling of
-			multibyte character offsets (necessary for versions of
-			Vim prior to 7.2 if multibyte characters are used as
-			txtfmt tokens)
-			For details, see |txtfmt-multibyte-syntax-bug|.
+mb_patch.txt		Yukihiro Nakadaira's patch to fix Vim's handling of
+			multibyte character offsets.
+			Note: This patch is not needed for txtfmt versions >=
+			1.1, but is still included for reasons described in
+			|txtfmt-multibyte-syntax-bug|.
 indent_patch.txt	Bram Moolenaar's patch to fix indent.vim's handling of
 			dot-separated lists in 'filetype' option values
 			(required only if you plan to use txtfmt in
@@ -226,7 +229,9 @@ with "keepend" will terminate the txtfmt region, but the containing region's
 end marker may not be formatted correctly unless a "matchgroup" was used to
 define it.
 
-A practical example:				*txtfmt-nesting-example*
+A few practical examples follow...
+
+C source file nesting example:			*txtfmt-nesting-c-example*
 
 Here is how you could use txtfmt to format your C-language comments...
 
@@ -263,6 +268,21 @@ approach such as this: >
     augroup END
 
 Of course, it's probably easier just to apply the patch;-)
+
+TVO nesting example:				*txtfmt-nesting-tvo-example*
+
+Here is how you could use txtfmt to format the ordinary text within .otl files
+created with TVO (The Vim Outliner plugin written by Ned Konz)...
+
+Put the following within the ftdetect/otl.vim file distributed with the TVO
+plugin: >
+	" This sets up *.otl files to be outlined
+	au  BufRead,BufNewFile *.otl    setf otl.txtfmt
+
+Important Note: Because the TVO plugin was not designed to work with the
+"dot-separated" filetype syntax, it is important that your .otl files DO NOT
+set 'filetype' within a Vim modeline; i.e., the set of 'filetype' to
+otl.txtfmt should occur exclusively within the autocommand as shown above.
 
 Loading						*txtfmt-loading*
 
@@ -447,9 +467,13 @@ a string such as "global" or "global or buffer-local" to indicate how it may
 be set.
 
 			*txtfmt-'tokrange'* *txtfmt-'rng'* *txtfmtTokrange*
+			*txtfmt-starttok* *txtfmt-formats*
 'tokrange' 'rng'
 txtfmtTokrange		string or Vim expression evaluating to string
-			(default: "180S")
+			(default:
+				1 byte encoding: "180S"
+				2 byte encoding: "180S"
+				unicode:         "0xE000S")
 			format: {number}[{formats}]
 			global or buffer-local
 	This option allows the user to specify the range of characters
@@ -588,21 +612,22 @@ CHOOSING A TOKEN RANGE				*txtfmt-choosing-token-range*
 Before choosing a value for the |txtfmt-'tokrange'| option, you should
 consider what character encoding you will be using. Because of the sheer
 number of available character codes, utf-8 is perhaps the ideal encoding for
-use with txtfmt. Unfortunately, Vim versions prior to 7.2 suffered from a
-serious syntax highlighting bug pertaining to multibyte character offsets,
-which effectively precluded the use of multibyte characters as txtfmt tokens.
-Fortunately, a patch that fixes this bug has been submitted by Nakadaira
-Yukihiro. Hopefully, by the time you read this, Vim version 7.2 will have been
-released, and the patch will have been incorporated into the official version
-of Vim. In the meantime, if you wish to use multibyte characters as txtfmt
-tokens, you will need to apply the patch, which is currently packaged with the
-txtfmt distribution. (mb_patch.txt)
+use with txtfmt.
 
-NOTE: The aforementioned bug prevents only the use of multibyte characters as
-txtfmt tokens. It does not prevent the use of single byte tokens to highlight
-multibyte characters; in other words, as long as the txtfmt tokens are
-confined to the range 0-0xFF, you will not be affected by the bug, even if you
-are using txtfmt to highlight a file with a multibyte encoding.
+Note: Several beta-release versions of txtfmt did not work correctly with
+multibyte encodings because of a Vim bug involving the treatment of offsets
+used in syntax highlight matches. A patch for the Vim bug was created by
+Nakadaira Yukihiro, and was included in the txtfmt distribution. Only users
+who applied the patch were able to use txtfmt with a multibyte encoding such
+as utf-8. The patch is no longer necessary (as of txtfmt version 1.1) because
+workaround logic has been incorporated into the plugin; however, I have not
+yet removed the patch from the distribution because there is one extremely
+rare scenario in which the patch would be necessary: namely, when different
+characters within tokrange are encoded with different numbers of bytes. Since
+large blocks of unicode characters are typically encoded with the same number
+of bytes per character, only users wishing to set tokrange to a very
+non-standard value would be affected by this limitation. All of the default
+tokrange settings work properly with no need for the patch.
 
 						*'short'/'long'-formats*
 Txtfmt requires that a range of exactly 10 + 2^N character codes be dedicated
@@ -665,10 +690,7 @@ for normal text usage. The expanded range of characters used by txtfmt is now
 If you are using unicode, the "Private Use Area" (a block of character codes
 beginning at 0xE000) is probably the ideal location for the txtfmt token
 range. This block is reserved for "application-specific" use, and is
-guaranteed never to be used for actual characters. Of course, since characters
-in the "Private Use Area" are multibyte, you should use them only if you have
-built Vim with the multibyte syntax patch mentioned earlier in this section,
-or you are using a version of Vim >= 7.2.
+guaranteed never to be used for actual characters.
 
 						*txtfmt-problematic-ranges*
 Not all character codes are suitable for use as txtfmt tokens. In particular,
@@ -695,37 +717,57 @@ some reason you must use a different encoding, you should experiment with the
 
 
 						*txtfmt-default-tokrange*
-If you do not explicitly set the 'tokrange' option, either in a
-txtfmt-modeline or via the txtfmtTokrange option variable, txtfmt will attempt
-to choose a default setting that is suitable for the current character
-encoding. Success in this endeavor is far from guaranteed, however, since it
+If you do not explicitly set the |txtfmt-'tokrange'| option, either in a
+|txtfmt-modeline| or via the txtfmtTokrange option variable, txtfmt will
+attempt to choose a default setting that is suitable for the current character
+encoding. Success in this endeavor is not guaranteed, however, since it
 involves choosing a range of characters that will not be used for any other
-purpose in the file being edited. For utf-8, the task of choosing a suitable
-range should be simple, due to the existence of the "Private Use Area".
-Unfortunately, use of the "Private Use Area" for txtfmt tokens will work only
-if you have built Vim with the multibyte syntax patch mentioned earlier. Since
-txtfmt doesn't know whether you have or not, it will not choose a multibyte
-default for tokrange. (The default logic will most likely change with the
-release of Vim version 7.2, which is expected to fix the multibyte syntax
-bug.) Thus, if you are using unicode and have applied the patch (or are
-running a version of Vim >= 7.2), you should probably override the default
-setting of tokrange with '0xE000S' or '0xE000L', which in my opinion, is the
-optimal setting.
+purpose in the file being edited. For unicode, the task of choosing a suitable
+range is simple, due to the existence of the "Private Use Area".
+
+Backwards-compatibility Note: Because versions of Vim prior to 7.2 handled
+syntax highlighting match offsets incorrectly for multibyte characters,
+versions of txtfmt prior to 1.1 would not choose a tokrange default within the
+"Private Use Area", even for unicode encodings such as utf-8. Txtfmt version
+1.1, however, contains a workaround that permits multibyte tokens to be used
+even in versions of Vim suffering from the aforementioned bug. Thus, in Txtfmt
+version 1.1, the default tokrange setting for unicode changed from '180S' to
+'0xE000S' (the start of the "Private Use Area").
+
+Important Note: If you are a multibyte encoding user who created txtfmt files
+with the old setting ('180S'), you should consider the following
+(non-exhaustive) list of options...
+	1. Continue using '180S' for all txtfmt files
+	   How: Override the new default by setting the |txtfmtTokrange|
+	   option explicitly.
+	2. Continue using '180S' for existing files, but use '0xE000S' for all
+	   newly-created txtfmt files.
+	   How: Put a |txtfmt-modeline| containing "tokrange=180S" in your
+	   existing txtfmt files to override the new default.
+	3. Use '0xE000S' for all txtfmt files, old and new.
+	   How: Use the :MoveStartTok command to relocate the tokens in your
+	   existing file(s) to a new range within the "Private Use Area"
+	   e.g. >
+		   :MoveStartTok 0xE000
+>
+	   :help txtfmt-:MoveStartTok
+<
 
 For encodings other than unicode, there is nothing analogous to the "Private
 Use Area"; hence, it is not possible to choose a default token range that will
 work for everyone. Currently, txtfmt's default algorithm chooses '180S' for
-all encodings. The reasons for this choice are as follows:
-	-Keeps all txtfmt tokens in the range 0-255, where the multibyte
-	 syntax bug has no effect
-	-Characters in the range 180-255 are seldom used for English text.
-	-Use of "short" formats ensures that only those users requiring format
-	 attributes other than the 3 most common (underline, bold and italic)
-	 will pay the performance penalty
+all 1 and 2 byte encodings. This value should be suitable for most
+non-European users of a single byte encoding such as latin1. European users
+who use accented letters located at or above character code 180 should
+probably be using a multibyte encoding such as utf-8. By default, "short"
+formats are used for all encodings (including unicode) to ensure that only
+those users requiring format attributes other than the 3 most common
+(underline, bold and italic) will pay any attendant performance penalties.
 
-Of course, this setting will not be suitable for everyone, and each txtfmt
-user is encouraged to put some thought into the range he will use and then
-test it thoroughly with :MakeTestPage.
+Although the tokrange defaults should be suitable for the vast majority of
+users, they may not be suitable for everyone, and each txtfmt user is
+encouraged to put some thought into the tokrange he will use and then test it
+thoroughly with :MakeTestPage.
     See |txtfmt-:MakeTestPage|.
 
 
@@ -914,6 +956,23 @@ conditional :Refresh to Define_colors(). The test of the boolean "refresh"
 argument ensures that the :Refresh command will be invoked only when the
 colorscheme is changing and we are within a txtfmt buffer.
 	:help txtfmt-:Refresh
+
+Achieving colorscheme independence		*txtfmt-hl-color-names*
+
+Although the default txtfmtColor{} array uses hard-coded color names, this is
+by no means required. An intriguing possibility, which I have implemented on
+my own system, is to use color name patterns corresponding to the default Vim
+highlighting groups. Under this strategy, instead of naming a particular color
+"red", you might instead name it "error". Within the Define_colors() routine
+outlined above, you would define the error color according to the
+colorscheme-specific guibg/ctermbg definitions used for the Error highlight
+group. The advantage of this strategy is that it guarantees that your
+txtfmt-highlighted files will look good in any colorscheme (assuming they
+looked good in the original colorscheme ;-). To facilitate creation of the
+required color definitions, I created a Vim script that parses the colorscheme
+files in $VIMRUNTIME/colors and extracts the desired definitions for each
+colorscheme automatically. I can send a copy of this script, along with
+instructions for using it, to anyone who is interested...
 
 CUSTOMIZING MAPPINGS				*txtfmt-map-config*
 
@@ -2045,7 +2104,7 @@ TRANSLATING TOKEN RANGE				*txtfmt-move-tok-range*
 	:MoveStartTok command.
 
 	Examples: >
-		" Move current tokrange to start of "private use area"
+		" Move current tokrange to start of "Private Use Area"
 		:MoveStartTok 0xE000
 		" Move current tokrange to 190 (in file created with Vim 6.3)
 		:MoveStartTok 190 603
