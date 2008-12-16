@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2008 May 31
+" Last Change: 2008 Dec 11
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -317,8 +317,13 @@ fu! s:Define_syntax()
 				\.contains_any_def
 				\.' contained'
 			" Define the highlighting for this clr-fmt region
-			exe 'hi Tf_clrfmt_'.i.'_'.j.fmt_eq.b:txtfmt_fmt{j}
-				\.clr_eq.b:txtfmt_clr{i-1}
+			" Important Note: It is important to put the format definition
+			" *after* the color definition, since in a cterm, the bold
+			" attribute is ignored if the color name is "Dark" something and
+			" the cterm=bold comes before the ctermfg=<color>. (See help on
+			" cterm-colors.)
+			exe 'hi Tf_clrfmt_'.i.'_'.j.clr_eq.b:txtfmt_clr{i-1}
+				\.fmt_eq.b:txtfmt_fmt{j}
 			" Update for next iteration
 			let j = j + 1
 			let ch = nr2char(b:txtfmt_fmt_first_tok + j)
@@ -348,8 +353,11 @@ fu! s:Define_syntax()
 				\.contains_any_def
 				\.' contained'
 			" Define the highlighting for this fmt-clr region
-			exe 'hi Tf_fmtclr_'.i.'_'.j.fmt_eq.b:txtfmt_fmt{i}
-				\.clr_eq.b:txtfmt_clr{j-1}
+			" Important Note: Format attribute must be defined *after* color
+			" attribute. See note under corresponding definition in the clrfmt
+			" block for explanation. 
+			exe 'hi Tf_fmtclr_'.i.'_'.j.clr_eq.b:txtfmt_clr{j-1}
+				\.fmt_eq.b:txtfmt_fmt{i}
 			" Update for next iteration
 			let j = j + 1
 			let ch = nr2char(b:txtfmt_clr_first_tok + j)
