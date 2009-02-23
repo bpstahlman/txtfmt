@@ -3,11 +3,9 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2008 May 10
+" Last Change: 2009 Feb 21
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
-
-"echoerr "Sourcing ftplugin..."
 
 " Let the common code know whether this is syntax file or ftplugin
 let s:script_name = 'ftplugin'
@@ -2038,7 +2036,8 @@ fu! s:Do_config()
 	" make them non-keyword, which means they'll be treated like punctation;
 	" i.e., word motions will stop on them and on the beginning of subsequent
 	" word.
-	" IMPORTANT TODO: Vim doesn't allow multi-byte characters to be excluded!
+	" IMPORTANT TODO: Vim doesn't allow multi-byte characters above 255 to be
+	" excluded!
 	" Decide whether there's a workaround. For now, don't do this if we're
 	" dealing with tokens above 255.
 	if (b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1 <= 255) 
@@ -2320,12 +2319,12 @@ call s:Def_map('o', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jum
 call s:Def_map('o', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 1)<CR>")
 call s:Def_map('o', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 1)<CR>")
 call s:Def_map('o', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 1)<CR>")
-call s:Def_map('o', '[t$f', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', '$f', 'b', 1)<CR>")
-call s:Def_map('o', ']t$f', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', '$f', 'f', 1)<CR>")
-call s:Def_map('o', '[t$c', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', '$c', 'b', 1)<CR>")
-call s:Def_map('o', ']t$c', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', '$c', 'f', 1)<CR>")
-call s:Def_map('o', '[t$a', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', '$a', 'b', 1)<CR>")
-call s:Def_map('o', ']t$a', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', '$a', 'f', 1)<CR>")
+call s:Def_map('o', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 1)<CR>")
+call s:Def_map('o', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 1)<CR>")
+call s:Def_map('o', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 1)<CR>")
+call s:Def_map('o', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 1)<CR>")
+call s:Def_map('o', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 1)<CR>")
+call s:Def_map('o', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 1)<CR>")
 " >>>
 " normal mode insert token mappings <<<
 " These mappings may be used from normal mode to insert special tokens.

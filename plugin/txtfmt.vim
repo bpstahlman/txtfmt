@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2008 Dec 12
+" Last Change: 2008 Feb 21
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "1.3"
+let g:Txtfmt_Version = "1.4"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -1667,9 +1667,8 @@ fu! s:MakeTestPage(...)
 		call append(line('$'), s)
 		let iClr = iClr + 1
 	endwhile
-	" Return to default fmt/clr
-	call append(line('$'),
-		\nr2char(b:txtfmt_fmt_first_tok).nr2char(b:txtfmt_clr_first_tok))
+	" Return to default clr (default fmt token is at end of preceding line)
+	call append(line('$'), nr2char(b:txtfmt_clr_first_tok))
 
 	call append(line('$'), tok_fb)
 	call append(line('$'),

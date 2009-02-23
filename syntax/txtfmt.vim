@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2008 Dec 11
+" Last Change: 2009 Feb 21
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -116,7 +116,26 @@ fu! s:Define_syntax()
 	" Create a concealment highlight group, to which others can link
 	" The Ignore group is a preferred group, defined in distributed
 	" syncolor.vim
-	hi link Tf_conceal Ignore
+	" IMPORTANT NOTE: Some of the distributed colorschemes DO NOT hide text in
+	" the Ignore group. I disagree with this practice, and have posted to the
+	" Vim list on the subject, but the situation is unlikely to change...
+	" Fortunately, there is a workaround that always works for the GUI,and
+	" sometimes works for a cterm.
+	" Workaround: *Attempt* to define fg=bg. This will always work for the
+	" GUI, and will work for a cterm if the colorscheme has defined ctermbg
+	" for the Normal group. If the attempt fails, simply link to Ignore group,
+	" which may or may not hide text.
+	if has('gui_running')
+		hi Tf_conceal guifg=bg
+	else
+		let v:errmsg = ""
+		silent! hi Tf_conceal ctermfg=bg
+		if v:errmsg != ""
+			" Link to Ignore and put suggestions in help file for users of
+			" colorschemes that don't hide Ignore'd text.
+			hi link Tf_conceal Ignore
+		endif
+	endif
 	" >>>
 	" 'skip' pattern (option dependent) <<<
 	if b:txtfmt_cfg_escape != 'none'

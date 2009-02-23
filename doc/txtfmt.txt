@@ -29,6 +29,7 @@ Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
      Colors......................................: |txtfmt-color-config|
        Colorscheme considerations................: |txtfmt-colorschemes|
          Achieving "colorscheme-independence"....: |txtfmt-hl-color-names|
+     Color terminal pitfalls.....................: |txtfmt-cterm-pitfalls|
      Customizing the default maps................: |txtfmt-map-config|
        Handling conflicts and ambiguities........: |txtfmt-map-conflict|
   6. User interface..............................: |txtfmt-user-interface|
@@ -92,16 +93,18 @@ Txtfmt's formatting is accomplished through the use of single-character
 "tokens" (chosen from ranges not normally used in text files), which are used
 to define highlight attributes for subsequent text. The tokens themselves are
 concealed by Txtfmt's syntax file, so that each appears as a single space.
-Txtfmt requires 9 such tokens for color regions. The number of tokens required
-for format regions varies according to the |txtfmt-'tokrange'| option setting.
-If, for example, the "short" qualifier was used, then the only formatting
-attributes in use are bold, underline and italic. All possible permutations of
-these attributes may be represented with only 8 tokens. If, on the other hand,
-the "long" qualifier was used in the setting of 'tokrange', the set of
-available format attributes expands to include standout, reverse and (for Vim
-versions >= 7.0) undercurl. In this case, Txtfmt will require either 32 or 64
-format tokens, depending upon whether the version of Vim supports undercurl.
-(For more detailed explanation, see |detailed-theory|.)
+(See section |txtfmt-cterm-ignore-issue| if you notice that tokens are not
+hidden on your system.) Txtfmt requires 9 such tokens for color regions. The
+number of tokens required for format regions varies according to the
+|txtfmt-'tokrange'| option setting.  If, for example, the "short" qualifier
+was used, then the only formatting attributes in use are bold, underline and
+italic. All possible permutations of these attributes may be represented with
+only 8 tokens. If, on the other hand, the "long" qualifier was used in the
+setting of 'tokrange', the set of available format attributes expands to
+include standout, reverse and (for Vim versions >= 7.0) undercurl. In this
+case, Txtfmt will require either 32 or 64 format tokens, depending upon
+whether the version of Vim supports undercurl.  (For more detailed
+explanation, see |detailed-theory|.)
 
 There are 2 types of Txtfmt marker token: format markers and color markers.
 The 2 types of regions begun by these 2 types of tokens are "orthogonal",
@@ -633,7 +636,7 @@ non-standard value would be affected by this limitation. All of the default
 tokrange settings work properly with no need for the patch.
 
 						*'short'/'long'-formats*
-Txtfmt requires that a range of exactly 10 + 2^N character codes be dedicated
+Txtfmt requires that a range of exactly 9 + 2^N character codes be dedicated
 as format/color tokens, where "N" is the number of format attributes (e.g.
 bold, underline, etc...) in use. As mentioned in the help for the
 |txtfmt-'tokrange'| option, N will be 3 if "short" formats are selected and
@@ -977,6 +980,158 @@ files in $VIMRUNTIME/colors and extracts the desired definitions for each
 colorscheme automatically. I can send a copy of this script, along with
 instructions for using it, to anyone who is interested...
 
+COLOR TERMINAL PITFALLS				*txtfmt-cterm-pitfalls*
+
+Cterm default background 		*txtfmt-cterm-default-background*
+
+When you define a highlighting region for a cterm without specifying the
+background color with ctermbg, Vim assumes the "default" background color is
+desired. The "default" background for a cterm is the default background color
+of the terminal itself, unless ctermbg has been overridden in a highlight
+statement for the "Normal" group: e.g., >
+	:hi Normal ctermbg=15
+<
+In such cases, the Normal background color replaces the cterm's default
+background for all subsequent highlighting. Certain colorschemes (e.g., blue,
+darkblue and evening) explicitly set the Normal background color in a cterm.
+Others leave it at the default for the color terminal. Ordinarily, Txtfmt can
+handle either case, but the following paragraph describes an issue I have
+encountered with one particular terminal, seen only when 'term' is set
+incorrectly...
+
+Incorrect 'term' setting for gnome-terminal	*txtfmt-cterm-term-issue*
+						*txtfmt-gnome-terminal-issue*
+The default version of gnome-terminal leaves the TERM environment variable
+set to xterm, although the proper setting appears to be gnome-256color.
+Unfortunately, the package containing the gnome-256color terminfo description
+is not installed by default on some gnome systems. Strangely, even when the
+gnome-256color terminfo description is installed, gnome-terminal won't set
+TERM to use it. When Vim is started in a gnome-terminal for which TERM=xterm,
+the 't_Co' termcap entry is incorrectly set to 8 instead of 256. One of the
+effects of this is that outputting certain foreground colors to the cterm will
+cause the default background color to revert from the value defined for the
+Normal group to the terminal's default. The problem appears to be limited to
+the "dark" foreground colors (0-7), which are precisely the colors used in
+Txtfmt's default color map. Thus, this issue has the potential to cause
+serious display problems for Txtfmt.
+
+				*txtfmt-gnome-terminal-issue-workaround*
+There are several ways to resolve this issue. The simplest is to set t_Co=256:
+e.g., >
+	:set t_Co=256
+<
+The set of t_Co could go in your vimrc, or anyplace that causes it to be
+executed before Txtfmt is loaded. A better solution, in my opinion, is to
+ensure that Vim's 'term' option is set to its proper value (i.e.,
+gnome-256color), but this is possible only if the corresponding terminfo
+description is installed on your system. If the following command... >
+	:set term=gnome-256color
+<
+...generates an error in Vim, you must first install the terminfo description.
+On Fedora Linux, the package is named "ncurses-term". (It may have a different
+name in other distributions.) Once you have installed the terminfo package,
+you should ensure that Vim's 'term' option is set properly. There are at least
+2 possible approaches:
+
+1. Set TERM environment variable
+   Put the following in one of your shell startup scripts (e.g., .bashrc): >
+   export TERM=gnome-256color
+<
+2. Set 'term' option in your vimrc
+   e.g., >
+   set term=gnome-256color
+<
+
+When "hidden" tokens are not hidden		*txtfmt-cterm-ignore-issue*
+
+Originally, Txtfmt relied exclusively upon the "Ignore" preferred highlighting
+group to hide the special formatting tokens. The Ignore group was added in Vim
+5.2 to permit markup characters such as the `*' and `|' ("stars and bars")
+surrounding tags in a Vim help file to be hidden. It has since come to my
+attention, however, that roughly half of the colorschemes distributed with Vim
+do not hide text in the Ignore group. In some cases, the contrast between
+foreground and background color is minimized; in other cases, there appears to
+have been no attempt at all to obscure the text.
+Note: It is easy to see how your particular colorscheme treats text in the
+Ignore group: simply execute... >
+	:hi Ignore
+If the Ignore group is defined properly, the "xxx" test pattern should be
+invisible.
+
+In some cases, the Txtfmt plugin can take the Ignore group completely out of
+the equation, by defining a Txtfmt-specific concealment region that sets the
+foreground color equal to the background color. This strategy always works for
+the GUI. It works in a cterm if and only if the terminal background color is
+known to Vim; i.e., it works when the Normal group's background color has been
+set (as described in section |txtfmt-cterm-default-background|). If the Normal
+group background is not set, any attempt to use "bg" as a color name in a
+highlight command will generate an error: e.g., >
+	:hi Tf_conceal ctermfg=bg  " ERROR if Normal ctermbg not set
+<
+If you are seeing the formatting tokens in your Txtfmt buffer, the plugin was
+unable to set ctermfg=bg. In that case, you have several options, as described
+below...
+
+					*txtfmt-cterm-ignore-workaround*
+1. Redefine the Ignore group:
+   First of all, determine the foreground color that most closely matches the
+   default background color of your terminal. You can do this by
+   experimentation, or by looking at the Ignore group definition of a
+   colorscheme that does a better job of hiding Ignore'd text. (The default
+   colorscheme would be a good one to check first.) Once you have determined
+   the proper color, put it into a :highlight command as follows: >
+	:hi Ignore ctermfg=<bg_color>
+<
+   Of course, you need to ensure that the :highlight command is executed after
+   the colorscheme has been sourced. There are several ways this can be
+   accomplished... If your colorscheme is sourced in your vimrc, and you never
+   change it after that, you could put the :highlight command in your vimrc,
+   just after the :colorscheme command. If, however, you sometimes change
+   colorschemes after starting Vim, you should avoid this method. Instead, you
+   might try one of the following:
+ 
+	1. Put the :highlight command into an autocommand defined for the
+	   ColorScheme event: e.g., >
+	   :au ColorScheme * hi Ignore ctermfg=<bg_color>
+<
+	   The autocommand itself could be defined in your vimrc. Note that
+	   the ColorScheme event is triggered only after the colorscheme has
+	   been loaded. (:help ColorScheme)
+	2. Create an override of your colorscheme file containing the
+	   following two lines: >
+	   :source <your_colorscheme_file>
+	   :hi Ignore ctermfg=<bg_color>
+<
+	   The file you create should be placed in a folder that appears
+	   earlier in your 'runtimepath' than the folder containing the
+	   colorscheme you are overriding.
+
+2. Define a background color for the Normal group:
+   This method ensures that Vim knows the terminal background color, which
+   enables Txtfmt to define its own highlight group with ctermfg=bg. You can
+   set the default background color like so... >
+   :hi Normal ctermbg=<desired_color>
+<
+   Note: Be sure to put the :highlight command in a place where it will be
+   executed before Txtfmt is loaded. Any of the methods described above for
+   redefining the Ignore group could be used here as well.
+   Note: The Normal background color is used for all buffers, not just the
+   Txtfmt ones, so you will probably want to choose a color that is close to
+   your default background color.
+   Note: If you are using a gnome-terminal, read section
+   |txtfmt-gnome-terminal-issue| before using this method.
+
+3. Choose a colorscheme that does a better job of hiding the text in the
+   Ignore group.
+   Note: Because it is not always possible to specify a foreground text color
+   that _exactly_ matches a color terminal's default background, only
+   colorschemes that explicitly set the Normal background color can guarantee
+   that text in the Ignore group will be hidden. However, even when the
+   Normal group's background color is not defined, it should usually be
+   possible to find a foreground color that comes reasonably close to matching
+   the default background.
+
+
 CUSTOMIZING MAPPINGS				*txtfmt-map-config*
 
 The txtfmt filetype plugin defines a number of mappings for various modes. By
@@ -1118,12 +1273,12 @@ explicit "no format" and/or "no color" token, you may wish to insert both the
 region opening and closing tokens with a single insert mapping, which leaves
 the cursor positioned just after the opening tokens where the region text will
 go. Details on the various mappings are provided below in the section on
-|txtfmt-mappings|. Before you attempt to use those mappings, however, you
-should be familiar with the concept of format/color specifications. Each of
-the token insertion mappings prompts you to enter a list of such
+|txtfmt-ins-tok-map-list|. Before you attempt to use those mappings, however,
+you should be familiar with the concept of format/color specifications. Each
+of the token insertion mappings prompts you to enter a list of such
 specifications, which it then translates into a sequence of tokens to be
-inserted into the buffer. The following sections describe these
-specifications and the lists comprising them in detail.
+inserted into the buffer. The following sections describe these specifications
+and the lists comprising them in detail.
 
 Fmt spec					*txtfmt-fmt-spec*
 
