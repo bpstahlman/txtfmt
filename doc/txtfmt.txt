@@ -146,15 +146,11 @@ syntax/txtfmt.vim	Txtfmt syntax file (defines the txtfmt syntax
 plugin/txtfmt.vim	Txtfmt common configuration code (contains
 			configuration script needed by both the filetype and
 			syntax plugins)
-mb_patch.txt		Yukihiro Nakadaira's patch to fix Vim's handling of
-			multibyte character offsets.
-			Note: This patch is not needed for txtfmt versions >=
-			1.1, but is still included for reasons described in
-			|txtfmt-multibyte-syntax-bug|.
 indent_patch.txt	Bram Moolenaar's patch to fix indent.vim's handling of
 			dot-separated lists in 'filetype' option values
-			(required only if you plan to use txtfmt in
-			conjunction with C files)
+			(required only if you plan to "nest" Txtfmt within
+			other filetypes, and your version of Vim is older than
+			7.2)
 			For details, see |txtfmt-combining|.
 
 All of the txtfmt.vim files should be placed in their respective parent
@@ -250,13 +246,13 @@ Now, you may use txtfmt mappings to add color and formatting regions to your C
 comments! (Technically, of course, you can format anything in the file, but
 I'm assuming you want the source file to compile.)
 
-IMPORTANT NOTE: The distributed version of "indent.vim" is not aware of the
-dot-separated filetype name convention. Thus, if you use the distributed
-version of indent.vim "as-is", C-indenting will not work properly if you set
-filetype to "c.txtfmt". Bram has created a patch for indent.vim, which fixes
-the problem. The patch is packaged along with the txtfmt files. If you do not
-wish to apply the patch, you could work around the issue with an alternative
-approach such as this: >
+IMPORTANT NOTE: Prior to Vim 7.2, the distributed version of "indent.vim" was
+not aware of the dot-separated filetype name convention. Thus, if you're using
+an older version of Vim, C-indenting will not work properly if you set
+filetype to "c.txtfmt". Bram's patch for this issue is packaged along with the
+Txtfmt files. If you have not yet upgraded to the latest version of Vim, and
+you do not wish to apply the patch, you could work around the issue with an
+alternative approach such as this: >
     " Allow txtfmt regions to be nested within C comments without losing
     " cindent capability.
     augroup filetypedetect
@@ -270,7 +266,7 @@ approach such as this: >
 	au  BufRead,BufNewFile *.c    runtime ftplugin/txtfmt.vim
     augroup END
 
-Of course, it's probably easier just to apply the patch;-)
+Of course, it's probably easier just to upgrade Vim;-)
 
 TVO nesting example:				*txtfmt-nesting-tvo-example*
 
@@ -614,26 +610,32 @@ txtfmtUsermaplimit	number (default: 25)
 CHOOSING A TOKEN RANGE				*txtfmt-choosing-token-range*
 
 						*txtfmt-encoding*
-						*txtfmt-multibyte-syntax-bug*
 Before choosing a value for the |txtfmt-'tokrange'| option, you should
 consider what character encoding you will be using. Because of the sheer
 number of available character codes, utf-8 is perhaps the ideal encoding for
 use with txtfmt.
 
-Note: Several beta-release versions of txtfmt did not work correctly with
+						*txtfmt-multibyte-syntax-bug*
+Note: Several beta-release versions of Txtfmt did not work correctly with
 multibyte encodings because of a Vim bug involving the treatment of offsets
 used in syntax highlight matches. A patch for the Vim bug was created by
-Nakadaira Yukihiro, and was included in the txtfmt distribution. Only users
-who applied the patch were able to use txtfmt with a multibyte encoding such
-as utf-8. The patch is no longer necessary (as of txtfmt version 1.1) because
-workaround logic has been incorporated into the plugin; however, I have not
-yet removed the patch from the distribution because there is one extremely
-rare scenario in which the patch would be necessary: namely, when different
-characters within tokrange are encoded with different numbers of bytes. Since
-large blocks of unicode characters are typically encoded with the same number
-of bytes per character, only users wishing to set tokrange to a very
-non-standard value would be affected by this limitation. All of the default
-tokrange settings work properly with no need for the patch.
+Nakadaira Yukihiro, and was included in the Txtfmt distribution. Only users
+who applied the patch were able to use Txtfmt with a multibyte encoding such
+as utf-8. As of Txtfmt version 1.1, however, the patch was no longer
+necessary, as workaround logic had been added to Txtfmt itself. Moreover,
+Nakadaira's patch has been incorporated into Vim 7.2, so Txtfmt's internal
+workaround is required only for older versions of Vim. There is, however, one
+extremely rare scenario in which someone running a version of Vim older than
+7.2 might wish to apply the patch: namely, when different characters within
+tokrange are encoded with different numbers of bytes. Since the number of
+bytes per character is usually constant across a large block of unicode
+characters, only users wishing to set tokrange to a very non-standard value
+would be affected by this limitation. All of the default tokrange settings
+work properly with no need for the patch. Thus, as of Txtfmt version 1.5, I'm
+removing Nakadaira's patch from the distribution (to avoid frightening away
+new users;-). If you determine that you need it, you can obtain it from a
+Txtfmt version <= 1.4. Note, however, that you should never need this patch if
+you're running Vim 7.2 or later.
 
 						*'short'/'long'-formats*
 Txtfmt requires that a range of exactly 9 + 2^N character codes be dedicated
