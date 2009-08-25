@@ -3,9 +3,11 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2009 Feb 21
+" Last Change: 2008 May 10
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
+
+"echoerr "Sourcing ftplugin..."
 
 " Let the common code know whether this is syntax file or ftplugin
 let s:script_name = 'ftplugin'
@@ -491,12 +493,13 @@ endfu
 " Function: s:Prompt_fmt_clr_spec() <<<
 " Purpose: Prompt user for type of formatting region desired, and return
 " the string entered
-" How: The user will be prompted to enter a fmt/clr list, consisting of
-" fmt/clr atoms separated by commas and/or dots. The format of a fmt/clr atom
-" is described in header of Translate_fmt_clr_spec().,
+" How: The user will be prompted to enter a fmt/clr[/bgc] list, consisting of
+" fmt/clr[/bgc] atoms separated by commas and/or dots. The format of a
+" fmt/clr[/bgc] atom is described in header of Translate_fmt_clr_spec().,
 " Return: The entered string
 fu! s:Prompt_fmt_clr_spec()
 	" Prompt the user for fmt/clr spec string
+	" TODO: Decide whether prompt needs to distinguish between bgc and clr
 	call inputsave()
 	let str = input('Enter a fmt / clr string. (Enter to cancel): ')
 	call inputrestore()
@@ -505,19 +508,74 @@ endfu
 " >>>
 " Function: s:Lookup_clr_namepat() <<<
 " Purpose: Convert the input color name pattern to a color index in range
-" 0..7, using the buffer-specific color definition array b:txtfmt_clr_namepat.
-" Return: Color index between 0 and 7 inclusive, or -1 if error.
-fu! s:Lookup_clr_namepat(namepat)
-	" Loop over colors
-	let i = 0
-	while i < b:txtfmt_num_colors - 1
-		if a:namepat =~ b:txtfmt_clr_namepat{i}
-			return i
+" 1..8, using the buffer-specific color definition array
+" b:txtfmt_{clr|bgc}_namepat.
+" Use b:txtfmt_cfg_{fg|bg}color{} arrays to determine whether the specified
+" color is active.
+" Return:
+"     Requested color valid and active: Color index between 1 and 8
+"     Requested color invalid: 0
+"     Requested color valid but inactive: -1 * {color_index}
+fu! s:Lookup_clr_namepat(typ, namepat)
+	if a:typ == 'c'
+		let fg_or_bg = 'fg'
+		let clr_or_bgc = 'clr'
+	elseif a:typ == 'k'
+		let fg_or_bg = 'bg'
+		let clr_or_bgc = 'bgc'
+	else
+		echoerr "Internal error - Unknown color type `".a:typ."' passed to Lookup_clr_namepat()"
+		return 0
+	endif
+		
+	" Design Decision: Loop over all colors (active and inactive) exactly
+	" once. Each iteration of the outer loop will handle exactly one active
+	" color and any inactive colors leading up to it.
+	" Note: We perform up to one extra iteration (hence the
+	" b:txtfmt_cfg_num{fg|bg}colors + 1) to handle any inactive colors whose
+	" indices are higher than that of the final active color. The extra
+	" iteration will be skipped if we've already checked the last index.
+	" TODO: Replace this complex system of nested loops with a simple loop
+	" over all colors (active and inactive), followed by a check of the
+	" appropriate color mask (i.e., b:txtfmt_cfg_[fb]gcolormask.) I'm leaving
+	" this for now because it's been tested...
+	let ip = 1   " index into the indirection array
+	let ichk = 1 " Used to loop over inactive colors preceding next active one
+	while ip <= b:txtfmt_cfg_num{fg_or_bg}colors + 1 && ichk < b:txtfmt_num_colors
+		" Determine the next active color index (unless there are no more
+		" active colors, in which case we'll set the index to an invalid
+		" value).
+		if ip <= b:txtfmt_cfg_num{fg_or_bg}colors
+			let i = b:txtfmt_cfg_{fg_or_bg}color{ip}
+		else
+			" Set to one past end of array of all colors.
+			" Recall that b:txtfmt_num_colors is one greater than number of
+			" colors
+			let i = b:txtfmt_num_colors
 		endif
-		let i = i + 1
+		" Check any inactive colors between ichk and i
+		while ichk < i
+			if a:namepat =~ b:txtfmt_{clr_or_bgc}_namepat{ichk}
+				" Found an inactive color
+				return -1 * ichk
+			endif
+			let ichk = ichk + 1
+		endwhile
+		" Check the active color unless we're past end of color array
+		if i < b:txtfmt_num_colors
+			if a:namepat =~ b:txtfmt_{clr_or_bgc}_namepat{i}
+				" Found an active color
+				return i
+			endif
+		endif
+		" Move ichk to point just past i. This is the location of the next
+		" potentially inactive token.
+		let ichk = i + 1
+		let ip = ip + 1
 	endwhile
+
 	" Didn't find it!
-	return -1
+	return 0
 endfu
 " >>>
 " Function: s:Translate_fmt_clr_spec() <<<
@@ -526,18 +584,20 @@ endfu
 " How: The input fmt/clr spec string will be in one of the following formats:
 " "f-"
 " "c-"
-" "f[u][b][i][s][r][c]" if txtfmt 'formats' is set to 'all'
-" --or--
-" "f[u][b][i][s][r]   " if txtfmt 'formats' is set to 'all_but_undercurl'
-" --or--
-" "f[u][b][i]"          if txtfmt 'formats' is set to 'basic'
+" "k-"                      if background colors are active
+" "f[u][b][i][[s][r][[c]]]" Note that s, r and c values must be disallowed for
+"                           certain permutations of b:txtfmt_cfg_longformats
+"                           and b:txtfmt_cfg_undercurl
 " "c<clr_patt>"
+" "k<clr_patt>"             if background colors are active
 " Note: <clr_patt> must match one of the color definitions specified by user
 " (or default if user hasn't overriden).
+" Note: Specification of an inactive color is considered to be an error.
 " Return: One of the following:
 " 1) A single fmt token
 " 2) A single clr token
-" 3) '' - empty string if erroneous user entry
+" 3) A single bgc token
+" 4) '' - empty string if erroneous user entry
 " Error: If error, function will set the script-local s:err_str
 " Note: The function logic takes advantage of the fact that both strpart() and
 " string offset bracket notation (s[i]) allow indices past end of string, in
@@ -570,13 +630,15 @@ fu! s:Translate_fmt_clr_spec(s)
 			" [ubi[sr[c]]]
 			let s = strpart(s, 1)
 			if s =~ '[^'.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']'
+				" s contains illegal (but not necessarily invalid) char
 				if s !~ '[^ubisrc]'
-					" User has mistakenly used s, r or c with 'short' formats
-					" and/or c with a version of Vim that doesn't support
-					" undercurl. Give an appropriate warning.
-					if b:txtfmt_cfg_formats == 'basic'
-						let s:err_str = "Only 'u', 'b' and 'i' attributes are permitted when 'short' formats are in effect"
-					else " b:txtfmt_cfg_formats == 'all_but_undercurl'
+					" Illegal (but not invalid) char
+					" User has mistakenly used s, r or c with one of the
+					" 'short' formats or c with a version of Vim that doesn't
+					" support undercurl. Give an appropriate warning.
+					if !b:txtfmt_cfg_longformats
+						let s:err_str = "Only 'u', 'b' and 'i' attributes are permitted when one of the 'short' formats is in effect"
+					else
 						" Long formats are in use; hence, we can get here only
 						" if user attempted to use undercurl in version of Vim
 						" that doesn't support it.
@@ -588,48 +650,69 @@ fu! s:Translate_fmt_clr_spec(s)
 				return ''
 			else
 				" Convert the entered chars to a binary val used to get token
+				" Note: Validation has already been performed; hence, we know
+				" that s represents both a valid and active token.
 				let bin_val = 0
 				if s=~'u' | let bin_val = bin_val + 1 | endif
 				if s=~'b' | let bin_val = bin_val + 2 | endif
 				if s=~'i' | let bin_val = bin_val + 4 | endif
-				if b:txtfmt_cfg_formats == 'all' || b:txtfmt_cfg_formats == 'all_but_undercurl'
-					if s=~'s' | let bin_val = bin_val + 8  | endif
-					if s=~'r' | let bin_val = bin_val + 16 | endif
-					if b:txtfmt_cfg_formats == 'all'
-						if s=~'c' | let bin_val = bin_val + 32 | endif
-					endif
-				endif
+				if s=~'s' | let bin_val = bin_val + 8  | endif
+				if s=~'r' | let bin_val = bin_val + 16 | endif
+				if s=~'c' | let bin_val = bin_val + 32 | endif
 				let ret_str = ret_str.nr2char(b:txtfmt_fmt_first_tok + bin_val)
 			endif
 		endif
-	elseif s[0] ==? 'c'
-		" clr string
+	elseif s[0] ==? 'c' || s[0] ==? 'k'
+		if s[0] ==? 'k' && !b:txtfmt_cfg_bgcolor
+			" Oops! Background colors aren't active.
+			let s:err_str = "The current 'tokrange' setting does not support background colors."
+						\." (:help txtfmt-formats)"
+			return ''
+		endif
+		" clr or bgc string
 		if s[1] == '-'
 			if strlen(s) == 2
 				" default format
-				let ret_str = ret_str.nr2char(b:txtfmt_clr_first_tok)
+				let ret_str = ret_str.nr2char(
+							\ s[0] ==? 'c'
+								\ ? b:txtfmt_clr_first_tok
+								\ : b:txtfmt_bgc_first_tok
+				\)
 			else
-				" Shouldn't be anything after c-
-				let s:err_str = 'Unexpected chars after "c-"'
+				" Shouldn't be anything after c- or k-
+				let s:err_str = 'Unexpected chars after "'.s[0].'-"'
 				return ''
 			endif
 		else
-			" Not a default clr request - remainder of string denotes a
+			" Not a default clr/bgc request - remainder of string denotes a
 			" color
+			let typ = s[0]
 			let s = strpart(s, 1)
 			" Determine which color index corresponds to color pattern
-			let clr_ind = s:Lookup_clr_namepat(s)
-			if clr_ind < 0
+			let clr_ind = s:Lookup_clr_namepat(typ, s)
+			if clr_ind == 0
 				let s:err_str = "Invalid color name pattern: '".s."'"
 				return ''
+			elseif clr_ind < 0
+				" TODO_BG: Make sure the help note below is still valid after
+				" help has been updated.
+				let s:err_str = "Color ".(-1 * clr_ind)." is not an active "
+							\.(typ ==? 'c' ? "foreground" : "background")
+							\." color. (:help "
+							\.(typ ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
+				return ''
 			endif
-			" IMPORTANT NOTE: Default clr region is offset zero, which is
-			" different from red=0, green=0, blue=0, which is offset 1.
-			" Thus, we must add 1 to clr index.
-			let ret_str = ret_str.nr2char(b:txtfmt_clr_first_tok + clr_ind + 1)
+			" IMPORTANT NOTE: clr_ind is 1-based index (1 corresponds to first
+			" non-default color)
+			let ret_str = ret_str.nr2char(
+						\(typ ==? 'c'
+							\ ? b:txtfmt_clr_first_tok
+							\ : b:txtfmt_bgc_first_tok)
+						\ + clr_ind)
 		endif
 	else
-		let s:err_str = 'Invalid fmt/clr spec. Must begin with "f" or "c"'
+		let s:err_str = 'Invalid fmt/clr spec. Must begin with '
+			\.(b:txtfmt_cfg_bgcolor ? '"f", "c" or "k"' : '"f" or "c"')
 		return ''
 	endif
 	" Return the token as a string
@@ -637,13 +720,13 @@ fu! s:Translate_fmt_clr_spec(s)
 endfu
 " >>>
 " Function: s:Translate_fmt_clr_list() <<<
-" Purpose: Translate the input comma/dot-separated list of fmt/clr spec atoms
-" into a string of tokens suitable for insertion into the buffer. Validation
-" is performed. Also, cursor offset into translated token string is determined
-" based upon the presence of a dot (replaces comma when it appears between
-" fmt/clr atoms - may also appear as first or last character in fmt/clr spec
-" list).
-" Input: Comma/Dot-separated list of fmt/clr spec atoms.
+" Purpose: Translate the input comma/dot-separated list of fmt/clr/bgc spec
+" atoms into a string of tokens suitable for insertion into the buffer.
+" Validation is performed. Also, cursor offset into translated token string is
+" determined based upon the presence of a dot (replaces comma when it appears
+" between fmt/clr/bgc atoms - may also appear as first or last character in
+" fmt/clr/bgc spec list).
+" Input: Comma/Dot-separated list of fmt/clr/bgc spec atoms.
 " Return: String of the following format:
 " <offset>,<tokstr>
 " Error: Return empty string and set s:err_str
@@ -660,7 +743,7 @@ fu! s:Translate_fmt_clr_list(s)
 	let num_fld = 0			" # of atoms encountered
 	let tokstr = ''			" built up in loop
 	" >>>
-	" Process the fmt/clr spec atom(s) in a loop
+	" Process the fmt/clr/bgc spec atom(s) in a loop
 	while i < len
 		" Find end of spec ([,.] or end of string)
 		" (Commas and dots not allowed except as field sep)
@@ -709,7 +792,7 @@ fu! s:Translate_fmt_clr_list(s)
 				let s:err_str = "fmt/clr spec list contains no fields"
 				return ''
 			elseif sep!='.'
-				let s:err_str = "Trailing comma not allowed in fmt/spec list"
+				let s:err_str = "Trailing comma not allowed in fmt/clr spec list"
 				return ''
 			endif
 		endif
@@ -724,6 +807,7 @@ fu! s:Translate_fmt_clr_list(s)
 			break
 		endif
 		" OLD (implicit) logic for determining cursor offset <<<
+		" TODO_BG: Get rid of this...
 		"if tok=~b:re_fmt_any_stok || tok=~b:re_fmt_etok
 		"	if fmt_begun
 		"		" Fix cursor location (if not already fixed)
@@ -755,10 +839,10 @@ endfu
 " >>>
 " Function: s:Jump_to_tok() <<<
 " Purpose: Jumps forward or backwards (as determined by a:dir), to the
-" v:count1'th nearest token of type given by a:type ('c'=clr 'f'=fmt 'a'=any
-" (clr or fmt)). If 'till' argument is nonzero, jump will position cursor one
-" char position closer to starting location than the sought token. (This
-" behavior is analogous to t and T normal mode commands.)
+" v:count1'th nearest token of type given by a:type ('c'=clr 'k'=bgc 'f'=fmt
+" 'a'=any (clr, bgc or fmt)). If 'till' argument is nonzero, jump will
+" position cursor one char position closer to starting location than the
+" sought token. (This behavior is analogous to t and T normal mode commands.)
 " Note: If the map that invokes this function is a visual-mode mapping,
 " special logic is required to restore the visual selection prior to
 " performing any cursor movement. This is because Vim's default vmap behavior
@@ -773,7 +857,8 @@ endfu
 "	 				b	'begin region' tokens only
 "	 				e	'end region' tokens only
 "	 			{target-type}
-"	 				c = color, f = format, a = color or format
+"	 				c = fg color, k = bg color, f = format,
+"	 				a = fg color, bg color, or format
 " dir		single char indicating direction for search (f=forward, b=back).
 " 			Wrap behavior is determined by the 'wrapscan' option.
 " till		If nonzero, jump lands cursor not on the token, but just 'before'
@@ -807,13 +892,33 @@ endfu
 " search() finds a valid destination, I then accomplish the 'till' move with a
 " subsequent positioning command.
 fu! s:Jump_to_tok(mode, type, dir, till, ...)
+	" Determine whether we jump only to active tokens
+	" By default, we don't.
+	let jtin = exists('b:txtfmtJumptoinactive')
+				\ ? b:txtfmtJumptoinactive
+				\ : exists('g:txtfmtJumptoinactive')
+				\   ? g:txtfmtJumptoinactive
+				\   : 0 
 	" Get the search pattern
+	" Design Decision Needed: Decide whether to permit inactive color tokens
+	" to serve as target of jump. If this is desired, perhaps create special
+	" b:txtfmt_re_CLR_<...> and b:txtfmt_re_BGC_<...> regexes. Alternatively,
+	" use the b:re_no_self_esc and b:re_no_bslash_esc patterns on the
+	" <...>_atom regexes.
+	" Note: Let jumptoinactive option determine whether inactive tokens can
+	" serve as jump targets.
 	if a:type == 'c'
-		let re = b:txtfmt_re_clr_tok
+		let re = b:txtfmt_re_{jtin ? 'CLR' : 'clr'}_tok
 	elseif a:type == 'bc'
-		let re = b:txtfmt_re_clr_stok
+		let re = b:txtfmt_re_{jtin ? 'CLR' : 'clr'}_stok
 	elseif a:type == 'ec'
-		let re = b:txtfmt_re_clr_etok
+		let re = b:txtfmt_re_{jtin ? 'CLR' : 'clr'}_etok
+	elseif a:type == 'k'
+		let re = b:txtfmt_re_{jtin ? 'BGC' : 'bgc'}_tok
+	elseif a:type == 'bk'
+		let re = b:txtfmt_re_{jtin ? 'BGC' : 'bgc'}_stok
+	elseif a:type == 'ek'
+		let re = b:txtfmt_re_{jtin ? 'BGC' : 'bgc'}_etok
 	elseif a:type == 'f'
 		let re = b:txtfmt_re_fmt_tok
 	elseif a:type == 'bf'
@@ -821,11 +926,11 @@ fu! s:Jump_to_tok(mode, type, dir, till, ...)
 	elseif a:type == 'ef'
 		let re = b:txtfmt_re_fmt_etok
 	elseif a:type == 'a'
-		let re = b:txtfmt_re_any_tok
+		let re = b:txtfmt_re_{jtin ? 'ANY' : 'any'}_tok
 	elseif a:type == 'ba'
-		let re = b:txtfmt_re_any_stok
+		let re = b:txtfmt_re_{jtin ? 'ANY' : 'any'}_stok
 	elseif a:type == 'ea'
-		let re = b:txtfmt_re_any_etok
+		let re = b:txtfmt_re_{jtin ? 'ANY' : 'any'}_etok
 	else
 		" Error - shouldn't ever get here - just return
 		return ''
@@ -951,8 +1056,8 @@ fu! s:Mapwarn_check(lhs, rhs, mode, add)
 	if exists('g:txtfmt_mapwarn_cnt')
 		while i < g:txtfmt_mapwarn_cnt
 			if a:lhs == g:txtfmt_mapwarn_lhs{i} &&
-				\a:rhs == g:txtfmt_mapwarn_rhs{i} &&
-				\a:mode == g:txtfmt_mapwarn_mode{i}
+				\ a:rhs == g:txtfmt_mapwarn_rhs{i} &&
+				\ a:mode == g:txtfmt_mapwarn_mode{i}
 				let found = 1
 				break
 			endif
@@ -1158,30 +1263,57 @@ endfu
 " Purpose: Echo to user a table showing the current use of all tokens in the
 " range of fmt/clr tokens.
 " How: Use echo, as this is intended as a temporary showing for informational
-" purposes only, and highlighting of the text is not required.
-" Format: Should be something like this...
-"=== COLORS ===
-"char-nr  description  clr-pattern                                  clr-def
-"180      no color     -
-"181      color0        ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000   #000000
-"182      color1        ^blu\\%[e]$,c:DarkBlue,g:#0000FF            #0000FF
-"183      color2        ^g\\%[reen]$,c:DarkGreen,g:#00FF00          #00FF00
+" purposes only. Highlighting of column headers is accomplished via echohl
+" Format: Should be something like the sample table shown below...
+" Note: char-nr should use the number format indicated by
+" b:txtfmt_cfg_starttok_display.
+" Note: For inactive colors, an asterisk will be prepended to char-nr, and
+" '(inactive)' will be appended to the description. In order to keep the
+" numbers aligned properly, active colors will have a space prepended to the
+" char-nr.
+" TODO: Decide whether it's necessary to wrap inactive char-nr's in parens. If
+" not, get rid of it.
+"=== [FG] COLORS ===
+"char-nr   description        clr-pattern                                clr-def
+"180       no color           -
+"181       Color0             ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000  #000000
+"182       Color1             ^blu\\%[e]$,c:DarkBlue,g:#0000FF           #0000FF
+"183       Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
+".
+".
 "=== FORMAT ===
-"char-nr  description  spec
-"189      no format    -
-"190      italic       i
-"191      bold         b
-"192      bold,italic  bi
+"char-nr   description        spec
+"189       no format          -
+"190       italic             i
+"191       bold               b
+"192       bold,italic        bi
 ".
 ".
 ".
 ".
+" Important Note: The subsequent lines will be output if and only if
+" background colors are enabled.
+"=== BG COLORS ===
+"char-nr   description        clr-pattern                                clr-def
+" 197      no color           -
+"*198      Color0 (inactive)  ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000  #000000
+" 199      Color1             ^blu\\%[e]$,c:DarkBlue,g:#0000FF           #0000FF
+" 200      Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
+" .
+" .
 fu! s:ShowTokenMap()
 	" Loop 2 times - first time is just to calculate column widths
 	let cw1 = 0 | let cw2 = 0 | let cw3 = 0 | let cw4 = 0
+	" Define an array, indexed by fgbg_idx, which may be used to build fg/bg
+	" specific var names.
+	let clr_or_bgc{0} = 'clr'
+	let clr_or_bgc{1} = 'bgc'
 	" Initialize the vars that will accumulate table text
 	let fmt_header = '' | let fmt_lines = ''
 	let clr_header = '' | let clr_lines = ''
+	let bgc_header = '' | let bgc_lines = ''
+	" Determine number format to use for char-nr column
+	let use_hex = strpart(b:txtfmt_cfg_starttok_display, 0, 2) == '0x'
 	let i = 0
 	while i < 2
 		" Loop over all format lines (1 hdr and b:txtfmt_num_formats-1 fmt)
@@ -1190,9 +1322,15 @@ fu! s:ShowTokenMap()
 			let line = ''	" Initialize text for current line
 			" Column 1
 			if iFmt == -1
-				let col1_text = 'char-nr'
+				let col1_text = ' char-nr'
 			else
-				let col1_text = ''.(b:txtfmt_fmt_first_tok + iFmt)
+				let col1_text = b:txtfmt_fmt_first_tok + iFmt
+				if use_hex
+					" Convert to hex
+					let col1_text = TxtfmtUtil_num_to_hex_str(col1_text)
+				endif
+				" Prepend space for alignment
+				let col1_text = ' ' . col1_text
 			endif
 			if i == 0
 				" Calculate col width
@@ -1249,102 +1387,147 @@ fu! s:ShowTokenMap()
 			endif
 			let iFmt = iFmt + 1
 		endwhile
-		" Loop over all color tokens
-		" Index note: In this loop, index 0 refers to 'no color', while index
-		" 1 refers to txtfmtColor{1} (default rgb=000000).
-		let iClr = -1
-		while iClr < b:txtfmt_num_colors
-			let line = ''	" Initialize text for current line
-			" Column 1
-			if iClr == -1
-				let col1_text = 'char-nr'
+		" Loop over fg colors and (if necessary) bg colors
+		let fgbg_idx = 0
+		while fgbg_idx < (b:txtfmt_cfg_bgcolor ? 2 : 1)
+			if fgbg_idx == 0
+				let first_tok = b:txtfmt_clr_first_tok
+				let colormask = b:txtfmt_cfg_fgcolormask
 			else
-				let col1_text = ''.(b:txtfmt_clr_first_tok + iClr)
+				let first_tok = b:txtfmt_bgc_first_tok
+				let colormask = b:txtfmt_cfg_bgcolormask
 			endif
-			if i == 0
-				" Calculate col width
-				if strlen(col1_text) > cw1
-					let cw1 = strlen(col1_text)
-				endif
-			else
-				" Output line
-				let line = line.(col1_text.s:MakeString(' ', cw1 + 2 - strlen(col1_text)))
-			endif
-			" Column 2
-			if iClr == -1
-				let col2_text = 'description'
-			elseif iClr == 0
-				let col2_text = 'no color'
-			else
-				let col2_text = 'Color'.iClr
-			endif
-			if i == 0
-				" Calculate col width
-				if strlen(col2_text) > cw2
-					let cw2 = strlen(col2_text)
-				endif
-			else
-				" Output line
-				let line = line.(col2_text.s:MakeString(' ', cw2 + 2 - strlen(col2_text)))
-			endif
-			" Column 3
-			if iClr == -1
-				let col3_text = 'clr-pattern'
-			elseif iClr == 0
-				let col3_text = '-'
-			else
-				let col3_text = b:txtfmt_clr_namepat{iClr-1}
-			endif
-			if i == 0
-				" Calculate col width
-				if strlen(col3_text) > cw3
-					let cw3 = strlen(col3_text)
-				endif
-			else
-				" Output line
-				let line = line.(col3_text.s:MakeString(' ', cw3 + 2 - strlen(col3_text)))
-			endif
-			" Column 4
-			if iClr == -1
-				let col4_text = 'clr-def'
-			elseif iClr == 0
-				let col4_text = 'N.A.'
-			else
-				let col4_text = b:txtfmt_clr{iClr-1}
-			endif
-			if i == 0
-				" Calculate col width
-				if strlen(col4_text) > cw4
-					let cw4 = strlen(col4_text)
-				endif
-			else
-				" Output line
-				let line = line.(col4_text.s:MakeString(' ', cw4 + 2 - strlen(col4_text)))
-			endif
-			" Accumulate line just built into the list of lines
-			if i == 1
+			" Loop over all color tokens (even inactive ones)
+			" Index note: In this loop, index 0 refers to 'no color', while index
+			" 1 refers to txtfmtColor{1} (default rgb=0x000000).
+			let iClr = -1
+			while iClr < b:txtfmt_num_colors
+				let line = ''	" Initialize text for current line
+				" Column 1
 				if iClr == -1
-					" Store header line separately so that echohl can be used
-					let clr_header = line
+					let col1_text = ' char-nr'
 				else
-					" Regular row in table (non-header)
-					let clr_lines = clr_lines.(iClr==0?'':"\<NL>").line
+					if iClr >= 0
+						let col1_text = (first_tok + iClr)
+						if use_hex
+							" Convert to hex
+							let col1_text = TxtfmtUtil_num_to_hex_str(col1_text)
+						endif
+						" If color is inactive, prepend char-nr with asterisk
+						if iClr > 0 && strpart(colormask, iClr - 1, 1) != '1'
+							" This color is inactive
+							let col1_text = '*' . col1_text
+						else
+							" Prepend space for alignment
+							let col1_text = ' ' . col1_text
+						endif
+					endif
 				endif
-			endif
-			let iClr = iClr + 1
+				if i == 0
+					" Calculate col width
+					if strlen(col1_text) > cw1
+						let cw1 = strlen(col1_text)
+					endif
+				else
+					" Output line
+					let line = line.(col1_text.s:MakeString(' ', cw1 + 2 - strlen(col1_text)))
+				endif
+				" Column 2
+				if iClr == -1
+					let col2_text = 'description'
+				elseif iClr == 0
+					let col2_text = 'no color'
+				else
+					let col2_text = 'Color'.iClr
+					if strpart(colormask, iClr - 1, 1) != '1'
+						let col2_text = col2_text . ' (inactive)'
+					endif
+				endif
+				if i == 0
+					" Calculate col width
+					if strlen(col2_text) > cw2
+						let cw2 = strlen(col2_text)
+					endif
+				else
+					" Output line
+					let line = line.(col2_text.s:MakeString(' ', cw2 + 2 - strlen(col2_text)))
+				endif
+				" Column 3
+				if iClr == -1
+					let col3_text = 'clr-pattern'
+				elseif iClr == 0
+					let col3_text = '-'
+				else
+					let col3_text = b:txtfmt_{clr_or_bgc{fgbg_idx}}_namepat{iClr}
+				endif
+				if i == 0
+					" Calculate col width
+					if strlen(col3_text) > cw3
+						let cw3 = strlen(col3_text)
+					endif
+				else
+					" Output line
+					let line = line.(col3_text.s:MakeString(' ', cw3 + 2 - strlen(col3_text)))
+				endif
+				" Column 4
+				if iClr == -1
+					let col4_text = 'clr-def'
+				elseif iClr == 0
+					let col4_text = 'N.A.'
+				else
+					let col4_text = b:txtfmt_{clr_or_bgc{fgbg_idx}}{iClr}
+				endif
+				if i == 0
+					" Calculate col width
+					if strlen(col4_text) > cw4
+						let cw4 = strlen(col4_text)
+					endif
+				else
+					" Output line
+					let line = line.(col4_text.s:MakeString(' ', cw4 + 2 - strlen(col4_text)))
+				endif
+				" Accumulate line just built into the list of lines
+				if i == 1
+					if iClr == -1
+						" Store header line separately so that echohl can be used
+						if fgbg_idx == 0
+							let clr_header = line
+						else
+							let bgc_header = line
+						endif
+					else
+						" Regular row in table (non-header)
+						if fgbg_idx == 0
+							let clr_lines = clr_lines.(iClr==0?'':"\<NL>").line
+						else
+							let bgc_lines = bgc_lines.(iClr==0?'':"\<NL>").line
+						endif
+					endif
+				endif
+				let iClr = iClr + 1
+			endwhile
+			let fgbg_idx = fgbg_idx + 1
 		endwhile
 		let i = i + 1
 	endwhile
 	echohl Title
-	echo '=== COLORS ==='
+	echo b:txtfmt_cfg_bgcolor ? ' === FG COLORS ===' : ' === COLORS ==='
 	echo clr_header
 	echohl None
 	echo clr_lines
 	echohl Title
-	echo '=== FORMAT ==='
+	echo ' === FORMAT ==='
 	echo fmt_header
 	echohl None
 	echo fmt_lines
+	" If bg colors are not active, we're done
+	if b:txtfmt_cfg_bgcolor
+		echohl Title
+		echo ' === BG COLORS ==='
+		echo bgc_header
+		echohl None
+		echo bgc_lines
+	endif
 endfu
 " >>>
 " Function: s:MoveStartTok() <<<
@@ -1375,39 +1558,148 @@ fu! s:MoveStartTok(moveto, ...)
 		echoerr "Invalid 'starttok' value supplied: `".a:moveto."'"
 		return
 	endif
-	" Get current settings from buffer
+	" Get current settings from buffer-local vars
 	" Assumption: This function can be invoked only from an active txtfmt
 	" buffer
 	let old_starttok = b:txtfmt_cfg_starttok
-	let old_formats = b:txtfmt_cfg_formats
 	" Determine new settings
 	let new_starttok = a:moveto
-	let new_formats = b:txtfmt_cfg_formats
 	" Determine amount of shift (signed value)
 	let l:offset = new_starttok - old_starttok
-	" Correct old formats based upon Vim version if necessary
-	if old_formats == 'all' && old_ver < b:txtfmt_const_vimver_undercurl
-		let old_formats = 'all_but_undercurl'
+	
+	" Before proceeding, cache 'effective' values for bgcolor, longformats and
+	" undercurl. Note that 'effective' values are those that would be in
+	" effect if current Vim version were old_ver. Note that effective
+	" undercurl may differ from b:txtfmt_cfg_undercurl.
+	let bgcolor = b:txtfmt_cfg_bgcolor
+	let longformats = b:txtfmt_cfg_longformats
+	if old_ver != v:version
+		" Effective undercurl could differ from b:txtfmt_cfg_undercurl
+		if b:txtfmt_cfg_undercurlpref && old_ver >= b:txtfmt_const_vimver_undercurl
+			" Undercurl desired and supported
+			let undercurl = 1
+		else
+			" Undercurl either not desired or not supported
+			let undercurl = 0
+		endif
+	else
+		let undercurl = b:txtfmt_cfg_undercurl
 	endif
-	" Determine length of new ranges
-	let new_rangelen = b:txtfmt_const_tokrange_size_{new_formats}
+	" Set a flag that indicates whether we will be reserving space for long
+	" formats before the start of bgc range. Note that this value can be true
+	" even if longformats is false. Also note that its value is N/A if
+	" bgcolors are disabled.
+	let lf_reserved = bgcolor && (longformats || !b:txtfmt_cfg_pack)
+	" Determine size of the entire range
+	let rangelen =
+		\ b:txtfmt_const_tokrange_size_{bgcolor}{lf_reserved}{lf_reserved}
 	" Perform upper-bound check on new range
-	let enc_class = TxtfmtCommon_Encoding_get_class(&enc)
-	if !(new_starttok + new_rangelen - 1 <= b:txtfmt_const_tokrange_limit_{enc_class})
+	if !(new_starttok + rangelen - 1 <=
+		\ b:txtfmt_const_tokrange_limit_{b:txtfmt_cfg_enc_class})
 		" Invalid destination for move!
 		echoerr "Starttok value of `".new_starttok."' causes upper bound for encoding `"
-			\.&enc."' to be exceeded"
+			\.b:txtfmt_cfg_enc."' to be exceeded"
 		return
 	endif
 	" If here, move is legal.
-	" STEP 1: Translate only the unescaped tokens
-	exe '%s/'.b:txtfmt_re_any_tok.'/\='
+	" Record whether buffer is modified before we start modifying it. This
+	" information is used by modeline processing to determine whether save is
+	" required.
+	let b:txtfmt_ml_save_modified = &modified
+
+	" Build 2 character class interiors (i.e., without the [ ]):
+	" 1) all chars that are tokens under old range
+	" 2) all chars that are tokens under new range
+	" Begin the first range, which begins with fg color and ends either with
+	" formats (no bg colors or discontinuity between formats and bg colors) or
+	" bg colors.
+	" Note: The end of the first range is determined independently of
+	" lf_reserved, as the range includes only tokens actually used.
+	let re_old_tokrange = nr2char(old_starttok).'-'
+	let re_new_tokrange = nr2char(new_starttok).'-'
+	if !bgcolor || !(longformats && undercurl)
+		" End first range after format tokens
+		" Calculate length of range
+		let end_offset = b:txtfmt_const_tokrange_size_{0}{longformats}{undercurl} - 1
+		" Close the range
+		let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + end_offset)
+		let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + end_offset)
+		" If bgcolor is enabled, start a new range so that logic after this if
+		" block needn't know or care whether it was entered
+		if bgcolor
+			" Determine offset to start of bgc range
+			let start_offset = b:txtfmt_const_tokrange_size_{0}{lf_reserved}{lf_reserved}
+			let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + start_offset).'-'
+			let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + start_offset).'-'
+		endif
+	endif
+	" If bgcolor is enabled, need to close the first or second range. (If no
+	" bgcolor, first and only range has already been closed.)
+	if bgcolor
+		let end_offset = b:txtfmt_const_tokrange_size_{1}{lf_reserved}{lf_reserved} - 1
+		let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + end_offset)
+		let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + end_offset)
+	endif
+
+	" STEP 1: (If and only if escaping is permitted)
+	" Before translating any tokens, need to escape characters that are not
+	" currently tokens, but will be after the move. Escapes, if applicable,
+	" must be taken into account.
+	" Note: Also, need to escape any escape chars that would be considered escaping
+	" or escaped chars after the move. E.g. (if esc=bslash)
+	" <Bslash><Tok> should become <Bslash><Bslash><Bslash><Tok> to ensure that
+	" the effective sequence `<Bslash><Tok>' is preserved.
+	" The algorithm for `esc=bslash' may be expressed as follows: Escape each
+	" char in a sequence consisting of any number of backslashes terminated
+	" with a token. Note that it doesn't matter whether number of backslashes
+	" is even or odd, since the assumption is that prior to the move, neither
+	" the backslashes nor the token chars have any special meaning.
+	if b:txtfmt_cfg_escape != 'none'
+		" Note: This concat order is *much* more efficient than the
+		" alternative (since tokens are less common than non-token chars)
+		let re_need_esc =
+			\'\%(['.re_new_tokrange.']'
+			\.'\&[^'.re_old_tokrange.']\)'
+		if b:txtfmt_cfg_escape == 'bslash'
+			silent! exe '%s/\%(\\\%(\\*'.re_need_esc.'\)\@=\|'.re_need_esc.'\)/\\\0/g'
+		elseif b:txtfmt_cfg_escape == 'self'
+			" TODO_BG: Decide whether to use escape() on re_need_esc or
+			" whether to hardcode the extra escapes...
+			silent! exe '%s/'.substitute(b:re_no_self_esc, 'placeholder',
+				\ escape(re_need_esc, '&\'), '').'/\0\0/g'
+		endif
+	endif
+
+	" STEP 2: Translate token range
+	let re_move = '['.re_old_tokrange.']'
+	if b:txtfmt_cfg_escape != 'none'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let re_move = b:re_no_bslash_esc.re_move
+		elseif b:txtfmt_cfg_escape == 'self'
+			let re_move = substitute(b:re_no_self_esc, 'placeholder', re_move, '')
+		endif
+	endif
+	silent! exe '%s/'.re_move.'/\='
 		\.'nr2char(char2nr(submatch(0)) + l:offset)'
 		\.'/g'
-	" STEP 2: Remove escape chars for characters that are txtfmt tokens under
-	" old tokrange setting, but not under new. 
-	" Design Decision: For backslash escape method, remove only backslashes
-	" escaping txtfmt tokens.
+
+	" STEP 3: (If and only if escaping is permitted)
+	" Remove escape chars for characters that are txtfmt tokens under old
+	" tokrange setting, but not under new. Also, since this post-unescaping
+	" step is the complement of the pre-escaping performed above, we must
+	" unescape backslashes that occur in sequences leading up to the escaped
+	" token. E.g.,
+	" <Bslash><Bslash><Bslash><Tok> would become <Bslash><Tok>, since neither
+	" the <Bslash> nor the subsequent <Tok> is significant after the move.
+	" Note that there's no need to check for even/odd number of backslashes
+	" preceding tokens. The number will always be odd. For proof, see the
+	" Rationale below.
+	" Note: Any character that is in the old tokrange but not the new is an
+	" escaped token that no longer needs escaping.
+	" Rationale: All unescaped tokens of the old range have been translated,
+	" and hence will be tokens in the new range as well. Thus, any token that
+	" is within the old range but not within the new must, by definition, have
+	" been escaped (else it would have been translated to the new range).
 	" Design Decision: An escape is an escape if it's escaping any txtfmt
 	" token, even a useless 'no-format' or 'no-color' token appearing outside
 	" a region. (Recall that I don't highlight these to facilitate removal by
@@ -1415,27 +1707,19 @@ fu! s:MoveStartTok(moveto, ...)
 	" Rationale: The goal of this function is not to clean up user's file, but
 	" simply to translate tokrange
 	if b:txtfmt_cfg_escape != 'none'
-		if b:txtfmt_cfg_escape == 'bslash'
-			let re_esc_pair = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<=\(\\\)\('
-				\.b:txtfmt_re_any_tok_atom.'\)'
-		elseif b:txtfmt_cfg_escape == 'self'
-			" IMPORTANT NOTE: This pattern is intended to be used only in a global
-			" substitution; hence, it is not necessary to use assertions to ensure
-			" that the actual escape char ends up in \1. This is because the first
-			" token in a sequence of escape/escapee pairs is always an escape, as
-			" is every other one after that in the sequence. A '%s///' works this
-			" way naturally.
-			let re_esc_pair = '\('.b:txtfmt_re_any_tok_atom.'\)\(\1\)'
-		endif
+		" Note: This concat order is *much* more efficient than the
+		" alternative (since tokens are less common than non-token chars)
+		let re_noneed_esc =
+			\'\%(['.re_old_tokrange.']'
+			\.'\&[^'.re_new_tokrange.']\)'
 		" Perform substitution
-		" Note: sub-replace-special mechanism translates backslash escapes;
-		" hence the escape() call to get an extra backslash when \1 is
-		" backslash.
-		exe '%s/'.re_esc_pair.'/\='
-			\.'char2nr(submatch(2)) >= l:new_starttok &&'
-			\.' char2nr(submatch(2)) <= l:new_starttok + l:new_rangelen - 1'
-			\.' ? escape(submatch(1), "\\").submatch(2)'
-			\.' : submatch(2)/g'
+		if b:txtfmt_cfg_escape == 'bslash'
+			" Note: The nature of global substitutions is such that the first
+			" char matched will always be an escaping (not an escaped) char.
+			silent! exe '%s/\\\(\\\%(\\*'.re_noneed_esc.'\)\@=\|'.re_noneed_esc.'\)/\1/g'
+		else " self-escape
+			silent! exe '%s/\('.re_noneed_esc.'\)\(\1\)/\1/g'
+		endif
 	endif
 	" Cause buffer to be refreshed with the new settings
 	" Note: The following events are consumed by modeline processing logic,
@@ -1443,9 +1727,31 @@ fu! s:MoveStartTok(moveto, ...)
 	" Note: <f-args> ensures that new_starttok is a string. This is important
 	" because it permits the modeline processing function to respect user's
 	" choice of hex or dec when altering the modeline.
-	let b:txtfmt_event_new_starttok = new_starttok
-	let b:txtfmt_event_new_formats = new_formats
+	let b:txtfmt_ml_new_starttok = new_starttok
 	:Refresh
+endfu
+endif	" if !exists('*s:MoveStartTok')
+" >>>
+" Function: s:LengthenTokRange() <<<
+" IMPORTANT NOTE: Special care must be taken when defining this function, as
+" it invokes :Refresh command, which causes the script to be re-sourced. This
+" leads to E127 'Cannot redefine function' when fu[!] is encountered, since
+" the function is in the process of executing.
+if exists('g:txtfmtAllowxl') && g:txtfmtAllowxl && !exists('*s:LengthenTokRange')
+" Model the 2 ranges
+" Key:
+" c=fg colors
+" f=short formats
+" F=long formats with no undercurl attribute
+" U=long formats with undercurl attribute
+" k=bg colors
+"
+" Extended
+" cccccccccffffffffkkkkkkkkk
+" Extended long
+" cccccccccffffffffFFFFFFFFFFFFFFFFFFFFFFFFUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUkkkkkkkkk
+fu! s:LengthenTokRange(...)
+	" TODO: Remove this after committing once.
 endfu
 endif	" if !exists('*s:MoveStartTok')
 " >>>
@@ -1460,14 +1766,21 @@ endif	" if !exists('*s:MoveStartTok')
 " 			Note: This number is actually a byte index, such as would be
 " 			returned by Vim's col() function.
 " Return: Variable format string as follows:
-" *** color token ***
-" c<clr_num>
+" *** fg color token ***
+" c<clr_num> [(inactive)]
 " Note: <clr_num> is 1 based.
+" Also Note: `(inactive)' is appended if the token corresponds to a color that
+" is not in the active color mask
+" *** bg color token ***
+" k<clr_num> [(inactive)]
+" Note: <clr_num> is 1 based.
+" Also Note: `(inactive)' is appended if the token corresponds to a color that
+" is not in the active color mask
 " *** format token ***
 " f<[u][b][i]>
 " i.e., the format descriptor in fiducial form
 " *** non-token ***
-" <ascii_char_code>
+" <char_code>
 " *** invalid char location ***
 " 'NUL' (just like Vim's ga builtin)
 " *** invalid inputs ***
@@ -1512,7 +1825,8 @@ fu! s:GetTokInfo(...)
 	" position of character about which information is desired. Obtain a
 	" string whose first character is the character of interest.
 	" Note: char2nr considers only first character in a string, so we don't
-	" need to strip subsequent characters.
+	" need to strip subsequent characters yet (and we can't do so with
+	" byte-aware strpart anyway).
 	let ch = strpart(getline(line), col - 1)
 	" Note: If input position was invalid, ch will contain empty string.
 	if ch == ''
@@ -1521,6 +1835,9 @@ fu! s:GetTokInfo(...)
 	endif
 	" If here, we have a character! Get its character code.
 	let char_nr = char2nr(ch)
+	" Get *single* char corresponding to the char code.
+	" Note: strpart() and expr-[] deal with bytes not chars!
+	let ch = nr2char(char_nr)
 	" Determine the range within which token lies
 	if char_nr >= b:txtfmt_fmt_first_tok && char_nr <= b:txtfmt_fmt_last_tok
 		" fmt token
@@ -1529,10 +1846,28 @@ fu! s:GetTokInfo(...)
 		" clr token
 		" offset 0 = 'no color', represented by 'c-'
 		" offset i = txtfmtColor{i}
-		" Note: User-visible array is 1-based, though internal array is
-		" 0-based.
+		" Note: User-visible array is 1-based, and b:txtfmt_clr_first_tok
+		" corresponds to the default fg color token
 		let offset = char_nr - b:txtfmt_clr_first_tok
-		return 'c'.(offset == 0 ? '-' : ''.offset.'')
+		let ret_str = 'c'.(offset == 0 ? '-' : ''.offset.'')
+		" Distinguish between active/inactive start color tokens
+		if char_nr > b:txtfmt_clr_first_tok && ch !~ '['.b:txtfmt_re_clr_stok_atom.']'
+			let ret_str = ret_str.' (inactive)'
+		endif
+		return ret_str
+	elseif char_nr >= b:txtfmt_bgc_first_tok && char_nr <= b:txtfmt_bgc_last_tok
+		" bgc token
+		" offset 0 = 'no color', represented by 'k-'
+		" offset i = txtfmtColor{i}
+		" Note: User-visible array is 1-based, and b:txtfmt_bgc_first_tok
+		" corresponds to the default bg color token
+		let offset = char_nr - b:txtfmt_bgc_first_tok
+		let ret_str = 'k'.(offset == 0 ? '-' : ''.offset.'')
+		" Distinguish between active/inactive start color tokens
+		if char_nr > b:txtfmt_bgc_first_tok && ch !~ '['.b:txtfmt_re_bgc_stok_atom.']'
+			let ret_str = ret_str.' (inactive)'
+		endif
+		return ret_str
 	else
 		" Not a txtfmt token - just return ascii value
 		return ''.char_nr.''
@@ -1553,7 +1888,7 @@ endfu
 fu! s:Expand_user_map_macro(s)
 	let re_ins_tok_i   = '^i\\:\(.\+\)$'
 	let re_ins_tok_n   = '^n\([1-9]\d*\)\?\\\(v\?\)\([iIaAoOs]\):\(.\+\)$'
-	let re_jump_to_tok = '^\([nvio]\)\([1-9]\d*\)\?\([][]\)\(t\?\)\([be]\?[fca]\)'
+	let re_jump_to_tok = '^\([nvio]\)\([1-9]\d*\)\?\([][]\)\(t\?\)\([be]\?[fkca]\)'
 	" Determine which macro type we have
 	if a:s =~ re_ins_tok_n . '\|' . re_ins_tok_i
 		" Insert-token macro
@@ -1607,66 +1942,6 @@ fu! s:Expand_user_map_macro(s)
 				\.(strlen(l:count) ? (", ".l:count) : "")
 				\.")<CR>"
 		endif
-	else
-		let s:err_str = "Invalid user-map expansion sequence: `<".a:s.">'"
-		return ''
-	endif
-	" If here, expansion was successul. Return the expanded text.
-	return seq
-endfu
-" >>>
-" Function: s:OldExpand_user_map_macro() <<<
-" Purpose: Expand the input string, which is assumed to be the `...' in one of
-" the user-map expansion sequences of the form <...>.
-" Return: If the macro is valid, return the expanded text, just as it would
-" appear in the rhs of the map; otherwise, an empty string.
-fu! s:OldExpand_user_map_macro(s)
-	let re_ins_tok_i   = '^i:\(.\+\)$'
-	let re_ins_tok_n   = '^n\(v\?\)\([iIaAoOs]\):\(.\+\)$'
-	let re_jump_to_tok = '^\([1-9]\d*\)\?\([][]\)\(t\?\)\([fFcCaA]\)'
-	" Determine which macro type we have
-	if a:s =~ re_ins_tok_n . '\|' . re_ins_tok_i
-		" Insert-token macro
-		if a:s[0] == 'n'
-			" Insert-token macro (normal)
-			let end_in_norm   = substitute(a:s, re_ins_tok_n, '\1', '') == 'v'
-			let enter_ins_cmd = substitute(a:s, re_ins_tok_n, '\2', '')
-			let fmtclr_list   = substitute(a:s, re_ins_tok_n, '\3', '')
-		else
-			" Insert-token macro (insert)
-			let fmtclr_list = substitute(a:s, re_ins_tok_i, '\1', '')
-		endif
-		" Validate / Translate the fmt/clr list
-		let tokstr = s:Translate_fmt_clr_list(fmtclr_list)
-		if tokstr==''
-			" Invalid fmt/clr list
-			" TODO: Perhaps fix up the error string.
-			let s:err_str = "Invalid fmt/clr list in user map rhs: ".s:err_str
-			return ''
-		endif
-		" Create the mode-specific expansion text
-		if a:s[0] == 'n'
-			" normal mode
-			let seq = ":call <SID>Insert_tokstr('"
-				\.tokstr."', '".enter_ins_cmd."', 1, ".end_in_norm.")<CR>"
-				\.":call <SID>Adjust_cursor()<CR>"
-		else
-			" insert mode
-			let seq = "<C-R>=<SID>Insert_tokstr('".tokstr."', 'i', 1, 0)<CR>"
-			\."<C-R>=<SID>Adjust_cursor()<CR>"
-		endif
-	elseif a:s =~ re_jump_to_tok
-		" Jump to token macro
-		let l:count  = substitute(a:s, re_jump_to_tok, '\1', '')
-		let l:dir    = substitute(a:s, re_jump_to_tok, '\2', '') == '[' ? 'b' : 'f'
-		let l:till   = substitute(a:s, re_jump_to_tok, '\3', '') == 't' ? 1 : 0
-		let l:target = substitute(a:s, re_jump_to_tok, '\4', '')
-		" TODO - Figure out how to handle the mode argument...
-		" Probably make it optional, and if not supplied, get from mode()...
-		let l:seq = ":<C-U>call <SID>Jump_to_tok('"
-			\.l:target."', '".l:dir."', ".l:till
-			\.(strlen(l:count) ? (", ".l:count) : "")
-			\.")<CR>"
 	else
 		let s:err_str = "Invalid user-map expansion sequence: `<".a:s.">'"
 		return ''
@@ -1729,81 +2004,19 @@ fu! s:Translate_user_map_rhs(rhs)
 		"let seq = substitute(seq, '\\\(.\)', '\1', 'g')
 		let seq = substitute(seq, '<rt>', '>', 'g')
 		" Expand the macro
-		let seq = s:Expand_user_map_macro(seq)
+		let expseq = s:Expand_user_map_macro(seq)
+		" Was it valid?
+		if expseq == ''
+			let s:err_str = "Invalid usermap rhs: " . seq 
+			return ''
+		endif
 		" Append the expanded text to the return string
-		let ret_str = ret_str.seq
+		let ret_str = ret_str.expseq
 		" Make i2 point just past `>>' (it's on the 1st `>')
 		let i2 = i2+2
 	endwhile
 	" Return the now completely expanded string
 	return ret_str
-endfu
-" >>>
-" Function: s:OldTranslate_user_map_rhs() <<<
-" Purpose: Convert the rhs specified in a user map definition string to the
-" rhs that will be used in the actual map command. Special <...> sequences are
-" expanded.
-" Input: rhs string as it would appear in map cmd, but with both < and \
-" backslash-escaped (as well as any > that needs to be included literally
-" within the <..>).
-" Return: The rhs as it would appear in a map command (1 level of
-" backslash-escaping removed)
-" Error: Set s:err_str and return empty string
-fu! s:OldTranslate_user_map_rhs(rhs)
-	let s = a:rhs
-	" Catch empty (or all ws) strings - shouldn't be input
-	if s =~ '^[[:space:]]*$'
-		let s:err_str = "f:User map rhs must contain at least 1 non-whitespace char"
-		return ''
-	endif
-	" Loop until special sequences are all expanded
-	let ret_str = ''	" build up in loop
-	let len = strlen(s)
-	let i1 = 0
-	let i2 = 0
-	while i2 < len
-		" Find start of <...> sequence - this is safe even if i2 is index of
-		" next '<'
-		let i1 = matchend(s, '\%(\\\_.\|[^<]\)*', i2)
-		if i1 < 0
-			" Shouldn't get in here using matchend with pattern above
-			let s:err_str = "f:Internal error from within Translate_user_map_rhs() - report to developer"
-			return ''
-		elseif i1 >= len
-			" String is exhausted - accumulate up to end
-			let ret_str = ret_str.strpart(s, i2)
-			break
-		else
-			" Accumulate, prior to processing <...>
-			let ret_str = ret_str.strpart(s, i2, i1-i2)
-		endif
-		" Now find closing '>', skipping over any backslash escaped ones
-		let i2 = match(s, '\%(\\.\)*\zs>', i1)
-		if i2 < 0
-			let s:err_str = "f:Unescaped and unmatched '<' in user map rhs"
-			return ''
-		endif
-		" Extract stuff inside < >
-		if i2 > i1+1
-			" i1 points to < and i2 points to >
-			let seq = strpart(s, i1+1, i2-i1-1)
-		else
-			let s:err_str = "f:Empty fmt/clr map sequence"
-			return ''
-		endif
-		" We have a non-empty sequence. Unescape it before passing to
-		" Expand_user_map_macro for expansion.
-		let seq = substitute(seq, '\\\(.\)', '\1', 'g')
-		" Expand the macro
-		let seq = s:Expand_user_map_macro(seq)
-		" Escape the replacement string the same as non-replaced text
-		let ret_str = ret_str.escape(seq, '\')
-		" Make i2 point just past processed text (past closing '>')
-		let i2 = i2+1
-	endwhile
-	" Unescape expanded rhs to get into form used in map cmd
-	" (Remove 1 level of escaping)
-	return substitute(ret_str, '\\\(.\)', '\1', 'g')
 endfu
 " >>>
 " Function: s:Do_user_maps() <<<
@@ -1960,8 +2173,8 @@ fu! s:Define_user_map_defaults()
 	" Map CTRL-\f in insert mode to end current format region.
 	let g:txtfmtUsermap2 = 'inoremap <C-\>f <<i\:f->>'
 
-	" Map CTRL-\c in insert mode to end current color region.
-	let g:txtfmtUsermap3 = 'inoremap <C-\>c <<i\:c->>'
+	" Map CTRL-\k in insert mode to end current bg color region.
+	let g:txtfmtUsermap3 = 'inoremap <C-\>k <<i\:k->>'
 
 	" Map \t in normal mode to embolden, underline and center (i.e.
 	" 'title-ize') the current line
@@ -2019,6 +2232,11 @@ fu! s:Define_user_map_defaults()
 	" specification of a count with an insert-token expansion macro.)
 	let g:txtfmtUsermap11 =
 	    \'nnoremap <LocalLeader>_ <<n4\s:fb.f->>'
+
+	" Map <LocalLeader>rb in normal mode to make the current line bold with a
+	" red background.
+	let g:txtfmtUsermap12 =
+	    \'nnoremap <LocalLeader>rb <<n\vI:kr,fb>><<n\vA:f-,k->>'
 	" >>>
 endfu
 " >>>
@@ -2040,9 +2258,12 @@ fu! s:Do_config()
 	" excluded!
 	" Decide whether there's a workaround. For now, don't do this if we're
 	" dealing with tokens above 255.
-	if (b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1 <= 255) 
-		let val = '^'.b:txtfmt_cfg_starttok.'-'.
-					\(''.(b:txtfmt_cfg_starttok + b:txtfmt_num_formats + b:txtfmt_num_colors - 1))
+	" Note: I'm intentionally including inactive color tokens in the ranges.
+	" Rationale: I don't feel that the complexity that would be added by the
+	" logic to exclude them is justified by any advantage doing so would
+	" provide.
+	if (b:txtfmt_last_tok <= 255) 
+		let val = '^'.b:txtfmt_clr_first_tok.'-'.b:txtfmt_last_tok
 		exe 'setlocal iskeyword+='.val
 		call s:Add_undo('setlocal iskeyword-='.val)
 	endif
@@ -2061,7 +2282,7 @@ fu! s:Do_config()
 	endif
 	" >>>
 	" TEST ONLY: Define some default user-maps for testing <<<
-	" call s:Define_user_map_defaults()
+	"call s:Define_user_map_defaults()
 	" >>>
 	" Process any user-defined maps <<<
 	call s:Do_user_maps()
@@ -2072,6 +2293,58 @@ call s:Do_config()
 " >>>
 " Public-interface functions <<<
 " Function: g:Txtfmt_GetTokInfo() <<<
+" !!!!!!!!!!!!!!!!!!!!!!
+" !!!!! DEPRECATED !!!!!
+" !!!!!!!!!!!!!!!!!!!!!!
+" Purpose: Return a string, which gives information about a token at a
+" specific line/col. If optional line/col pair is not supplied, cursor
+" location will be assumed.
+" Important Note: This function is conceptually a wrapper for script-local
+" s:GetTokInfo. For backwards-compatibility reasons, however, the meaning of
+" the 'col' parameter is slightly different. For this function, col represents
+" a 1-based char index; for s:GetTokInfo it is a 1-based byte index.
+" Note: See s:GetTokInfo for additional description
+" Interface note: This function is meant to be used by plugin user; e.g., from
+" mappings.
+" IMPORTANT NOTE: This function now works for multibyte encodings.
+fu! Txtfmt_GetTokInfo(...)
+	" Call s:GetTokInfo with the appropriate arguments
+	if a:0 == 0
+		return s:GetTokInfo()
+	elseif a:0 == 1
+		" Makes no sense to supply line but not column!
+		echoerr 'Txtfmt_GetTokInfo(): Attempt to specify line without column'
+		return ''
+	elseif a:0 == 2
+		" Check for nonnegative line number
+		if a:1 =~ '^[1-9][0-9]*$'
+			let line = a:1
+		else
+			echoerr 'Txtfmt_GetTokInfo(): '.a:1.' is not a valid line #'
+			return ''
+		endif
+		" Check for nonnegative col number
+		if a:2 =~ '^[1-9][0-9]*$'
+			" Note: Input col is 1-based character index. Use byteidx to convert
+			" to 1-based byte index for strpart.
+			let col = byteidx(getline(line), a:2 - 1) + 1
+			if col == 0
+				" Invalid (too large) col position - not error...
+				return 'NUL'
+			else
+				return s:GetTokInfo(line, col)
+			endif
+		else
+			echoerr 'Txtfmt_GetTokInfo(): '.a:2.' is not a valid col #'
+			return ''
+		endif
+	else
+		echoerr 'Txtfmt_GetTokInfo(): Wrong # of args - should be 0 or 2'
+		return ''
+	endif
+endfu
+" >>>
+" Function: g:OldTxtfmt_GetTokInfo() <<<
 " Purpose: Return a string, which gives information about a token at a
 " specific line/col. If optional line/col pair is not supplied, cursor
 " location will be assumed.
@@ -2099,7 +2372,9 @@ call s:Do_config()
 " Interface note: This function is meant to be used by plugin user; e.g., from
 " mappings.
 " IMPORTANT NOTE: This function now works for multibyte encodings.
-fu! Txtfmt_GetTokInfo(...)
+" TODO_BG: Delete this "old" version of the function if I haven't rolled back
+" prior to the release of 2.0...
+fu! OldTxtfmt_GetTokInfo(...)
 	" The output of the if/else will be a variable (ch) whose first character
 	" is the token about which information is requested
 	if a:0 == 0
@@ -2209,18 +2484,24 @@ call s:Def_map('n', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_t
 call s:Def_map('n', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'f', 0)<CR>")
 call s:Def_map('n', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'b', 0)<CR>")
 call s:Def_map('n', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'f', 0)<CR>")
+call s:Def_map('n', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'b', 0)<CR>")
+call s:Def_map('n', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'f', 0)<CR>")
 call s:Def_map('n', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'b', 0)<CR>")
 call s:Def_map('n', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'f', 0)<CR>")
 call s:Def_map('n', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'b', 0)<CR>")
 call s:Def_map('n', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'f', 0)<CR>")
 call s:Def_map('n', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'b', 0)<CR>")
 call s:Def_map('n', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'f', 0)<CR>")
+call s:Def_map('n', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'b', 0)<CR>")
+call s:Def_map('n', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'f', 0)<CR>")
 call s:Def_map('n', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'b', 0)<CR>")
 call s:Def_map('n', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'f', 0)<CR>")
 call s:Def_map('n', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'b', 0)<CR>")
 call s:Def_map('n', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'f', 0)<CR>")
 call s:Def_map('n', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'b', 0)<CR>")
 call s:Def_map('n', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'f', 0)<CR>")
+call s:Def_map('n', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'b', 0)<CR>")
+call s:Def_map('n', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'f', 0)<CR>")
 call s:Def_map('n', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'b', 0)<CR>")
 call s:Def_map('n', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'f', 0)<CR>")
 " >>>
@@ -2229,18 +2510,24 @@ call s:Def_map('v', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_t
 call s:Def_map('v', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'f', 0)<CR>")
 call s:Def_map('v', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'b', 0)<CR>")
 call s:Def_map('v', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'f', 0)<CR>")
+call s:Def_map('v', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'b', 0)<CR>")
+call s:Def_map('v', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'f', 0)<CR>")
 call s:Def_map('v', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'b', 0)<CR>")
 call s:Def_map('v', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'f', 0)<CR>")
 call s:Def_map('v', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'b', 0)<CR>")
 call s:Def_map('v', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'f', 0)<CR>")
 call s:Def_map('v', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'b', 0)<CR>")
 call s:Def_map('v', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'f', 0)<CR>")
+call s:Def_map('v', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'b', 0)<CR>")
+call s:Def_map('v', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'f', 0)<CR>")
 call s:Def_map('v', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'b', 0)<CR>")
 call s:Def_map('v', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'f', 0)<CR>")
 call s:Def_map('v', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'b', 0)<CR>")
 call s:Def_map('v', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'f', 0)<CR>")
 call s:Def_map('v', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'b', 0)<CR>")
 call s:Def_map('v', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'f', 0)<CR>")
+call s:Def_map('v', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'b', 0)<CR>")
+call s:Def_map('v', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'f', 0)<CR>")
 call s:Def_map('v', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'b', 0)<CR>")
 call s:Def_map('v', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'f', 0)<CR>")
 " >>>
@@ -2250,18 +2537,24 @@ call s:Def_map('o', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_t
 call s:Def_map('o', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'f', 0)<CR>")
 call s:Def_map('o', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'b', 0)<CR>")
 call s:Def_map('o', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'f', 0)<CR>")
+call s:Def_map('o', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'b', 0)<CR>")
+call s:Def_map('o', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'f', 0)<CR>")
 call s:Def_map('o', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'b', 0)<CR>")
 call s:Def_map('o', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'f', 0)<CR>")
 call s:Def_map('o', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'b', 0)<CR>")
 call s:Def_map('o', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'f', 0)<CR>")
 call s:Def_map('o', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'b', 0)<CR>")
 call s:Def_map('o', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 0)<CR>")
+call s:Def_map('o', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'b', 0)<CR>")
+call s:Def_map('o', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'f', 0)<CR>")
 call s:Def_map('o', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 0)<CR>")
 call s:Def_map('o', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 0)<CR>")
 call s:Def_map('o', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 0)<CR>")
 call s:Def_map('o', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 0)<CR>")
 call s:Def_map('o', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 0)<CR>")
 call s:Def_map('o', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 0)<CR>")
+call s:Def_map('o', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'b', 0)<CR>")
+call s:Def_map('o', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'f', 0)<CR>")
 call s:Def_map('o', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 0)<CR>")
 call s:Def_map('o', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 0)<CR>")
 " >>>
@@ -2270,18 +2563,24 @@ call s:Def_map('n', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jum
 call s:Def_map('n', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'f', 1)<CR>")
 call s:Def_map('n', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'b', 1)<CR>")
 call s:Def_map('n', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'f', 1)<CR>")
+call s:Def_map('n', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'b', 1)<CR>")
+call s:Def_map('n', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'f', 1)<CR>")
 call s:Def_map('n', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'b', 1)<CR>")
 call s:Def_map('n', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'f', 1)<CR>")
 call s:Def_map('n', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'b', 1)<CR>")
 call s:Def_map('n', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'f', 1)<CR>")
 call s:Def_map('n', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'b', 1)<CR>")
 call s:Def_map('n', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'f', 1)<CR>")
+call s:Def_map('n', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'b', 1)<CR>")
+call s:Def_map('n', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'f', 1)<CR>")
 call s:Def_map('n', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'b', 1)<CR>")
 call s:Def_map('n', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'f', 1)<CR>")
 call s:Def_map('n', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'b', 1)<CR>")
 call s:Def_map('n', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'f', 1)<CR>")
 call s:Def_map('n', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'b', 1)<CR>")
 call s:Def_map('n', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'f', 1)<CR>")
+call s:Def_map('n', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'b', 1)<CR>")
+call s:Def_map('n', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'f', 1)<CR>")
 call s:Def_map('n', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'b', 1)<CR>")
 call s:Def_map('n', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'f', 1)<CR>")
 " >>>
@@ -2290,18 +2589,24 @@ call s:Def_map('v', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jum
 call s:Def_map('v', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'f', 1)<CR>")
 call s:Def_map('v', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'b', 1)<CR>")
 call s:Def_map('v', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'f', 1)<CR>")
+call s:Def_map('v', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'b', 1)<CR>")
+call s:Def_map('v', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'f', 1)<CR>")
 call s:Def_map('v', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'b', 1)<CR>")
 call s:Def_map('v', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'f', 1)<CR>")
 call s:Def_map('v', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'b', 1)<CR>")
 call s:Def_map('v', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'f', 1)<CR>")
 call s:Def_map('v', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'b', 1)<CR>")
 call s:Def_map('v', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'f', 1)<CR>")
+call s:Def_map('v', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'b', 1)<CR>")
+call s:Def_map('v', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'f', 1)<CR>")
 call s:Def_map('v', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'b', 1)<CR>")
 call s:Def_map('v', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'f', 1)<CR>")
 call s:Def_map('v', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'b', 1)<CR>")
 call s:Def_map('v', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'f', 1)<CR>")
 call s:Def_map('v', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'b', 1)<CR>")
 call s:Def_map('v', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'f', 1)<CR>")
+call s:Def_map('v', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'b', 1)<CR>")
+call s:Def_map('v', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'f', 1)<CR>")
 call s:Def_map('v', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'b', 1)<CR>")
 call s:Def_map('v', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'f', 1)<CR>")
 " >>>
@@ -2311,18 +2616,24 @@ call s:Def_map('o', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jum
 call s:Def_map('o', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'f', 1)<CR>")
 call s:Def_map('o', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'b', 1)<CR>")
 call s:Def_map('o', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'f', 1)<CR>")
+call s:Def_map('o', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'b', 1)<CR>")
+call s:Def_map('o', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'f', 1)<CR>")
 call s:Def_map('o', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'b', 1)<CR>")
 call s:Def_map('o', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'f', 1)<CR>")
 call s:Def_map('o', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'b', 1)<CR>")
 call s:Def_map('o', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'f', 1)<CR>")
 call s:Def_map('o', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'b', 1)<CR>")
 call s:Def_map('o', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 1)<CR>")
+call s:Def_map('o', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'b', 1)<CR>")
+call s:Def_map('o', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'f', 1)<CR>")
 call s:Def_map('o', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 1)<CR>")
 call s:Def_map('o', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 1)<CR>")
 call s:Def_map('o', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 1)<CR>")
 call s:Def_map('o', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 1)<CR>")
 call s:Def_map('o', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 1)<CR>")
 call s:Def_map('o', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 1)<CR>")
+call s:Def_map('o', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'b', 1)<CR>")
+call s:Def_map('o', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'f', 1)<CR>")
 call s:Def_map('o', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 1)<CR>")
 call s:Def_map('o', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 1)<CR>")
 " >>>

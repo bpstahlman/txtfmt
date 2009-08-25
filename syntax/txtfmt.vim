@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2009 Feb 21
+" Last Change: 2008 Dec 11
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -80,7 +80,7 @@ fu! s:Is_match_offset_char_based()
 	return off_is_char
 endfu
 " >>>
-" Function: s:Get_bytes_per_token()
+" Function: s:Get_bytes_per_token() <<<
 " Purpose: Return the number of bytes used to encode the first Txtfmt token,
 " warning user if this number is different from the number of bytes used to
 " encode the last.
@@ -112,6 +112,18 @@ endfu
 " >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
+	" Define a convenience flag that indicates whether background colors are
+	" in effect
+	let bgc_enabled = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let clr_enabled = b:txtfmt_cfg_numfgcolors > 0
+
+	" cui (color uniqueness index) will contain a different index for each
+	" color configuration (and will be empty string in the unlikely event that
+	" both numfgcolors and numbgcolors are 0 - i.e., no colors used)
+	" Note: This strategy is necessary because Vim's highlight groups are not
+	" buffer-specific, but there is a buffer-specific version of txtfmtColor{}
+	let cui = b:txtfmt_color_uniq_idx
+
 	" Concealment group <<<
 	" Create a concealment highlight group, to which others can link
 	" The Ignore group is a preferred group, defined in distributed
@@ -136,29 +148,16 @@ fu! s:Define_syntax()
 			hi link Tf_conceal Ignore
 		endif
 	endif
-	" >>>
-	" 'skip' pattern (option dependent) <<<
-	if b:txtfmt_cfg_escape != 'none'
-		" Make sure tokens that are part of an escape sequence cannot end a
-		" region.
-		" TODO - Decide whether the inner_esc regions obviate the need for the
-		" skip-def.
-		if b:txtfmt_cfg_escape == 'bslash'
-			" TODO - Decide on allowing newlines as tokens (\_. or . ?)
-			let skip_any_def = ' skip=/\\./'
-			let skip_clr_def = ' skip=/\\./'
-			let skip_fmt_def = ' skip=/\\./'
-		else "if b:txtfmt_cfg_escape == 'self'
-			let skip_any_def = ' skip=/\('.b:txtfmt_re_any_tok_atom.'\)\1/'
-			let skip_clr_def = ' skip=/\('
-					\.b:txtfmt_re_any_stok_atom.'\|'.b:txtfmt_re_clr_etok_atom.'\)\1/'
-			let skip_fmt_def = ' skip=/\('
-					\.b:txtfmt_re_any_stok_atom.'\|'.b:txtfmt_re_fmt_etok_atom.'\)\1/'
-		endif
+	" Check for existence of 'conceal' patch (and desire on part of user to
+	" use it)
+	if b:txtfmt_cfg_conceal
+		" Note: 'conceallevel' is window-local
+		set conceallevel=3
+		let concealends = ' concealends'
+		let conceal = ' conceal'
 	else
-		let skip_any_def = ''
-		let skip_clr_def = ''
-		let skip_fmt_def = ''
+		let concealends = ''
+		let conceal = ''
 	endif
 	" >>>
 	" Define match offset that corresponds to a single txtfmt token <<<
@@ -186,207 +185,1144 @@ fu! s:Define_syntax()
 		let b:txtfmt_dbg_syn_off = 'byte'
 	endif
 	" >>>
-	" 'contains' list (option dependent) <<<
-	" Note: I'm intentionally keeping this out of the 'if' for skip_def to
-	" keep the logic compartmentalized.
-	if b:txtfmt_cfg_escape != 'none'
-		" Permit txtfmt regions to contain specially highlighted pairs of
-		" escape-escapee tokens.
-		let contains_any_def = ' contains=Tf_any_inner_esc'
-		let contains_clr_def = ' contains=Tf_clr_inner_esc'
-		let contains_fmt_def = ' contains=Tf_fmt_inner_esc'
-	else
-		let contains_any_def = ''
-		let contains_clr_def = ''
-		let contains_fmt_def = ''
-	endif
-	" >>>
 	" 'containedin' list (option dependent) <<<
 	if b:txtfmt_cfg_nested
 		" Ensure that txtfmt top-level item can be contained by a non-txtfmt
 		" syntax group (e.g. C-language comment).
 		" TODO - Perhaps put inner_esc groups into a cluster.
 		if b:txtfmt_cfg_escape != 'none'
-			let containedin_def = ' containedin=ALLBUT,@Tf_all,Tf_def_tok'
-						\.',Tf_outer_esc,Tf_any_inner_esc,Tf_clr_inner_esc,Tf_fmt_inner_esc'
+			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all,Tf_def_tok'
+						\.',Tf_outer_esc,Tf_any_stok_inner_esc,Tf_clr_etok_inner_esc'
+						\.(bgc_enabled ? ',Tf_bgc_etok_inner_esc' : '').',Tf_fmt_etok_inner_esc'
 		else
-			let containedin_def = ' containedin=ALLBUT,@Tf_all,Tf_def_tok'
+			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all,Tf_def_tok'
 		endif
 	else
 		let containedin_def = ''
 	endif
 	" >>>
 	" Define special default token group <<<
-	" This group ensures that 'no clr' and 'no fmt' tokens at top level
-	" (including those that end a clr only or fmt only group) will be
-	" concealed.
+	" This group ensures that 'no clr', 'no bgc', and 'no fmt' tokens at top
+	" level (including those that end a clr only, bgc only, or fmt only group)
+	" will be concealed.
 	" Order note: This region is defined here to ensure that it has a lower
 	" priority than any of the other txtfmt regions that can be begun by a
 	" default token.
-	exe 'syn match Tf_def_tok /'.b:txtfmt_re_any_etok_atom.'/ contained'
+	exe 'syn match Tf_def_tok /['.b:txtfmt_re_any_etok_atom.']/ contained'.conceal
 	hi link Tf_def_tok Tf_conceal
 	" >>>
 	" Choose cterm or gui versions of color and format assignments
 	if has('gui_running')
-		let clr_eq = ' guifg='
-		let fmt_eq = ' gui='
+		let eq_clr = ' guifg='
+		let eq_bgc = ' guibg='
+		let eq_fmt = ' gui='
 	else
-		let clr_eq = ' ctermfg='
-		let fmt_eq = ' cterm='
+		let eq_clr = ' ctermfg='
+		let eq_bgc = ' ctermbg='
+		let eq_fmt = ' cterm='
 	endif
-	" Loop over the clr only regions <<<
-	let i = 1
-	let ch = nr2char(b:txtfmt_clr_first_tok + 1)
-	while i < b:txtfmt_num_colors
-		" clr{i} region (top level) <<<
+	" NOTES TO PRESERVE
+	" TODO - Decide whether the inner_esc regions obviate the need for the
+	" skip-def. (I don't think so...)
+	" UNDER CONSTRUCTION
+
+	" Create background-color specific concealment groups
+	" Note: Use cui to ensure that different buffers could have different sets
+	" of background colors in effect
+	" Loop over active colors only (with the aid of index indirection array)
+	let pi = 1
+	while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
+		let i = b:txtfmt_cfg_bgcolor{pi}
+		exe 'hi Tf'.cui.'_conceal_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
+		let pi = pi + 1
+	endwhile
+	" Create vars to facilitate switching between normal (toplevel)
+	" concealment group and background-color-specific groups
+	let matchgroup_top_def = ' matchgroup=Tf_conceal'
+	let matchgroup_def = matchgroup_top_def
+	" TODO: Make sure bgc stuff isn't evaluated when !bgc_enabled
+	" BEGIN AUTOCODE
+
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	"===
+	"*** clr
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_clr=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_clr = ' skip=/\\./'
+		else
+			let skip_clr = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_clr = ''
+		let skip_clr = ''
+	endif
+	let end_clr =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_clr =
+		\skip_clr
+		\.contains_clr
+		\.end_clr
+		\.containedin_def
+	let start_clr =
+		\' start=/['
+		\.(bgc_enabled ? b:txtfmt_re_bgc_etok_atom : '').b:txtfmt_re_fmt_etok_atom
+		\.']/'
+	let r2_clr =
+		\skip_clr
+		\.contains_clr
+		\.start_clr
+		\.end_clr
+		\.' contained'
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	"===
+	"*** clr-bgc
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_clrbgc=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_clrbgc = ' skip=/\\./'
+		else
+			let skip_clrbgc = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_clrbgc = ''
+		let skip_clrbgc = ''
+	endif
+	let end_clrbgc =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_clrbgc =
+		\skip_clrbgc
+		\.contains_clrbgc
+		\.end_clrbgc
+		\.' contained'
+	let start_clrbgc =
+		\' start=/['
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/'
+	let r2_clrbgc =
+		\skip_clrbgc
+		\.contains_clrbgc
+		\.start_clrbgc
+		\.end_clrbgc
+		\.' contained'
+	"===
+	"*** clr-bgc-fmt
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_clrbgcfmt=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_clrbgcfmt = ' skip=/\\./'
+		else
+			let skip_clrbgcfmt = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_clrbgcfmt = ''
+		let skip_clrbgcfmt = ''
+	endif
+	let end_clrbgcfmt =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_clrbgcfmt =
+		\skip_clrbgcfmt
+		\.contains_clrbgcfmt
+		\.end_clrbgcfmt
+		\.' contained'
+	" Revert to toplevel (no background color) matchgroup
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"===
+	"*** clr-fmt
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_clrfmt=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_clrfmt = ' skip=/\\./'
+		else
+			let skip_clrfmt = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_clrfmt = ''
+		let skip_clrfmt = ''
+	endif
+	let end_clrfmt =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_clrfmt =
+		\skip_clrfmt
+		\.contains_clrfmt
+		\.end_clrfmt
+		\.' contained'
+	" Define the r2 region vars if and only if at least one of the
+	" region types whose end token could begin this region is active
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	let start_clrfmt =
+		\' start=/['
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/'
+	let r2_clrfmt =
+		\skip_clrfmt
+		\.contains_clrfmt
+		\.start_clrfmt
+		\.end_clrfmt
+		\.' contained'
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	"===
+	"*** clr-fmt-bgc
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_clrfmtbgc=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_clrfmtbgc = ' skip=/\\./'
+		else
+			let skip_clrfmtbgc = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_clrfmtbgc = ''
+		let skip_clrfmtbgc = ''
+	endif
+	let end_clrfmtbgc =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_clrfmtbgc =
+		\skip_clrfmtbgc
+		\.contains_clrfmtbgc
+		\.end_clrfmtbgc
+		\.' contained'
+	" Revert to toplevel (no background color) matchgroup
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	"===
+	"*** bgc
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_bgc=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_bgc = ' skip=/\\./'
+		else
+			let skip_bgc = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_bgc = ''
+		let skip_bgc = ''
+	endif
+	let end_bgc =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_bgc =
+		\skip_bgc
+		\.contains_bgc
+		\.end_bgc
+		\.containedin_def
+	let start_bgc =
+		\' start=/['
+		\.(clr_enabled ? b:txtfmt_re_clr_etok_atom : '').b:txtfmt_re_fmt_etok_atom
+		\.']/'
+	let r2_bgc =
+		\skip_bgc
+		\.contains_bgc
+		\.start_bgc
+		\.end_bgc
+		\.' contained'
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	"===
+	"*** bgc-clr
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_bgcclr=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_bgcclr = ' skip=/\\./'
+		else
+			let skip_bgcclr = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_bgcclr = ''
+		let skip_bgcclr = ''
+	endif
+	let end_bgcclr =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_bgcclr =
+		\skip_bgcclr
+		\.contains_bgcclr
+		\.end_bgcclr
+		\.' contained'
+	let start_bgcclr =
+		\' start=/['
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/'
+	let r2_bgcclr =
+		\skip_bgcclr
+		\.contains_bgcclr
+		\.start_bgcclr
+		\.end_bgcclr
+		\.' contained'
+	"===
+	"*** bgc-clr-fmt
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_bgcclrfmt=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_bgcclrfmt = ' skip=/\\./'
+		else
+			let skip_bgcclrfmt = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_bgcclrfmt = ''
+		let skip_bgcclrfmt = ''
+	endif
+	let end_bgcclrfmt =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_bgcclrfmt =
+		\skip_bgcclrfmt
+		\.contains_bgcclrfmt
+		\.end_bgcclrfmt
+		\.' contained'
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"===
+	"*** bgc-fmt
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_bgcfmt=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_bgcfmt = ' skip=/\\./'
+		else
+			let skip_bgcfmt = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_bgcfmt = ''
+		let skip_bgcfmt = ''
+	endif
+	let end_bgcfmt =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_bgcfmt =
+		\skip_bgcfmt
+		\.contains_bgcfmt
+		\.end_bgcfmt
+		\.' contained'
+	" Define the r2 region vars if and only if at least one of the
+	" region types whose end token could begin this region is active
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	let start_bgcfmt =
+		\' start=/['
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/'
+	let r2_bgcfmt =
+		\skip_bgcfmt
+		\.contains_bgcfmt
+		\.start_bgcfmt
+		\.end_bgcfmt
+		\.' contained'
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	"===
+	"*** bgc-fmt-clr
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_bgcfmtclr=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_bgcfmtclr = ' skip=/\\./'
+		else
+			let skip_bgcfmtclr = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_bgcfmtclr = ''
+		let skip_bgcfmtclr = ''
+	endif
+	let end_bgcfmtclr =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_bgcfmtclr =
+		\skip_bgcfmtclr
+		\.contains_bgcfmtclr
+		\.end_bgcfmtclr
+		\.' contained'
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	" Revert to toplevel (no background color) matchgroup
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"===
+	"*** fmt
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_fmt=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_fmt = ' skip=/\\./'
+		else
+			let skip_fmt = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_fmt = ''
+		let skip_fmt = ''
+	endif
+	let end_fmt =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_fmt =
+		\skip_fmt
+		\.contains_fmt
+		\.end_fmt
+		\.containedin_def
+	" Define the r2 region vars if and only if at least one of the
+	" region types whose end token could begin this region is active
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled || bgc_enabled
+	let start_fmt =
+		\' start=/['
+		\.(clr_enabled ? b:txtfmt_re_clr_etok_atom : '').(bgc_enabled ? b:txtfmt_re_bgc_etok_atom : '')
+		\.']/'
+	let r2_fmt =
+		\skip_fmt
+		\.contains_fmt
+		\.start_fmt
+		\.end_fmt
+		\.' contained'
+	endif " clr_enabled || bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	"===
+	"*** fmt-clr
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_fmtclr=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_fmtclr = ' skip=/\\./'
+		else
+			let skip_fmtclr = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_fmtclr = ''
+		let skip_fmtclr = ''
+	endif
+	let end_fmtclr =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_fmtclr =
+		\skip_fmtclr
+		\.contains_fmtclr
+		\.end_fmtclr
+		\.' contained'
+	" Define the r2 region vars if and only if at least one of the
+	" region types whose end token could begin this region is active
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	let start_fmtclr =
+		\' start=/['
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/'
+	let r2_fmtclr =
+		\skip_fmtclr
+		\.contains_fmtclr
+		\.start_fmtclr
+		\.end_fmtclr
+		\.' contained'
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	"===
+	"*** fmt-clr-bgc
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_fmtclrbgc=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_fmtclrbgc = ' skip=/\\./'
+		else
+			let skip_fmtclrbgc = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_fmtclrbgc = ''
+		let skip_fmtclrbgc = ''
+	endif
+	let end_fmtclrbgc =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_fmtclrbgc =
+		\skip_fmtclrbgc
+		\.contains_fmtclrbgc
+		\.end_fmtclrbgc
+		\.' contained'
+	" Revert to toplevel (no background color) matchgroup
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	"===
+	"*** fmt-bgc
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_fmtbgc=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_fmtbgc = ' skip=/\\./'
+		else
+			let skip_fmtbgc = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_fmtbgc = ''
+		let skip_fmtbgc = ''
+	endif
+	let end_fmtbgc =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_fmtbgc =
+		\skip_fmtbgc
+		\.contains_fmtbgc
+		\.end_fmtbgc
+		\.' contained'
+	" Define the r2 region vars if and only if at least one of the
+	" region types whose end token could begin this region is active
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	let start_fmtbgc =
+		\' start=/['
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/'
+	let r2_fmtbgc =
+		\skip_fmtbgc
+		\.contains_fmtbgc
+		\.start_fmtbgc
+		\.end_fmtbgc
+		\.' contained'
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	"===
+	"*** fmt-bgc-clr
+	"===
+	if b:txtfmt_cfg_escape != 'none'
+		let contains_fmtbgcclr=
+			\' contains='
+			\.'Tf_any_stok_inner_esc,'
+			\.'Tf_fmt_etok_inner_esc,'
+			\.'Tf_bgc_etok_inner_esc,'
+			\.'Tf_clr_etok_inner_esc'
+		if b:txtfmt_cfg_escape == 'bslash'
+			let skip_fmtbgcclr = ' skip=/\\./'
+		else
+			let skip_fmtbgcclr = ' skip=/\(.\)\1/'
+		endif
+	else
+		let contains_fmtbgcclr = ''
+		let skip_fmtbgcclr = ''
+	endif
+	let end_fmtbgcclr =
+		\' end=/['
+		\.b:txtfmt_re_any_stok_atom
+		\.b:txtfmt_re_fmt_etok_atom
+		\.b:txtfmt_re_bgc_etok_atom
+		\.b:txtfmt_re_clr_etok_atom
+		\.']/me=e-'.tok_off
+	let r1_fmtbgcclr =
+		\skip_fmtbgcclr
+		\.contains_fmtbgcclr
+		\.end_fmtbgcclr
+		\.' contained'
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	" Revert to toplevel (no background color) matchgroup
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if clr_enabled
+	"===
+	"*** Loop over clr levels
+	"===
+	let ip = 1
+	while ip <= b:txtfmt_cfg_numfgcolors
+		let i = b:txtfmt_cfg_fgcolor{ip}
+		let chi = nr2char(b:txtfmt_clr_first_tok + i)
 		" Add to appropriate clusters
-		exe 'syn cluster Tf_all add=Tf_clr_'.i
-		exe 'syn cluster Tf_clr_all add=Tf_clr_'.i
-		" Define nextgroup, which is common to all definitions of this group
-		let nextgroup_def = ' nextgroup=@Tf_clrfmt_'.i.'_all,@Tf_clr_all,Tf_def_tok'
-		" Define a clr region that is not contained and is introduced by a clr
-		" token. This one can match at top level. If txtfmt 'nested' option is
-		" set, it can also match within non-txtfmt regions.
-		" Order note: This definition *must* occur prior to the combined
-		" fmtclr regions that begin with this fmt token.
-		exe 'syn region Tf_clr_'.i.' matchgroup=Tf_conceal start=/'.ch.'/'
-			\.skip_clr_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
-			\.' end=/'.b:txtfmt_re_clr_etok_atom.'/me=e-'.tok_off.' '
-			\.nextgroup_def
-			\.contains_clr_def
-			\.containedin_def
-		" Define a 'contained' clr region that is introduced by the 'no fmt'
-		" token when permitted by a 'nextgroup'
-		" NOTE: The reason we don't have to worry about a 'no fmt' token in a
-		" clr only region starting a new clr region is that the 'no fmt' token
-		" can't end a clr only region. (Reword)
-		exe 'syn region Tf_clr_'.i.' matchgroup=Tf_conceal'
-			\.' start=/'.nr2char(b:txtfmt_fmt_first_tok).'/'
-			\.skip_clr_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
-			\.' end=/'.b:txtfmt_re_clr_etok_atom.'/me=e-'.tok_off.' '
-			\.nextgroup_def
-			\.contains_clr_def
-			\.' contained'
-		" Define highlighting for current format region
-		exe 'hi Tf_clr_'.i.clr_eq.b:txtfmt_clr{i-1}
-		" >>>
-		" Update for next iteration
-		let i = i + 1
-		let ch = nr2char(b:txtfmt_clr_first_tok + i)
+		exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_clr_'.i
+		exe 'syn cluster Tf'.cui.'_clr_all add=Tf'.cui.'_clr_'.i
+		" Cache the nextgroup clause
+		let ng = ' nextgroup=@Tf'.cui.'_clr_all'.(bgc_enabled ? ',@Tf'.cui.'_clrbgc_'.i.'_all' : '').',@Tf'.cui.'_clrfmt_'.i.'_all,Tf_def_tok'
+		" Define region that is begun by a start token
+		exe 'syn region Tf'.cui.'_clr_'.i.matchgroup_def
+			\.' start=/'.chi.'/'.r1_clr.ng.concealends
+		" Define region that is begun by an end token
+		" (when permitted by a nextgroup)
+		exe 'syn region Tf'.cui.'_clr_'.i.'_rtd'.matchgroup_def
+			\.r2_clr.ng.concealends
+		" Define highlighting for this region
+		" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+		" handled correctly in a cterm.
+		"	:help cterm-colors
+		exe 'hi Tf'.cui.'_clr_'.i
+			\.eq_clr.b:txtfmt_clr{i}
+		" Link rtd to non-rtd group
+		exe 'hi link Tf'.cui.'_clr_'.i.'_rtd Tf'.cui.'_clr_'.i
+		"============= BEGIN NON-INDENTING BLOCK =============
+		if bgc_enabled
+		"===
+		"*** Loop over clr-bgc levels
+		"===
+		let jp = 1
+		while jp <= b:txtfmt_cfg_numbgcolors
+			let j = b:txtfmt_cfg_bgcolor{jp}
+			let chj = nr2char(b:txtfmt_bgc_first_tok + j)
+			" Add to appropriate clusters
+			exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_clrbgc_'.i.'_'.j
+			exe 'syn cluster Tf'.cui.'_clrbgc_'.i.'_all add=Tf'.cui.'_clrbgc_'.i.'_'.j
+			" Ensure that this and higher order regions use bgc-specific concealment group
+			let matchgroup_def = ' matchgroup=Tf'.cui.'_conceal_'.j
+			" Cache the nextgroup clause
+			let ng = ' nextgroup=Tf'.cui.'_bgc_'.j.'_rtd,Tf'.cui.'_clr_'.i.'_rtd,@Tf'.cui.'_bgcclr_'.j.'_all,@Tf'.cui.'_clrbgc_'.i.'_all,@Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_all'
+			" Define region that is begun by a start token
+			exe 'syn region Tf'.cui.'_clrbgc_'.i.'_'.j.matchgroup_def
+				\.' start=/'.chj.'/'.r1_clrbgc.ng.concealends
+			" Define region that is begun by an end token
+			" (when permitted by a nextgroup)
+			exe 'syn region Tf'.cui.'_clrbgc_'.i.'_'.j.'_rtd'.matchgroup_def
+				\.r2_clrbgc.ng.concealends
+			" Define highlighting for this region
+			" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+			" handled correctly in a cterm.
+			"	:help cterm-colors
+			exe 'hi Tf'.cui.'_clrbgc_'.i.'_'.j
+				\.eq_clr.b:txtfmt_clr{i}.eq_bgc.b:txtfmt_bgc{j}
+			" Link rtd to non-rtd group
+			exe 'hi link Tf'.cui.'_clrbgc_'.i.'_'.j.'_rtd Tf'.cui.'_clrbgc_'.i.'_'.j
+			"===
+			"*** Loop over clr-bgc-fmt levels
+			"===
+			let k = 1
+			while k <= b:txtfmt_num_formats - 1
+				let chk = nr2char(b:txtfmt_fmt_first_tok + k)
+				" Add to appropriate clusters
+				exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_'.k
+				exe 'syn cluster Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_all add=Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_'.k
+				" Define region that is begun by a start token
+				exe 'syn region Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_'.k.matchgroup_def
+					\.' start=/'.chk.'/'.r1_clrbgcfmt.' nextgroup=Tf'.cui.'_bgcfmt_'.j.'_'.k.'_rtd,Tf'.cui.'_clrfmt_'.i.'_'.k.'_rtd,Tf'.cui.'_clrbgc_'.i.'_'.j.'_rtd,@Tf'.cui.'_bgcfmtclr_'.j.'_'.k.'_all,@Tf'.cui.'_clrfmtbgc_'.i.'_'.k.'_all,@Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_all'.concealends
+				" Define highlighting for this region
+				" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+				" handled correctly in a cterm.
+				"	:help cterm-colors
+				exe 'hi Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_'.k
+					\.eq_clr.b:txtfmt_clr{i}.eq_bgc.b:txtfmt_bgc{j}.eq_fmt.b:txtfmt_fmt{k}
+				let k = k + 1
+			endwhile
+			let jp = jp + 1
+		endwhile
+		" Revert to toplevel (no background color) matchgroup
+		let matchgroup_def = matchgroup_top_def
+		endif " bgc_enabled
+		"=============  END NON-INDENTING BLOCK  =============
+		"===
+		"*** Loop over clr-fmt levels
+		"===
+		let j = 1
+		while j <= b:txtfmt_num_formats - 1
+			let chj = nr2char(b:txtfmt_fmt_first_tok + j)
+			" Add to appropriate clusters
+			exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_clrfmt_'.i.'_'.j
+			exe 'syn cluster Tf'.cui.'_clrfmt_'.i.'_all add=Tf'.cui.'_clrfmt_'.i.'_'.j
+			" Cache the nextgroup clause
+			let ng = ' nextgroup=Tf'.cui.'_fmt_'.j.'_rtd,Tf'.cui.'_clr_'.i.'_rtd,@Tf'.cui.'_fmtclr_'.j.'_all,@Tf'.cui.'_clrfmt_'.i.'_all'.(bgc_enabled ? ',@Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_all' : '')
+			" Define region that is begun by a start token
+			exe 'syn region Tf'.cui.'_clrfmt_'.i.'_'.j.matchgroup_def
+				\.' start=/'.chj.'/'.r1_clrfmt.ng.concealends
+			" Define the following region if and only if at least one of the
+			" region types whose end token could begin this region is active
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if bgc_enabled
+			" Define region that is begun by an end token
+			" (when permitted by a nextgroup)
+			exe 'syn region Tf'.cui.'_clrfmt_'.i.'_'.j.'_rtd'.matchgroup_def
+				\.r2_clrfmt.ng.concealends
+			endif " bgc_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			" Define highlighting for this region
+			" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+			" handled correctly in a cterm.
+			"	:help cterm-colors
+			exe 'hi Tf'.cui.'_clrfmt_'.i.'_'.j
+				\.eq_clr.b:txtfmt_clr{i}.eq_fmt.b:txtfmt_fmt{j}
+			" Link rtd to non-rtd group
+			exe 'hi link Tf'.cui.'_clrfmt_'.i.'_'.j.'_rtd Tf'.cui.'_clrfmt_'.i.'_'.j
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if bgc_enabled
+			"===
+			"*** Loop over clr-fmt-bgc levels
+			"===
+			let kp = 1
+			while kp <= b:txtfmt_cfg_numbgcolors
+				let k = b:txtfmt_cfg_bgcolor{kp}
+				let chk = nr2char(b:txtfmt_bgc_first_tok + k)
+				" Add to appropriate clusters
+				exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_'.k
+				exe 'syn cluster Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_all add=Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_'.k
+				" Ensure that this and higher order regions use bgc-specific concealment group
+				let matchgroup_def = ' matchgroup=Tf'.cui.'_conceal_'.k
+				" Define region that is begun by a start token
+				exe 'syn region Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_'.k.matchgroup_def
+					\.' start=/'.chk.'/'.r1_clrfmtbgc.' nextgroup=Tf'.cui.'_fmtbgc_'.j.'_'.k.'_rtd,Tf'.cui.'_clrbgc_'.i.'_'.k.'_rtd,Tf'.cui.'_clrfmt_'.i.'_'.j.'_rtd,@Tf'.cui.'_fmtbgcclr_'.j.'_'.k.'_all,@Tf'.cui.'_clrbgcfmt_'.i.'_'.k.'_all,@Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_all'.concealends
+				" Define highlighting for this region
+				" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+				" handled correctly in a cterm.
+				"	:help cterm-colors
+				exe 'hi Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_'.k
+					\.eq_clr.b:txtfmt_clr{i}.eq_bgc.b:txtfmt_bgc{k}.eq_fmt.b:txtfmt_fmt{j}
+				let kp = kp + 1
+			endwhile
+			" Revert to toplevel (no background color) matchgroup
+			let matchgroup_def = matchgroup_top_def
+			endif " bgc_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			let j = j + 1
+		endwhile
+		let ip = ip + 1
 	endwhile
-	" >>>
-	" Loop over the fmt only regions <<<
-	let i = 1
-	let ch = nr2char(b:txtfmt_fmt_first_tok + 1)
-	while i < b:txtfmt_num_formats
-		" fmt{i} region (top level) <<<
+	endif " clr_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"============= BEGIN NON-INDENTING BLOCK =============
+	if bgc_enabled
+	"===
+	"*** Loop over bgc levels
+	"===
+	let ip = 1
+	while ip <= b:txtfmt_cfg_numbgcolors
+		let i = b:txtfmt_cfg_bgcolor{ip}
+		let chi = nr2char(b:txtfmt_bgc_first_tok + i)
 		" Add to appropriate clusters
-		exe 'syn cluster Tf_all add=Tf_fmt_'.i
-		exe 'syn cluster Tf_fmt_all add=Tf_fmt_'.i
-		" Define nextgroup, which is common to all definitions of this group
-		let nextgroup_def = ' nextgroup=@Tf_fmtclr_'.i.'_all,@Tf_fmt_all,Tf_def_tok'
-		" Define a fmt region that is not contained and is introduced by a fmt
-		" token. This one can match at top level. If txtfmt 'nested' option is
-		" set, it can also match within non-txtfmt regions.
-		" Order note: This definition *must* occur prior to the combined
-		" clrfmt regions that begin with this fmt token.
-		exe 'syn region Tf_fmt_'.i.' matchgroup=Tf_conceal start=/'.ch.'/'
-			\.skip_fmt_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
-			\.' end=/'.b:txtfmt_re_fmt_etok_atom.'/me=e-'.tok_off.' '
-			\.nextgroup_def
-			\.contains_fmt_def
-			\.containedin_def
-		" Define a 'contained' fmt region that is introduced by the 'no clr'
-		" token when permitted by a 'nextgroup'
-		exe 'syn region Tf_fmt_'.i.' matchgroup=Tf_conceal'
-			\.' start=/'.nr2char(b:txtfmt_clr_first_tok).'/'
-			\.skip_fmt_def
-			\.' end=/'.b:txtfmt_re_any_stok_atom.'/me=e-'.tok_off.' '
-			\.' end=/'.b:txtfmt_re_fmt_etok_atom.'/me=e-'.tok_off.' '
-			\.nextgroup_def
-			\.contains_fmt_def
-			\.' contained'
-		" Define highlighting for current format region
-		exe 'hi Tf_fmt_'.i.fmt_eq.b:txtfmt_fmt{i}
-		" >>>
-		" Update for next iteration
-		let i = i + 1
-		let ch = nr2char(b:txtfmt_fmt_first_tok + i)
-	endwhile
-	" >>>
-	" Loop over the clrfmt regions <<<
-	let i = 1
-	while i < b:txtfmt_num_colors
-		" clr{i} -- fmt{j} <<<
-		let j = 1
-		let ch = nr2char(b:txtfmt_fmt_first_tok + 1)
-		while j < b:txtfmt_num_formats
+		exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_bgc_'.i
+		exe 'syn cluster Tf'.cui.'_bgc_all add=Tf'.cui.'_bgc_'.i
+		" Ensure that this and higher order regions use bgc-specific concealment group
+		let matchgroup_def = ' matchgroup=Tf'.cui.'_conceal_'.i
+		" Cache the nextgroup clause
+		let ng = ' nextgroup=@Tf'.cui.'_bgc_all'.(clr_enabled ? ',@Tf'.cui.'_bgcclr_'.i.'_all' : '').',@Tf'.cui.'_bgcfmt_'.i.'_all,Tf_def_tok'
+		" Define region that is begun by a start token
+		exe 'syn region Tf'.cui.'_bgc_'.i.matchgroup_def
+			\.' start=/'.chi.'/'.r1_bgc.ng.concealends
+		" Define region that is begun by an end token
+		" (when permitted by a nextgroup)
+		exe 'syn region Tf'.cui.'_bgc_'.i.'_rtd'.matchgroup_def
+			\.r2_bgc.ng.concealends
+		" Define highlighting for this region
+		" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+		" handled correctly in a cterm.
+		"	:help cterm-colors
+		exe 'hi Tf'.cui.'_bgc_'.i
+			\.eq_bgc.b:txtfmt_bgc{i}
+		" Link rtd to non-rtd group
+		exe 'hi link Tf'.cui.'_bgc_'.i.'_rtd Tf'.cui.'_bgc_'.i
+		"============= BEGIN NON-INDENTING BLOCK =============
+		if clr_enabled
+		"===
+		"*** Loop over bgc-clr levels
+		"===
+		let jp = 1
+		while jp <= b:txtfmt_cfg_numfgcolors
+			let j = b:txtfmt_cfg_fgcolor{jp}
+			let chj = nr2char(b:txtfmt_clr_first_tok + j)
 			" Add to appropriate clusters
-			exe 'syn cluster Tf_all add=Tf_clrfmt_'.i.'_'.j
-			exe 'syn cluster Tf_clrfmt_'.i.'_all add=Tf_clrfmt_'.i.'_'.j
-			let nextgroup_def =
-				\' nextgroup=Tf_clr_'.i.',Tf_fmt_'.j.',@Tf_clrfmt_'.i.'_all,@Tf_fmtclr_'.j.'_all'
-			exe 'syn region Tf_clrfmt_'.i.'_'.j.' matchgroup=Tf_conceal'
-				\.' start=/'.ch.'/'.skip_any_def
-				\.' end=/'.b:txtfmt_re_any_tok_atom.'/me=e-'.tok_off
-				\.nextgroup_def
-				\.contains_any_def
-				\.' contained'
-			" Define the highlighting for this clr-fmt region
-			" Important Note: It is important to put the format definition
-			" *after* the color definition, since in a cterm, the bold
-			" attribute is ignored if the color name is "Dark" something and
-			" the cterm=bold comes before the ctermfg=<color>. (See help on
-			" cterm-colors.)
-			exe 'hi Tf_clrfmt_'.i.'_'.j.clr_eq.b:txtfmt_clr{i-1}
-				\.fmt_eq.b:txtfmt_fmt{j}
-			" Update for next iteration
-			let j = j + 1
-			let ch = nr2char(b:txtfmt_fmt_first_tok + j)
+			exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_bgcclr_'.i.'_'.j
+			exe 'syn cluster Tf'.cui.'_bgcclr_'.i.'_all add=Tf'.cui.'_bgcclr_'.i.'_'.j
+			" Cache the nextgroup clause
+			let ng = ' nextgroup=Tf'.cui.'_clr_'.j.'_rtd,Tf'.cui.'_bgc_'.i.'_rtd,@Tf'.cui.'_clrbgc_'.j.'_all,@Tf'.cui.'_bgcclr_'.i.'_all,@Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_all'
+			" Define region that is begun by a start token
+			exe 'syn region Tf'.cui.'_bgcclr_'.i.'_'.j.matchgroup_def
+				\.' start=/'.chj.'/'.r1_bgcclr.ng.concealends
+			" Define region that is begun by an end token
+			" (when permitted by a nextgroup)
+			exe 'syn region Tf'.cui.'_bgcclr_'.i.'_'.j.'_rtd'.matchgroup_def
+				\.r2_bgcclr.ng.concealends
+			" Define highlighting for this region
+			" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+			" handled correctly in a cterm.
+			"	:help cterm-colors
+			exe 'hi Tf'.cui.'_bgcclr_'.i.'_'.j
+				\.eq_clr.b:txtfmt_clr{j}.eq_bgc.b:txtfmt_bgc{i}
+			" Link rtd to non-rtd group
+			exe 'hi link Tf'.cui.'_bgcclr_'.i.'_'.j.'_rtd Tf'.cui.'_bgcclr_'.i.'_'.j
+			"===
+			"*** Loop over bgc-clr-fmt levels
+			"===
+			let k = 1
+			while k <= b:txtfmt_num_formats - 1
+				let chk = nr2char(b:txtfmt_fmt_first_tok + k)
+				" Add to appropriate clusters
+				exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_'.k
+				exe 'syn cluster Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_all add=Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_'.k
+				" Define region that is begun by a start token
+				exe 'syn region Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_'.k.matchgroup_def
+					\.' start=/'.chk.'/'.r1_bgcclrfmt.' nextgroup=Tf'.cui.'_clrfmt_'.j.'_'.k.'_rtd,Tf'.cui.'_bgcfmt_'.i.'_'.k.'_rtd,Tf'.cui.'_bgcclr_'.i.'_'.j.'_rtd,@Tf'.cui.'_clrfmtbgc_'.j.'_'.k.'_all,@Tf'.cui.'_bgcfmtclr_'.i.'_'.k.'_all,@Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_all'.concealends
+				" Define highlighting for this region
+				" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+				" handled correctly in a cterm.
+				"	:help cterm-colors
+				exe 'hi Tf'.cui.'_bgcclrfmt_'.i.'_'.j.'_'.k
+					\.eq_clr.b:txtfmt_clr{j}.eq_bgc.b:txtfmt_bgc{i}.eq_fmt.b:txtfmt_fmt{k}
+				let k = k + 1
+			endwhile
+			let jp = jp + 1
 		endwhile
-		" >>>
-		" Update for next iteration <<<
-		let i = i + 1
-		" >>>
-	endwhile
-	" >>>
-	" Loop over the fmtclr regions <<<
-	let i = 1
-	while i < b:txtfmt_num_formats
-		" fmt{i} -- clr{j} <<<
+		endif " clr_enabled
+		"=============  END NON-INDENTING BLOCK  =============
+		"===
+		"*** Loop over bgc-fmt levels
+		"===
 		let j = 1
-		let ch = nr2char(b:txtfmt_clr_first_tok + 1)
-		while j < b:txtfmt_num_colors
+		while j <= b:txtfmt_num_formats - 1
+			let chj = nr2char(b:txtfmt_fmt_first_tok + j)
 			" Add to appropriate clusters
-			exe 'syn cluster Tf_all add=Tf_fmtclr_'.i.'_'.j
-			exe 'syn cluster Tf_fmtclr_'.i.'_all add=Tf_fmtclr_'.i.'_'.j
-			let nextgroup_def =
-				\' nextgroup=Tf_fmt_'.i.',Tf_clr_'.j.',@Tf_fmtclr_'.i.'_all,@Tf_clrfmt_'.j.'_all'
-			exe 'syn region Tf_fmtclr_'.i.'_'.j.' matchgroup=Tf_conceal'
-				\.' start=/'.ch.'/'.skip_any_def
-				\.' end=/'.b:txtfmt_re_any_tok_atom.'/me=e-'.tok_off
-				\.nextgroup_def
-				\.contains_any_def
-				\.' contained'
-			" Define the highlighting for this fmt-clr region
-			" Important Note: Format attribute must be defined *after* color
-			" attribute. See note under corresponding definition in the clrfmt
-			" block for explanation. 
-			exe 'hi Tf_fmtclr_'.i.'_'.j.clr_eq.b:txtfmt_clr{j-1}
-				\.fmt_eq.b:txtfmt_fmt{i}
-			" Update for next iteration
+			exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_bgcfmt_'.i.'_'.j
+			exe 'syn cluster Tf'.cui.'_bgcfmt_'.i.'_all add=Tf'.cui.'_bgcfmt_'.i.'_'.j
+			" Cache the nextgroup clause
+			let ng = ' nextgroup=Tf'.cui.'_fmt_'.j.'_rtd,Tf'.cui.'_bgc_'.i.'_rtd,@Tf'.cui.'_fmtbgc_'.j.'_all,@Tf'.cui.'_bgcfmt_'.i.'_all'.(clr_enabled ? ',@Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_all' : '')
+			" Define region that is begun by a start token
+			exe 'syn region Tf'.cui.'_bgcfmt_'.i.'_'.j.matchgroup_def
+				\.' start=/'.chj.'/'.r1_bgcfmt.ng.concealends
+			" Define the following region if and only if at least one of the
+			" region types whose end token could begin this region is active
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if clr_enabled
+			" Define region that is begun by an end token
+			" (when permitted by a nextgroup)
+			exe 'syn region Tf'.cui.'_bgcfmt_'.i.'_'.j.'_rtd'.matchgroup_def
+				\.r2_bgcfmt.ng.concealends
+			endif " clr_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			" Define highlighting for this region
+			" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+			" handled correctly in a cterm.
+			"	:help cterm-colors
+			exe 'hi Tf'.cui.'_bgcfmt_'.i.'_'.j
+				\.eq_bgc.b:txtfmt_bgc{i}.eq_fmt.b:txtfmt_fmt{j}
+			" Link rtd to non-rtd group
+			exe 'hi link Tf'.cui.'_bgcfmt_'.i.'_'.j.'_rtd Tf'.cui.'_bgcfmt_'.i.'_'.j
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if clr_enabled
+			"===
+			"*** Loop over bgc-fmt-clr levels
+			"===
+			let kp = 1
+			while kp <= b:txtfmt_cfg_numfgcolors
+				let k = b:txtfmt_cfg_fgcolor{kp}
+				let chk = nr2char(b:txtfmt_clr_first_tok + k)
+				" Add to appropriate clusters
+				exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_'.k
+				exe 'syn cluster Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_all add=Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_'.k
+				" Define region that is begun by a start token
+				exe 'syn region Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_'.k.matchgroup_def
+					\.' start=/'.chk.'/'.r1_bgcfmtclr.' nextgroup=Tf'.cui.'_fmtclr_'.j.'_'.k.'_rtd,Tf'.cui.'_bgcclr_'.i.'_'.k.'_rtd,Tf'.cui.'_bgcfmt_'.i.'_'.j.'_rtd,@Tf'.cui.'_fmtclrbgc_'.j.'_'.k.'_all,@Tf'.cui.'_bgcclrfmt_'.i.'_'.k.'_all,@Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_all'.concealends
+				" Define highlighting for this region
+				" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+				" handled correctly in a cterm.
+				"	:help cterm-colors
+				exe 'hi Tf'.cui.'_bgcfmtclr_'.i.'_'.j.'_'.k
+					\.eq_clr.b:txtfmt_clr{k}.eq_bgc.b:txtfmt_bgc{i}.eq_fmt.b:txtfmt_fmt{j}
+				let kp = kp + 1
+			endwhile
+			endif " clr_enabled
+			"=============  END NON-INDENTING BLOCK  =============
 			let j = j + 1
-			let ch = nr2char(b:txtfmt_clr_first_tok + j)
 		endwhile
-		" >>>
-		" Update for next iteration <<<
-		let i = i + 1
-		" >>>
+		let ip = ip + 1
 	endwhile
-	" >>>
+	" Revert to toplevel (no background color) matchgroup
+	let matchgroup_def = matchgroup_top_def
+	endif " bgc_enabled
+	"=============  END NON-INDENTING BLOCK  =============
+	"===
+	"*** Loop over fmt levels
+	"===
+	let i = 1
+	while i <= b:txtfmt_num_formats - 1
+		let chi = nr2char(b:txtfmt_fmt_first_tok + i)
+		" Add to appropriate clusters
+		exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_fmt_'.i
+		exe 'syn cluster Tf'.cui.'_fmt_all add=Tf'.cui.'_fmt_'.i
+		" Cache the nextgroup clause
+		let ng = ' nextgroup=@Tf'.cui.'_fmt_all'.(clr_enabled ? ',@Tf'.cui.'_fmtclr_'.i.'_all' : '').(bgc_enabled ? ',@Tf'.cui.'_fmtbgc_'.i.'_all' : '').',Tf_def_tok'
+		" Define region that is begun by a start token
+		exe 'syn region Tf'.cui.'_fmt_'.i.matchgroup_def
+			\.' start=/'.chi.'/'.r1_fmt.ng.concealends
+		" Define the following region if and only if at least one of the
+		" region types whose end token could begin this region is active
+		"============= BEGIN NON-INDENTING BLOCK =============
+		if clr_enabled || bgc_enabled
+		" Define region that is begun by an end token
+		" (when permitted by a nextgroup)
+		exe 'syn region Tf'.cui.'_fmt_'.i.'_rtd'.matchgroup_def
+			\.r2_fmt.ng.concealends
+		endif " clr_enabled || bgc_enabled
+		"=============  END NON-INDENTING BLOCK  =============
+		" Define highlighting for this region
+		" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+		" handled correctly in a cterm.
+		"	:help cterm-colors
+		exe 'hi Tf'.cui.'_fmt_'.i
+			\.eq_fmt.b:txtfmt_fmt{i}
+		" Link rtd to non-rtd group
+		exe 'hi link Tf'.cui.'_fmt_'.i.'_rtd Tf'.cui.'_fmt_'.i
+		"============= BEGIN NON-INDENTING BLOCK =============
+		if clr_enabled
+		"===
+		"*** Loop over fmt-clr levels
+		"===
+		let jp = 1
+		while jp <= b:txtfmt_cfg_numfgcolors
+			let j = b:txtfmt_cfg_fgcolor{jp}
+			let chj = nr2char(b:txtfmt_clr_first_tok + j)
+			" Add to appropriate clusters
+			exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_fmtclr_'.i.'_'.j
+			exe 'syn cluster Tf'.cui.'_fmtclr_'.i.'_all add=Tf'.cui.'_fmtclr_'.i.'_'.j
+			" Cache the nextgroup clause
+			let ng = ' nextgroup=Tf'.cui.'_clr_'.j.'_rtd,Tf'.cui.'_fmt_'.i.'_rtd,@Tf'.cui.'_clrfmt_'.j.'_all,@Tf'.cui.'_fmtclr_'.i.'_all'.(bgc_enabled ? ',@Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_all' : '')
+			" Define region that is begun by a start token
+			exe 'syn region Tf'.cui.'_fmtclr_'.i.'_'.j.matchgroup_def
+				\.' start=/'.chj.'/'.r1_fmtclr.ng.concealends
+			" Define the following region if and only if at least one of the
+			" region types whose end token could begin this region is active
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if bgc_enabled
+			" Define region that is begun by an end token
+			" (when permitted by a nextgroup)
+			exe 'syn region Tf'.cui.'_fmtclr_'.i.'_'.j.'_rtd'.matchgroup_def
+				\.r2_fmtclr.ng.concealends
+			endif " bgc_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			" Define highlighting for this region
+			" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+			" handled correctly in a cterm.
+			"	:help cterm-colors
+			exe 'hi Tf'.cui.'_fmtclr_'.i.'_'.j
+				\.eq_clr.b:txtfmt_clr{j}.eq_fmt.b:txtfmt_fmt{i}
+			" Link rtd to non-rtd group
+			exe 'hi link Tf'.cui.'_fmtclr_'.i.'_'.j.'_rtd Tf'.cui.'_fmtclr_'.i.'_'.j
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if bgc_enabled
+			"===
+			"*** Loop over fmt-clr-bgc levels
+			"===
+			let kp = 1
+			while kp <= b:txtfmt_cfg_numbgcolors
+				let k = b:txtfmt_cfg_bgcolor{kp}
+				let chk = nr2char(b:txtfmt_bgc_first_tok + k)
+				" Add to appropriate clusters
+				exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_'.k
+				exe 'syn cluster Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_all add=Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_'.k
+				" Ensure that this and higher order regions use bgc-specific concealment group
+				let matchgroup_def = ' matchgroup=Tf'.cui.'_conceal_'.k
+				" Define region that is begun by a start token
+				exe 'syn region Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_'.k.matchgroup_def
+					\.' start=/'.chk.'/'.r1_fmtclrbgc.' nextgroup=Tf'.cui.'_clrbgc_'.j.'_'.k.'_rtd,Tf'.cui.'_fmtbgc_'.i.'_'.k.'_rtd,Tf'.cui.'_fmtclr_'.i.'_'.j.'_rtd,@Tf'.cui.'_clrbgcfmt_'.j.'_'.k.'_all,@Tf'.cui.'_fmtbgcclr_'.i.'_'.k.'_all,@Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_all'.concealends
+				" Define highlighting for this region
+				" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+				" handled correctly in a cterm.
+				"	:help cterm-colors
+				exe 'hi Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_'.k
+					\.eq_clr.b:txtfmt_clr{j}.eq_bgc.b:txtfmt_bgc{k}.eq_fmt.b:txtfmt_fmt{i}
+				let kp = kp + 1
+			endwhile
+			" Revert to toplevel (no background color) matchgroup
+			let matchgroup_def = matchgroup_top_def
+			endif " bgc_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			let jp = jp + 1
+		endwhile
+		endif " clr_enabled
+		"=============  END NON-INDENTING BLOCK  =============
+		"============= BEGIN NON-INDENTING BLOCK =============
+		if bgc_enabled
+		"===
+		"*** Loop over fmt-bgc levels
+		"===
+		let jp = 1
+		while jp <= b:txtfmt_cfg_numbgcolors
+			let j = b:txtfmt_cfg_bgcolor{jp}
+			let chj = nr2char(b:txtfmt_bgc_first_tok + j)
+			" Add to appropriate clusters
+			exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_fmtbgc_'.i.'_'.j
+			exe 'syn cluster Tf'.cui.'_fmtbgc_'.i.'_all add=Tf'.cui.'_fmtbgc_'.i.'_'.j
+			" Ensure that this and higher order regions use bgc-specific concealment group
+			let matchgroup_def = ' matchgroup=Tf'.cui.'_conceal_'.j
+			" Cache the nextgroup clause
+			let ng = ' nextgroup=Tf'.cui.'_bgc_'.j.'_rtd,Tf'.cui.'_fmt_'.i.'_rtd,@Tf'.cui.'_bgcfmt_'.j.'_all,@Tf'.cui.'_fmtbgc_'.i.'_all'.(clr_enabled ? ',@Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_all' : '')
+			" Define region that is begun by a start token
+			exe 'syn region Tf'.cui.'_fmtbgc_'.i.'_'.j.matchgroup_def
+				\.' start=/'.chj.'/'.r1_fmtbgc.ng.concealends
+			" Define the following region if and only if at least one of the
+			" region types whose end token could begin this region is active
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if clr_enabled
+			" Define region that is begun by an end token
+			" (when permitted by a nextgroup)
+			exe 'syn region Tf'.cui.'_fmtbgc_'.i.'_'.j.'_rtd'.matchgroup_def
+				\.r2_fmtbgc.ng.concealends
+			endif " clr_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			" Define highlighting for this region
+			" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+			" handled correctly in a cterm.
+			"	:help cterm-colors
+			exe 'hi Tf'.cui.'_fmtbgc_'.i.'_'.j
+				\.eq_bgc.b:txtfmt_bgc{j}.eq_fmt.b:txtfmt_fmt{i}
+			" Link rtd to non-rtd group
+			exe 'hi link Tf'.cui.'_fmtbgc_'.i.'_'.j.'_rtd Tf'.cui.'_fmtbgc_'.i.'_'.j
+			"============= BEGIN NON-INDENTING BLOCK =============
+			if clr_enabled
+			"===
+			"*** Loop over fmt-bgc-clr levels
+			"===
+			let kp = 1
+			while kp <= b:txtfmt_cfg_numfgcolors
+				let k = b:txtfmt_cfg_fgcolor{kp}
+				let chk = nr2char(b:txtfmt_clr_first_tok + k)
+				" Add to appropriate clusters
+				exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_'.k
+				exe 'syn cluster Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_all add=Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_'.k
+				" Define region that is begun by a start token
+				exe 'syn region Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_'.k.matchgroup_def
+					\.' start=/'.chk.'/'.r1_fmtbgcclr.' nextgroup=Tf'.cui.'_bgcclr_'.j.'_'.k.'_rtd,Tf'.cui.'_fmtclr_'.i.'_'.k.'_rtd,Tf'.cui.'_fmtbgc_'.i.'_'.j.'_rtd,@Tf'.cui.'_bgcclrfmt_'.j.'_'.k.'_all,@Tf'.cui.'_fmtclrbgc_'.i.'_'.k.'_all,@Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_all'.concealends
+				" Define highlighting for this region
+				" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is
+				" handled correctly in a cterm.
+				"	:help cterm-colors
+				exe 'hi Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_'.k
+					\.eq_clr.b:txtfmt_clr{k}.eq_bgc.b:txtfmt_bgc{j}.eq_fmt.b:txtfmt_fmt{i}
+				let kp = kp + 1
+			endwhile
+			endif " clr_enabled
+			"=============  END NON-INDENTING BLOCK  =============
+			let jp = jp + 1
+		endwhile
+		" Revert to toplevel (no background color) matchgroup
+		let matchgroup_def = matchgroup_top_def
+		endif " bgc_enabled
+		"=============  END NON-INDENTING BLOCK  =============
+		let i = i + 1
+	endwhile
+	" END AUTOCODE
+	"""""""""""""
 	" Handle escape/escapee token pairs both inside and outside of fmt/clr
 	" regions.
 	" Important Note: These groups must be defined after the fmt/clr regions,
@@ -398,39 +1334,61 @@ fu! s:Define_syntax()
 	" Note: Must take into account the txtfmt 'escape' option
 	" Also note: Must take into account the size in bytes of the escape char
 	" if this Vim treats offsets as byte offsets
+	" TODO_BG: Guard against reliance upon _bgc_ vars when they wouldn't have
+	" been defined.
 	if b:txtfmt_cfg_escape == 'bslash' || b:txtfmt_cfg_escape == 'self'
 		if b:txtfmt_cfg_escape == 'self'
-			let re_outer_esc_pair = '\('.b:txtfmt_re_any_stok_atom.'\)\1'
-			let re_any_esc_pair = '\('.b:txtfmt_re_any_tok_atom.'\)\1'
-			let re_fmt_esc_pair = '\('
-				\.b:txtfmt_re_any_stok_atom.'\|'.b:txtfmt_re_fmt_etok_atom.'\)\1'
-			let re_clr_esc_pair = '\('
-				\.b:txtfmt_re_any_stok_atom.'\|'.b:txtfmt_re_clr_etok_atom.'\)\1'
+			let re_outer_esc_pair = '\(['.b:txtfmt_re_any_stok_atom.']\)\1'
+			let re_any_stok_esc_pair = '\(['.b:txtfmt_re_any_stok_atom.']\)\1'
+			let re_fmt_etok_esc_pair = '\(['.b:txtfmt_re_fmt_etok_atom.']\)\1'
+			if bgc_enabled
+				let re_bgc_etok_esc_pair = '\(['.b:txtfmt_re_bgc_etok_atom.']\)\1'
+			endif
+			if clr_enabled
+				let re_clr_etok_esc_pair = '\(['.b:txtfmt_re_clr_etok_atom.']\)\1'
+			endif
 			" Escape char is same number of bytes as a token
 			let esc_off = tok_off
 		elseif b:txtfmt_cfg_escape == 'bslash'
-			let re_outer_esc_pair = '\\'.b:txtfmt_re_any_stok_atom
-			let re_any_esc_pair = '\\'.b:txtfmt_re_any_tok_atom
-			let re_fmt_esc_pair = '\\'.b:txtfmt_re_fmt_tok_atom
-			let re_clr_esc_pair = '\\'.b:txtfmt_re_clr_tok_atom
+			let re_outer_esc_pair = '\\\%(\\\%(\\*['.b:txtfmt_re_any_stok_atom.']\)\@=\|['.b:txtfmt_re_any_stok_atom.']\)'
+			let re_any_stok_esc_pair = '\\\%(\\\%(\\*['.b:txtfmt_re_any_stok_atom.']\)\@=\|['.b:txtfmt_re_any_stok_atom.']\)'
+			let re_fmt_etok_esc_pair = '\\\%(\\\%(\\*['.b:txtfmt_re_fmt_etok_atom.']\)\@=\|['.b:txtfmt_re_fmt_etok_atom.']\)'
+			if bgc_enabled
+				let re_bgc_etok_esc_pair = '\\\%(\\\%(\\*['.b:txtfmt_re_bgc_etok_atom.']\)\@=\|['.b:txtfmt_re_bgc_etok_atom.']\)'
+			endif
+			if clr_enabled
+				let re_clr_etok_esc_pair = '\\\%(\\\%(\\*['.b:txtfmt_re_clr_etok_atom.']\)\@=\|['.b:txtfmt_re_clr_etok_atom.']\)'
+			endif
 			" Escape char is single byte
 			let esc_off = 1
 		endif
 		" The following group prevents escaping or escaped token from starting
 		" a region, and causes the escaping token to be hidden
-		exe 'syn match Tf_outer_esc /'.re_outer_esc_pair.'/he=s+'.esc_off.containedin_def
+		exe 'syn match Tf_outer_esc /'.re_outer_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
 		" The following group allows escaping tokens to be hidden within a fmt/clr
 		" region.
-		exe 'syn match Tf_any_inner_esc /'.re_any_esc_pair.'/he=s+'.esc_off.' contains=NONE'
-			\.' contained'
-		exe 'syn match Tf_fmt_inner_esc /'.re_fmt_esc_pair.'/he=s+'.esc_off.' contains=NONE'
-			\.' contained'
-		exe 'syn match Tf_clr_inner_esc /'.re_clr_esc_pair.'/he=s+'.esc_off.' contains=NONE'
-			\.' contained'
+		exe 'syn match Tf_any_stok_inner_esc /'.re_any_stok_esc_pair.'/he=s+'.esc_off.' contains=NONE'
+			\.' contained'.conceal
+		exe 'syn match Tf_fmt_etok_inner_esc /'.re_fmt_etok_esc_pair.'/he=s+'.esc_off.' contains=NONE'
+			\.' contained'.conceal
+		if bgc_enabled
+			exe 'syn match Tf_bgc_etok_inner_esc /'.re_bgc_etok_esc_pair.'/he=s+'.esc_off.' contains=NONE'
+				\.' contained'.conceal
+		endif
+		if clr_enabled
+			exe 'syn match Tf_clr_etok_inner_esc /'.re_clr_etok_esc_pair.'/he=s+'.esc_off.' contains=NONE'
+				\.' contained'.conceal
+		endif
+		" Define highlighting for the outer and inner escape tokens
 		hi link Tf_outer_esc Tf_conceal
-		hi link Tf_any_inner_esc Tf_conceal
-		hi link Tf_fmt_inner_esc Tf_conceal
-		hi link Tf_clr_inner_esc Tf_conceal
+		hi link Tf_any_stok_inner_esc Tf_conceal
+		hi link Tf_fmt_etok_inner_esc Tf_conceal
+		if bgc_enabled
+			hi link Tf_bgc_etok_inner_esc Tf_conceal
+		endif
+		if clr_enabled
+			hi link Tf_clr_etok_inner_esc Tf_conceal
+		endif
 	endif
 endfu	" >>>
 " Function: s:Define_syntax_syncing() <<<
@@ -462,6 +1420,8 @@ fu! s:Define_syntax_syncing()
 	" TODO - If I decide to dust this off and use it, I need to look at the
 	" handling of <no_fmt> and <no_clr> regions.
 	if 0
+	" IMPORTANT NOTE: This should probably just be removed, but if it's ever
+	" used, [] need to be wrapped around the tok atoms.
 	" 'skip' pattern (option dependent) <<<
 	if b:txtfmt_cfg_escape != 'none'
 		" Make sure tokens that are part of an escape sequence cannot end a
@@ -654,8 +1614,8 @@ fu! s:Set_current_syntax()
 		" Set b:current_syntax to the portion of b:txtfmt_syntax up to and
 		" including the first (and hopefully the only) occurrence of 'txtfmt'
 		let b:current_syntax =
-			\substitute(b:txtfmt_syntax,
-			\'\(.\{-}\%(^\|\.\)txtfmt\%(\.\|$\)\).*', '\1', '')
+			\ substitute(b:txtfmt_syntax,
+			\ '\(.\{-}\%(^\|\.\)txtfmt\%(\.\|$\)\).*', '\1', '')
 	else
 		" This shouldn't happen unless user is manually sourcing the txtfmt
 		" plugin files (which also shouldn't happen). Still, if it does,
