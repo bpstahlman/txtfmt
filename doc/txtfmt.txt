@@ -1,7 +1,7 @@
 *txtfmt.txt*	Syntax/Filetype plugin for formatting plain text
 
 Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
-Version: 2.0a
+Version: 2.0b
 
 ==============================================================================
 1. Contents					*txtfmt* *txtfmt-contents*

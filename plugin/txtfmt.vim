@@ -8,7 +8,7 @@
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "2.0a"
+let g:Txtfmt_Version = "2.0b"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -324,15 +324,6 @@ endif
 " Purpose: Indicate whether input string is a valid tokrange spec.
 fu! s:Tokrange_is_valid(spec)
 	return a:spec =~ s:re_tokrange_spec
-endfu
-" >>>
-" Function: s:Tokrange_get_starttok() <<<
-" Purpose: Return 'starttok' component of the input tokrange spec.
-" Note: Return value will be numeric.
-" Assumption: Input string has already been validated by s:Tokrange_is_valid.
-" TODO_BG: This is currently unused. Get rid of it if I end up not needing it.
-fu! s:Tokrange_get_starttok(spec)
-	return 0 + substitute(a:spec, s:re_tokrange_spec, '\1', '')
 endfu
 " >>>
 " Function: s:Tokrange_get_formats() <<<

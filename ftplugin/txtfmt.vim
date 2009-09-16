@@ -527,53 +527,22 @@ fu! s:Lookup_clr_namepat(typ, namepat)
 		echoerr "Internal error - Unknown color type `".a:typ."' passed to Lookup_clr_namepat()"
 		return 0
 	endif
-		
-	" Design Decision: Loop over all colors (active and inactive) exactly
-	" once. Each iteration of the outer loop will handle exactly one active
-	" color and any inactive colors leading up to it.
-	" Note: We perform up to one extra iteration (hence the
-	" b:txtfmt_cfg_num{fg|bg}colors + 1) to handle any inactive colors whose
-	" indices are higher than that of the final active color. The extra
-	" iteration will be skipped if we've already checked the last index.
-	" TODO: Replace this complex system of nested loops with a simple loop
-	" over all colors (active and inactive), followed by a check of the
-	" appropriate color mask (i.e., b:txtfmt_cfg_[fb]gcolormask.) I'm leaving
-	" this for now because it's been tested...
-	let ip = 1   " index into the indirection array
-	let ichk = 1 " Used to loop over inactive colors preceding next active one
-	while ip <= b:txtfmt_cfg_num{fg_or_bg}colors + 1 && ichk < b:txtfmt_num_colors
-		" Determine the next active color index (unless there are no more
-		" active colors, in which case we'll set the index to an invalid
-		" value).
-		if ip <= b:txtfmt_cfg_num{fg_or_bg}colors
-			let i = b:txtfmt_cfg_{fg_or_bg}color{ip}
-		else
-			" Set to one past end of array of all colors.
-			" Recall that b:txtfmt_num_colors is one greater than number of
-			" colors
-			let i = b:txtfmt_num_colors
-		endif
-		" Check any inactive colors between ichk and i
-		while ichk < i
-			if a:namepat =~ b:txtfmt_{clr_or_bgc}_namepat{ichk}
-				" Found an inactive color
-				return -1 * ichk
-			endif
-			let ichk = ichk + 1
-		endwhile
-		" Check the active color unless we're past end of color array
-		if i < b:txtfmt_num_colors
-			if a:namepat =~ b:txtfmt_{clr_or_bgc}_namepat{i}
-				" Found an active color
+	" Loop over all color definitions (active and inactive), looking for one
+	" whose regex matches input color name
+	let i = 1
+	while i < b:txtfmt_num_colors
+		if a:namepat =~ b:txtfmt_{clr_or_bgc}_namepat{i}
+			" We found a match!
+			if b:txtfmt_cfg_{fg_or_bg}colormask[i - 1] != '1'
+				" Inactive color
+				return -1 * i
+			else
+				" Active color
 				return i
 			endif
 		endif
-		" Move ichk to point just past i. This is the location of the next
-		" potentially inactive token.
-		let ichk = i + 1
-		let ip = ip + 1
+		let i = i + 1
 	endwhile
-
 	" Didn't find it!
 	return 0
 endfu
@@ -1729,29 +1698,6 @@ fu! s:MoveStartTok(moveto, ...)
 	" choice of hex or dec when altering the modeline.
 	let b:txtfmt_ml_new_starttok = new_starttok
 	:Refresh
-endfu
-endif	" if !exists('*s:MoveStartTok')
-" >>>
-" Function: s:LengthenTokRange() <<<
-" IMPORTANT NOTE: Special care must be taken when defining this function, as
-" it invokes :Refresh command, which causes the script to be re-sourced. This
-" leads to E127 'Cannot redefine function' when fu[!] is encountered, since
-" the function is in the process of executing.
-if exists('g:txtfmtAllowxl') && g:txtfmtAllowxl && !exists('*s:LengthenTokRange')
-" Model the 2 ranges
-" Key:
-" c=fg colors
-" f=short formats
-" F=long formats with no undercurl attribute
-" U=long formats with undercurl attribute
-" k=bg colors
-"
-" Extended
-" cccccccccffffffffkkkkkkkkk
-" Extended long
-" cccccccccffffffffFFFFFFFFFFFFFFFFFFFFFFFFUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUkkkkkkkkk
-fu! s:LengthenTokRange(...)
-	" TODO: Remove this after committing once.
 endfu
 endif	" if !exists('*s:MoveStartTok')
 " >>>
