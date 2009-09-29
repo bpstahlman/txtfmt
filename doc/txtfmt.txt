@@ -1,7 +1,7 @@
 *txtfmt.txt*	Syntax/Filetype plugin for formatting plain text
 
 Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
-Version: 2.0b
+Version: 2.0
 
 ==============================================================================
 1. Contents					*txtfmt* *txtfmt-contents*
@@ -297,7 +297,7 @@ otl.txtfmt should occur exclusively within the autocommand as shown above.
 
 Here is how you could use Txtfmt to format the ordinary text within files
 created with 'Notes' (the lightweight notes management plugin written by Hari
-Krishna Dari)...
+Krishna Dara)...
 
 In your .vimrc, set the g:notesFileType option as follows: >
 	let g:notesFileType = 'txtfmt'
