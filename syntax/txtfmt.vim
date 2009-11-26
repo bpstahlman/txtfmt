@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2009 Sep 27
+" Last Change: 2009 Nov 23
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -192,7 +192,8 @@ fu! s:Define_syntax()
 		" TODO - Perhaps put inner_esc groups into a cluster.
 		if b:txtfmt_cfg_escape != 'none'
 			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all,Tf_def_tok'
-						\.',Tf_outer_esc,Tf_any_stok_inner_esc,Tf_clr_etok_inner_esc'
+						\.',Tf_outer_esc,Tf_any_stok_inner_esc'
+						\.(clr_enabled ? ',Tf_clr_etok_inner_esc' : '')
 						\.(bgc_enabled ? ',Tf_bgc_etok_inner_esc' : '').',Tf_fmt_etok_inner_esc'
 		else
 			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all,Tf_def_tok'
