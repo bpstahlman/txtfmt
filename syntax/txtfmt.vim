@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2009 Nov 23
+" Last Change: 2010 Feb 14
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -43,6 +43,83 @@ endfu
 " >>>
 call s:Do_config()
 " >>>
+" Function: s:Winrestcmd() <<<
+" Purpose: Works just like Vim's winrestcmd, which was added in Vim 6.3,
+" (and therefore, is not something I want to rely upon). Returns a
+" string that can be :execute'd to restore the current window layout,
+" assuming exactly the same set of windows exist when the string is
+" exe'd.
+" Note: winrestcmd() format looks like this:
+" 1resize <height1>|vert 1resize <width1>| ... Nresize <heightN>|vert Nresize <widthN>|
+" Note how the final element is terminated by a vertical bar.
+" Testing: Verified for non-trivial window layout that winrestcmd() and
+" this function return the same string.
+fu! s:Winrestcmd()
+	let i = 1
+	let N = winnr('$')
+	let cmd = ''
+	while i <= N
+		let cmd = cmd . i . 'resize ' . winheight(i) . '|vert ' . i . 'resize ' . winwidth(i) . '|'
+		let i = i + 1
+	endwhile
+	return cmd
+endfu
+" >>>
+" Function: s:Create_scratch_buffer() <<<
+" Purpose: Create an empty scratch buffer in the current window, hiding
+" the current buffer.
+" Assumption: The hidden buffer will be restored by a call to
+" s:Cleanup_scratch_buffer() later.
+" Vim Idiosyncrasy: Special care must be taken when the current window
+" contains an empty, [No Name] buffer; in that case, :hide enew will, by
+" default, reuse that buffer for the newly created one (discarding any
+" existing buf-local variables). This is problematic, since we need to
+" return to the original buffer when we're finished with the scratch
+" buffer. Note that in some cases, Txtfmt options may already have been
+" stored to buf-local variables in the empty, [No Name] buffer before
+" this function is called.
+" Solution: Bram suggested adding a blank line to the original buffer to
+" ensure it isn't reused. The blank line can be removed in the
+" s:Cleanup_scratch_buffer() function.
+" Note: Before this function was added, the scratch buffer was created
+" in a new window. The problem with that approach was that it fails when
+" there's no room to create another window.
+fu! s:Create_scratch_buffer()
+	" See whether the current buffer is an empty, unnamed buffer that
+	" will be discarded by the :hide enew below.
+	if line('$') == 1 && col('$') == 1 && bufname('%') == ''
+		" Current buffer is an empty, unnamed buffer
+		" To prevent its being discarded by :hide enew, add a blank
+		" line, which we'll remove in the associated cleanup function
+		call append(1, '')
+		let s:Added_blank_line_to_empty_buffer = 1
+	endif
+	" Create the scratch buffer
+	hide enew
+	set buftype=nofile
+	set bufhidden=wipe
+	set noswapfile
+endfu
+" >>>
+" Function: s:Cleanup_scratch_buffer() <<<
+" Purpose: Wipe out the scratch buffer in the current window, restoring
+" the buffer it supplanted.
+" Assumption: s:Create_scratch_buffer() was called to create the scratch
+" buffer in the current window.
+fu! s:Cleanup_scratch_buffer()
+	" Return to the buffer that was current when the associated create
+	" function was called
+	" Note: The scratch buffer 'bufhidden' option will ensure that it's
+	" bwipe'd
+	buffer #
+	if exists('s:Added_blank_line_to_empty_buffer')
+		unlet s:Added_blank_line_to_empty_buffer
+		" Get rid of the blank line we added in the associated create
+		" function
+		undo
+	endif
+endfu
+" >>>
 " Function: s:Is_match_offset_char_based() <<<
 " Purpose: Return nonzero if and only if the this version of Vim treats match
 " offsets as character offsets.
@@ -52,11 +129,8 @@ fu! s:Is_match_offset_char_based()
 	" Set lazyredraw to ensure user never sees the buffer we create
 	let lazyredraw_save = &lazyredraw
 	set lazyredraw
-	" Save the old buffer number
-	let buf_nr = bufnr('%')
-	" Create a scratch buffer
-	new
-	set buftype=nofile
+	" Create a scratch buffer in the current window
+	call s:Create_scratch_buffer()
 	" Put the test string at the head of the new scratch buffer
 	call setline(1, s)
 	" Create syntax region that will include the last character on the line if
@@ -68,10 +142,8 @@ fu! s:Is_match_offset_char_based()
 	else
 		let off_is_char = 0
 	endif
-	" Delete the scratch buffer and be sure we return to the txtfmt buffer
-	bd
-	" This is probably unnecessary, but safe...
-	exe 'buffer ' . buf_nr
+	" Clean up the scratch buffer, returning to the previous buffer
+	call s:Cleanup_scratch_buffer()
 	" Restore old lazyredraw setting
 	if !lazyredraw_save
 		set nolazyredraw
@@ -175,7 +247,7 @@ fu! s:Define_syntax()
 		" Nonexistence of b:txtfmt_dbg_syn_off indicates
 		" Is_match_offset_char_based wasn't run
 		unlet! b:txtfmt_dbg_syn_off
-	elseif s:Is_match_offset_char_based()
+	silent elseif s:Is_match_offset_char_based()
 		let tok_off = 1
 		let b:txtfmt_dbg_syn_off = 'char'
 	else
