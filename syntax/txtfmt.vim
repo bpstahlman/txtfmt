@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2010 Feb 14
+" Last Change: 2010 Jun 06
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -91,7 +91,12 @@ fu! s:Create_scratch_buffer()
 		" Current buffer is an empty, unnamed buffer
 		" To prevent its being discarded by :hide enew, add a blank
 		" line, which we'll remove in the associated cleanup function
+		" Make sure the buffer is modifiable, taking care to save and restore
+		" current setting.
+		let modifiable_save = &l:modifiable
+		setlocal modifiable
 		call append(1, '')
+		let &l:modifiable = modifiable_save
 		let s:Added_blank_line_to_empty_buffer = 1
 	endif
 	" Create the scratch buffer
@@ -99,6 +104,9 @@ fu! s:Create_scratch_buffer()
 	set buftype=nofile
 	set bufhidden=wipe
 	set noswapfile
+	" The following setlocal is necessary to prevent E21 in the event that
+	" 'nomodifiable' is set globally.
+	setlocal modifiable
 endfu
 " >>>
 " Function: s:Cleanup_scratch_buffer() <<<
@@ -115,8 +123,13 @@ fu! s:Cleanup_scratch_buffer()
 	if exists('s:Added_blank_line_to_empty_buffer')
 		unlet s:Added_blank_line_to_empty_buffer
 		" Get rid of the blank line we added in the associated create
-		" function
+		" function.
+		" Note: Make sure the buffer is modifiable, taking care to save and
+		" restore current setting.
+		let modifiable_save = &l:modifiable
+		setlocal modifiable
 		undo
+		let &l:modifiable = modifiable_save
 	endif
 endfu
 " >>>

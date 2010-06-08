@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2010 Feb 15
+" Last Change: 2010 Jun 06
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "2.2"
+let g:Txtfmt_Version = "2.3"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -2478,6 +2478,9 @@ fu! s:MakeTestPage(...)
 	set buftype=nofile
 	set bufhidden=hide
 	set noswapfile
+	" The following setlocal is necessary to prevent E21 in the event that
+	" 'nomodifiable' is set globally.
+	setlocal modifiable
 	" If user provided modeline, add it to top of file before setting filetype
 	" to txtfmt...
 	if a:0 == 1
