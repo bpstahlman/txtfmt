@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2010 Jun 06
+" Last Change: 2010 Sep 04
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -236,8 +236,9 @@ fu! s:Define_syntax()
 	" Check for existence of 'conceal' patch (and desire on part of user to
 	" use it)
 	if b:txtfmt_cfg_conceal
-		" Note: 'conceallevel' is window-local
-		set conceallevel=3
+		" Note: 'conceallevel' and 'concealcursor' are window-local
+		setl conceallevel=3
+		let &l:concealcursor = b:txtfmt_cfg_concealcursor
 		let concealends = ' concealends'
 		let conceal = ' conceal'
 	else

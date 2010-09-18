@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2010 Jun 06
+" Last Change: 2010 Sep 18
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "2.3"
+let g:Txtfmt_Version = "2.4"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -47,6 +47,7 @@ let s:TESTPAGE_WINHEIGHT = 20
 "	{sync}={<hex>|<dec>|fromstart|none}
 "	{bgcolor|bg}=<color>
 "	{nested|nst}
+"	{concealcursor|cocu}=[n][v][i][c]
 " Must be no whitespace surrounding the '='
 " Also: Since Vim will not choke on a trailing ':' (though it's not
 " technically part of the 1st modeline format), neither will I.
@@ -56,7 +57,7 @@ let s:TESTPAGE_WINHEIGHT = 20
 " assume it's just text that looks like the start of a modeline.
 let s:re_ml_start = '\%(.\{-}\%(\s\+txtfmt:\s*\)\)'
 let s:re_ml_name  = '\%(\I\i*\)'
-let s:re_ml_val   = '\%(\%(\\.\|[^:[:space:]]\)\+\)'
+let s:re_ml_val   = '\%(\%(\\.\|[^:[:space:]]\)*\)'
 let s:re_ml_el    = '\%('.s:re_ml_name.'\%(='.s:re_ml_val.'\)\?\)'
 let s:re_ml_elsep = '\%(\s\+\|\s*:\s*\)'
 let s:re_ml_end   = '\%(\s*:\?\s*$\)'
@@ -506,6 +507,16 @@ fu! s:Escape_is_valid(optval)
 endfu
 " >>>
 " >>>
+" 'concealcursor' utility functions <<<
+" Construct pattern that will validate the option value.
+let s:re_concealcursor_optval = '^[nvic]*$'
+" Function: s:Concealcursor_is_valid() <<<
+" Purpose: Indicate whether input string is a valid concealcursor option value
+fu! s:Concealcursor_is_valid(optval)
+	return a:optval =~ s:re_concealcursor_optval
+endfu
+" >>>
+" >>>
 " Number validation utility functions <<<
 " Function: s:Number_is_valid(s)
 " Purpose: Indicate whether the input string represents a valid number
@@ -718,7 +729,7 @@ fu! s:Set_syncing()
 			\ "global") . " value for txtfmt `sync' option" . (
 			\ l:bad_set_by == 'm' ? '' :
 			\ l:bad_set_by == 'b' ? (': ' . b:txtfmtSync) :
-			\ (': ' . g:txtfmtSync)
+			\ (': ' . g:txtfmtSync))
 	endif
 	if !exists('b:txtfmt_cfg_sync') || strlen(b:txtfmt_cfg_sync) == 0
 		" Set to default
@@ -1162,14 +1173,14 @@ fu! s:Process_txtfmt_modeline(line)
 	let optstr = substitute(linestr, s:re_modeline, '\2', '')
 	" Extract pieces from head of optstr as long as unprocessed options exist
 	" Note: The following pattern may be used to extract element separators
-	" into \1, opt name into \2, opt value (if it exists) into \3, and to
-	" strip all three from the head of the string. (The remainder of the
-	" modeline will be in \4.)
+	" into \1, opt name into \2, equal sign (if it exists) into \3, opt value
+	" (if it exists) into \4, and to strip all three from the head of the
+	" string. (The remainder of the modeline will be in \5.)
 	" Note: Element separator is optional in the following re, since it won't
 	" exist for first option, and we've already verified that it exists
 	" between all other options.
 	let re_opt = '\('.s:re_ml_elsep.'\)\?\('
-				\.s:re_ml_name.'\)\%(=\('.s:re_ml_val.'\)\)\?\(.*\)'
+				\.s:re_ml_name.'\)\%(\(=\)\('.s:re_ml_val.'\)\)\?\(.*\)'
 	" If this is a real buffer line, do some special processing required only
 	" when modeline options are being changed or added
 	if l:line > 0
@@ -1193,14 +1204,23 @@ fu! s:Process_txtfmt_modeline(line)
 		let middle = middle.substitute(optstr, re_opt, '\1', '')
 		" Extract option name and value
 		let optn = substitute(optstr, re_opt, '\2', '')
-		let optv = substitute(optstr, re_opt, '\3', '')
+		let has_eq = '=' == substitute(optstr, re_opt, '\3', '')
+		let optv = substitute(optstr, re_opt, '\4', '')
 		" Remove the option about to be processed from head of opt str
-		let optstr = substitute(optstr, re_opt, '\4', '')
+		let optstr = substitute(optstr, re_opt, '\5', '')
+		" IMPORTANT TODO: The following if/else needs major refactoring to
+		" avoid duplication. There are ways of doing this that require far
+		" less brute-force. I'm saving it for a subsequent release to mitigate
+		" testing.
 		" Validate the option(s)
 		if optn == 'tokrange' || optn == 'rng'
 			"format: tokrange=<char_code>[sSlLxX]
 			"Examples: '130s' '1500l' '130' '0x2000L'
-			if !s:Tokrange_is_valid(optv)
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'tokrange'"
+				let b:txtfmt_cfg_tokrange = ''
+				let ret_val = -1
+			elseif !s:Tokrange_is_valid(optv)
 				" 2 cases when option is invalid:
 				" 1) We can fix the invalid tokrange by changing to the value
 				"    specified by user in call to :MoveStartTok
@@ -1250,7 +1270,11 @@ fu! s:Process_txtfmt_modeline(line)
 				let b:txtfmt_cfg_tokrange = optv
 			endif
 		elseif optn == 'fgcolormask' || optn == 'fcm'
-			if !s:Clrmask_is_valid(optv)
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'fgcolormask'"
+				let b:txtfmt_cfg_fgcolormask = ''
+				let ret_val = -1
+			elseif !s:Clrmask_is_valid(optv)
 				" Invalid number of colors
 				let s:err_str = "Invalid foreground color mask - must be string of 8 ones and zeroes"
 				let b:txtfmt_cfg_fgcolormask = ''
@@ -1259,7 +1283,11 @@ fu! s:Process_txtfmt_modeline(line)
 				let b:txtfmt_cfg_fgcolormask = optv
 			endif
 		elseif optn == 'bgcolormask' || optn == 'bcm'
-			if !s:Clrmask_is_valid(optv)
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'bgcolormask'"
+				let b:txtfmt_cfg_bgcolormask = ''
+				let ret_val = -1
+			elseif !s:Clrmask_is_valid(optv)
 				" Invalid number of colors
 				let s:err_str = "Invalid background color mask - must be string of 8 ones and zeroes"
 				let b:txtfmt_cfg_bgcolormask = ''
@@ -1270,7 +1298,11 @@ fu! s:Process_txtfmt_modeline(line)
 		elseif optn == 'sync'
 			"format: sync={<hex>|<dec>|fromstart|none}
 			"Examples: 'sync=300' 'sync=0x1000' 'sync=fromstart' 'sync=none'
-			if !s:Sync_is_valid(optv)
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'sync'"
+				let b:txtfmt_cfg_sync = ''
+				let ret_val = -1
+			elseif !s:Sync_is_valid(optv)
 				let s:err_str = "Invalid 'sync' value - must be one of the"
 							\." following: <numeric literal>, 'fromstart'"
 							\.", 'none'"
@@ -1283,8 +1315,8 @@ fu! s:Process_txtfmt_modeline(line)
 			endif
 		elseif optn =~ '^\(no\)\?\(pack\|pck\)$'
 			" Make sure no option value was supplied to binary option
-			if strlen(optv)
-				let s:err_str = "Cannot assign value to binary txtfmt option 'pack'"
+			if has_eq
+				let s:err_str = "Cannot assign value to boolean txtfmt option 'pack'"
 				let b:txtfmt_cfg_pack = ''
 				let ret_val = -1
 			else
@@ -1293,8 +1325,8 @@ fu! s:Process_txtfmt_modeline(line)
 			endif
 		elseif optn =~ '^\(no\)\?\(undercurl\|uc\)$'
 			" Make sure no option value was supplied to binary option
-			if strlen(optv)
-				let s:err_str = "Cannot assign value to binary txtfmt option 'undercurl'"
+			if has_eq
+				let s:err_str = "Cannot assign value to boolean txtfmt option 'undercurl'"
 				let b:txtfmt_cfg_undercurlpref = ''
 				let ret_val = -1
 			else
@@ -1303,8 +1335,8 @@ fu! s:Process_txtfmt_modeline(line)
 			endif
 		elseif optn =~ '^\(no\)\?\(nested\|nst\)$'
 			" Make sure no option value was supplied to binary option
-			if strlen(optv)
-				let s:err_str = "Cannot assign value to binary txtfmt option 'nested'"
+			if has_eq
+				let s:err_str = "Cannot assign value to boolean txtfmt option 'nested'"
 				let b:txtfmt_cfg_nested = ''
 				let ret_val = -1
 			else
@@ -1313,17 +1345,45 @@ fu! s:Process_txtfmt_modeline(line)
 			endif
 		elseif optn =~ '^\(no\)\?\(conceal\|cncl\)$'
 			" Make sure no option value was supplied to binary option
-			if strlen(optv)
-				let s:err_str = "Cannot assign value to binary txtfmt option 'conceal'"
+			if has_eq
+				let s:err_str = "Cannot assign value to boolean txtfmt option 'conceal'"
 				let b:txtfmt_cfg_conceal = ''
 				let ret_val = -1
 			else
 				" Option has been explicitly turned on or off
 				let b:txtfmt_cfg_conceal = optn =~ '^no' || !has('conceal') ? 0 : 1
 			endif
+		elseif optn == 'concealcursor' || optn == 'cocu'
+			" format: cocu=[n][v][i][c]
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'concealcursor'"
+				let b:txtfmt_cfg_concealcursor_invalid = 1
+				let ret_val = -1
+			elseif !s:Concealcursor_is_valid(optv)
+				let s:err_str = "Invalid 'concealcursor' option: `" . optv
+					\ . "' - only the following flags are permitted: nvic"
+				" Note: This one is different from the others: empty string is
+				" valid option value, so we can't use null string to indicate
+				" error
+				let b:txtfmt_cfg_concealcursor_invalid = 1
+				let ret_val = -1
+			else
+				" Option has been explicitly set
+				" Vim Issue: With 'concealcursor', duplicate flags aren't
+				" removed as they are for other such options (and as
+				" documentation indicates they should be).
+				" Note: Intentially skipping check for duplicates since
+				" they're harmless.
+				let b:txtfmt_cfg_concealcursor = optv
+			endif
 		elseif optn == 'escape' || optn == 'esc'
 			"format: escape=[bslash|self|none]
-			if optv == 'bslash'
+			"TODO: Perhaps use s:Escape_is_valid() for validation
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'escape'"
+				let b:txtfmt_cfg_escape = ''
+				let ret_val = -1
+			elseif optv == 'bslash'
 				let b:txtfmt_cfg_escape = 'bslash'
 			elseif optv == 'self'
 				let b:txtfmt_cfg_escape = 'self'
@@ -1339,7 +1399,7 @@ fu! s:Process_txtfmt_modeline(line)
 		   let ret_val = -1
 		endif
 		" Append optn[=optv] to middle
-		let middle = middle.optn.(strlen(optv) ? '='.optv : '')
+		let middle = middle . optn . (has_eq ? '=' . optv : '')
 	endwhile
 	" Processed txtfmt modeline without error
 	if l:line > 0 && exists('line_changed')
@@ -1669,7 +1729,7 @@ fu! s:Define_fmtclr_vars()
 	let s:txtfmt_clr{1} = '^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000'
 	let s:txtfmt_clr{2} = '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
 	let s:txtfmt_clr{3} = '^g\\%[reen]$,c:DarkGreen,g:#00FF00'
-	let s:txtfmt_clr{4} = '^t\\%[urquoise]$,c:LightGreen,g:#00FFFF'
+	let s:txtfmt_clr{4} = '^t\\%[urquoise]$,c:DarkCyan,g:#00FFFF'
 	let s:txtfmt_clr{5} = '^r\\%[ed]$,c:DarkRed,g:#FF0000'
 	let s:txtfmt_clr{6} = '^v\\%[iolet]$,c:DarkMagenta,g:#FF00FF'
 	let s:txtfmt_clr{7} = '^y\\%[ellow]$,c:DarkYellow,g:#FFFF00'
@@ -1989,6 +2049,7 @@ fu! s:Do_config_common()
 				\ b:txtfmt_cfg_numfgcolors b:txtfmt_cfg_numbgcolors
 				\ b:txtfmt_cfg_fgcolormask b:txtfmt_cfg_bgcolormask
 				\ b:txtfmt_cfg_undercurlpref b:txtfmt_cfg_conceal
+				\ b:txtfmt_cfg_concealcursor b:txtfmt_cfg_concealcursor_invalid
 	" >>>
 	" Attempt to process modeline <<<
 	let ml_status = s:Do_txtfmt_modeline()
@@ -2027,7 +2088,7 @@ fu! s:Do_config_common()
 				\ "global") . " value for txtfmt `escape' option" . (
 				\ l:bad_set_by == 'm' ? '' :
 				\ l:bad_set_by == 'b' ? (': ' . b:txtfmtEscape) :
-				\ (': ' . g:txtfmtEscape)
+				\ (': ' . g:txtfmtEscape))
 		endif
 		if !exists('b:txtfmt_cfg_escape') || strlen(b:txtfmt_cfg_escape) == 0
 			" Set to default
@@ -2113,11 +2174,17 @@ fu! s:Do_config_common()
 	if !exists('b:txtfmt_cfg_conceal') || strlen(b:txtfmt_cfg_conceal) == 0
 		" Either option wasn't set within modeline, or it was set to invalid
 		" value
-		if exists('b:txtfmt_cfg_conceal') && strlen(b:txtfmt_cfg_conceal) == 0
-			" Bad modeline set. Warn user that we're about to override. Note
-			" that modeline processing has already reported the specific
-			" error.
-			echoerr "Warning: Ignoring invalid modeline value for txtfmt `conceal' option"
+		if exists('b:txtfmt_cfg_conceal')
+			if strlen(b:txtfmt_cfg_conceal) == 0
+				" Bad modeline set. Warn user that we're about to override. Note
+				" that modeline processing has already reported the specific
+				" error.
+				echoerr "Warning: Ignoring invalid modeline value for txtfmt `conceal' option"
+			elseif b:txtfmt_cfg_conceal && !has('conceal')
+				" Modeline enables 'conceal' but the feature isn't supported
+				" by Vim. Silently override the request.
+				let b:txtfmt_cfg_conceal = 0
+			endif
 		elseif exists('b:txtfmtConceal')
 			" User overrode buf-local option
 			" Note: Invalid setting impossible for boolean
@@ -2128,10 +2195,64 @@ fu! s:Do_config_common()
 			let b:txtfmt_cfg_conceal = has('conceal') && g:txtfmtConceal
 		endif
 		if !exists('b:txtfmt_cfg_conceal') || strlen(b:txtfmt_cfg_conceal) == 0
-			" For backward-compatibility reasons, default is 'noconceal', even
-			" when has('conceal') returns true.
-			let b:txtfmt_cfg_conceal = 0
+			" Enable if support for 'conceal' feature is compiled into Vim.
+			" Note: This is a slightly non-backwards-compatible change with
+			" respect to Txtfmt version 2.3. See help for explanation.
+			let b:txtfmt_cfg_conceal = has('conceal')
 		endif
+	endif
+	" >>>
+	" 'concealcursor' option (dependent upon 'conceal') <<<
+	" Note: The value of this option will be ignored if 'conceal' is off (in
+	" which case, it might be safest to unset it).
+	if b:txtfmt_cfg_conceal
+		if !exists('b:txtfmt_cfg_concealcursor') || exists('b:txtfmt_cfg_concealcursor_invalid')
+			" Either option wasn't set within modeline, or it was set to invalid
+			" value
+			unlet! l:bad_set_by
+			if exists('b:txtfmt_cfg_concealcursor_invalid')
+				" Bad modeline set
+				let l:bad_set_by = 'm'
+			elseif exists('b:txtfmtConcealcursor')
+				" User overrode buf-local option
+				if s:Concealcursor_is_valid(b:txtfmtConcealcursor)
+					let b:txtfmt_cfg_concealcursor = b:txtfmtConcealcursor
+				else
+					let l:bad_set_by = 'b'
+				endif
+			elseif exists('g:txtfmtConcealcursor')
+				" User overrode global option
+				if s:Concealcursor_is_valid(g:txtfmtConcealcursor)
+					let b:txtfmt_cfg_concealcursor = g:txtfmtConcealcursor
+				else
+					let l:bad_set_by = 'g'
+				endif
+			endif
+			" Warn user if invalid user-setting is about to be overridden
+			if exists('l:bad_set_by')
+				" Note: Display the offending option value for buf-local or global
+				" option, but not for modeline, since modeline processing has
+				" already reported the error.
+				echoerr "Warning: Ignoring invalid ".(
+					\ l:bad_set_by == 'm' ? "modeline" :
+					\ l:bad_set_by == 'b' ? "buf-local" :
+					\ "global") . " value for txtfmt `concealcursor' option" . (
+					\ l:bad_set_by == 'm' ? '' :
+					\ l:bad_set_by == 'b' ? (': ' . b:txtfmtConcealcursor) :
+					\ (': ' . g:txtfmtConcealcursor))
+			endif
+			if !exists('b:txtfmt_cfg_concealcursor') || exists('b:txtfmt_cfg_concealcursor_invalid')
+				" By default, conceal tokens always, even in cursor line
+				let b:txtfmt_cfg_concealcursor = 'nvic'
+			endif
+			" At this point, b:txtfmt_cfg_concealcursor_invalid has served its
+			" purpose, and although it's unlet at the head of this function,
+			" I'd rather not leave an 'invalid' var in existence.
+			unlet! b:txtfmt_cfg_concealcursor_invalid
+		endif
+	else
+		" This option is N/A when 'conceal' is off
+		unlet! b:txtfmt_cfg_concealcursor
 	endif
 	" >>>
 	" 'tokrange' option <<<
@@ -2174,7 +2295,7 @@ fu! s:Do_config_common()
 				\ "global") . " value for txtfmt `fgcolormask' option" . (
 				\ l:bad_set_by == 'm' ? '' :
 				\ l:bad_set_by == 'b' ? (': ' . b:txtfmtFgcolormask) :
-				\ (': ' . g:txtfmtFgcolormask)
+				\ (': ' . g:txtfmtFgcolormask))
 		endif
 		if !exists('b:txtfmt_cfg_fgcolormask') || strlen(b:txtfmt_cfg_fgcolormask) == 0
 			" Set to default - all foreground colors active (for backward
@@ -2218,7 +2339,7 @@ fu! s:Do_config_common()
 				\ "global") . " value for txtfmt `bgcolormask' option" . (
 				\ l:bad_set_by == 'm' ? '' :
 				\ l:bad_set_by == 'b' ? (': ' . b:txtfmtBgcolormask) :
-				\ (': ' . g:txtfmtBgcolormask)
+				\ (': ' . g:txtfmtBgcolormask))
 		endif
 		if !exists('b:txtfmt_cfg_bgcolormask') || strlen(b:txtfmt_cfg_bgcolormask) == 0
 			" Set to default of red, green and blue if background colors are

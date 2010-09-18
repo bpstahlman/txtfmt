@@ -1,7 +1,7 @@
 *txtfmt.txt*	Syntax/Filetype plugin for formatting plain text
 
 Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
-Version: 2.3
+Version: 2.4
 
 ==============================================================================
 1. Contents					*txtfmt* *txtfmt-contents*
@@ -28,6 +28,7 @@ Version: 2.3
        Refreshing display after option changes...: |txtfmt-opt-refresh|
 	 :Refresh command........................: |txtfmt-:Refresh|
        Option list...............................: |txtfmt-opt-list|
+     Txtfmt "conceal" feature considerations.....: |txtfmt-conceal-notes|
      Choosing a token range......................: |txtfmt-choosing-token-range|
      Colors......................................: |txtfmt-color-config|
        Color defaults............................: |txtfmt-color-defaults|
@@ -98,7 +99,7 @@ Txtfmt's formatting is accomplished through the use of single-character
 "tokens" (chosen from ranges not normally used in text files), which are used
 to define highlight attributes for subsequent text. The tokens themselves are
 concealed by Txtfmt's syntax file, so that each appears as a single space (or
-not at all if your version of Vim has Vince Negri's 'conceal' patch - see
+not at all if your version of Vim was compiled with "conceal" support - see
 |txtfmt-'conceal'|)
 Note: See section |txtfmt-cterm-ignore-issue| if you notice that tokens are
 not hidden on your system.
@@ -531,53 +532,142 @@ txtfmtBgcolor{1..8}	old-style array of strings
 
 			*txtfmt-'conceal'* *txtfmt-'cncl'* *txtfmtConceal*
 'conceal' 'cncl'
-txtfmtConceal		boolean (default off)
+txtfmtConceal		boolean (default on when has('conceal') == 1)
 			global or buffer-local
 			*** New in version 2.0 ***
 	This option determines whether Txtfmt will attempt to use the
-	concealment capability provided by Vince Negri's "conceal / ownsyntax"
-	patch. (Note that the option is meaningful only when this patch has
-	been applied.)
+	concealment capability provided either by the "conceal" feature (Vim
+	versions >= 7.3) or by Vince Negri's "conceal / ownsyntax" patch
+	(available for older versions of Vim). Note that this option is
+	ignored when has("conceal") returns 0.
+	Note: You can check to see whether your version of Vim supports the
+	"conceal" feature either by executing has('conceal'), or by searching
+	the output of :version for the applicable feature string:
+		+conceal (enabled)
+		-conceal (disabled)
 
-	By default, Txtfmt attempts to conceal the special formatting tokens
-	by making each appear as a single space character. An implication of
-	this fact is that each token consumes a single column of screen width.
-	Although this is typically not an issue when the tokens can be placed
-	at the end of a line or on a line by themselves, it can be a source of
-	annoyance in certain scenarios. Consider, for example, the case in
-	which you want to highlight a single word in red bold. You would need
-	to insert both a red fg color and a bold format token prior to the
-	word, and both the 'no format' and 'no fg color' tokens immediately
-	after the word. Since each token appears as a single space, the
-	highlighted word will appear to be surrounded by more whitespace than
-	usual. This becomes even more of an issue in the unlikely event you
-	wish to highlight only part of a particular word.
+	The ideal Txtfmt token is zero-width, affecting the highlighting of
+	subsequent text without taking up any visible space in the Txtfmt
+	buffer. Such "zero-width" Txtfmt tokens are the default in versions of
+	Vim >= 7.3. In older versions of Vim, zero-width tokens were possible
+	only for users who built a custom version of Vim with Vince Negri's
+	"conceal / ownsyntax" patch. When the "conceal" feature is enabled,
+	Txtfmt will attempt to conceal completely all tokens not in the cursor
+	line. (Whether or not tokens in the cursor line are concealed depends
+	upon the |txtfmt-'concealcursor'| option setting.)
 
-	Ideally, the Txtfmt tokens would be zero-width tokens, which merely
-	affected the highlighting of subsequent text. Although this is not
-	possible to achieve with Vim's standard highlighting mechanism, it is
-	possible when Vim has been modified by Vince Negri's "conceal /
-	ownsyntax" patch. If you apply this patch (and enable this option),
-	Txtfmt will be able to make a token disappear completely as soon as
-	you move the cursor off the token's line. The token will reappear (as
-	whitespace) only when the cursor reenters its line. (Note that if the
-	tokens didn't reappear in this manner, you would have trouble removing
-	them once you had inserted them!) 
+	When the "conceal" feature is disabled (either by this option or by
+	lack of support in Vim), Txtfmt attempts to conceal the special
+	formatting tokens by making each appear as a single space character,
+	each of which consumes a single column of screen width. Although this
+	is typically not an issue when the tokens can be placed at the end of
+	a line or on a line by themselves, it can be a source of annoyance in
+	certain scenarios. Consider, for example, the case in which you want
+	to highlight a single word in red bold. You would need to insert both
+	a red fg color and a bold format token prior to the word, and both the
+	'no format' and 'no fg color' tokens immediately after the word. Since
+	each token appears as a single space, the highlighted word will appear
+	to be surrounded by more whitespace than usual. This becomes even more
+	of an issue in the unlikely event you wish to highlight only part of a
+	particular word. For this reason, Txtfmt will always use the "conceal"
+	feature whenever it is available.
 
-	By default, Txtfmt will not attempt to use the functionality provided
-	by the 'conceal' patch. Backward-compatibility is the primary reason
-	for this. As annoying as non-zero-width tokens might be, many users
-	will have created files that rely upon the tokens' width to achieve
-	proper indenting. A 4 space leading indent, for instance, might be
-	realized with a bold format token followed by 3 spaces. Causing the
-	bold format token to disappear, in this particular case, would break
-	the alignment. If you wish to use the 'conceal' feature for new files,
-	but not in files created with a pre-2.0 version of Txtfmt, you can use
-	a combination of modeline and global option settings of this option to
-	achieve the desired behavior.
+	*txtfmt-conceal-notes* *txtfmt-conceal-history*
+	*txtfmt-conceal-backwards-compatibility*
+	Prior to Vim 7.3, the default setting of the |txtfmt-'conceal'| option
+	was "off", even when has("conceal") indicated that the feature was
+	enabled in Vim (i.e., because the user had applied Vince Negri's
+	"conceal" patch). This design choice was made, in spite of the fact
+	that use of the "conceal" feature is optimal, primarily for reasons of
+	backwards-compatibility. In particular, as annoying as non-zero-width
+	tokens might be, many users were sure to have created files that
+	relied upon the tokens' width to achieve proper indenting. A 4 space
+	leading indent, for instance, might have been realized with a bold
+	format token followed by 3 spaces. Suddenly concealing the bold format
+	token would break the alignment.
 
+	Although this rationale is still valid, it is no longer sufficient (in
+	my judgment) to justify disabling the "conceal" feature by default,
+	now that the feature has been incorporated into Vim itself. First-time
+	Txtfmt users who begin using the plugin with Vim 7.3 will naturally
+	expect the plugin to take advantage of the "conceal" feature without
+	any explicit action on their part. Such users might not even be aware
+	of the existence of this option. Presenting Txtfmt in a sub-optimal
+	light (i.e., without "conceal" functionality) would increase the
+	probability that such users would abandon use of the plugin before
+	becoming sufficiently familiar with its documentation to learn that
+	they had the power to enable the "conceal" feature with a simple
+	option setting.
 
-			*txtfmt-'escape'* *txtfmt-'esc'* *txtfmtEscape*
+	*txtfmt-viewing-old-files-without-conceal*
+	If you have legacy files that are best viewed without the "conceal"
+	feature, but you're using a version of Vim with compiled-in support
+	for "conceal", you may wish to view the old files with "noconceal",
+	and view all newly-created Txtfmt files with "conceal". This is easily
+	accomplished as follows...
+
+	1. Set txtfmtConceal true globally, either by leaving the option at
+	   its default, or setting it explicitly in your vimrc. E.g.,
+		let g:txtfmtConceal = 1
+
+	2. Use Txtfmt modelines in your old files to disable the "conceal"
+	   feature for those files only. E.g.,
+		txtfmt:noconceal
+
+	Note: If you have many old files, you might wish to automate the
+	addition of the modelines with a simple sed or awk script: E.g.,
+
+	find . -iname '*.txtfmt' | xargs sed -i -e '$a\' -e 'txtfmt:noconceal'
+
+	Explanation: Adds a Txtfmt-modeline disabling "conceal" on the last
+	line of all .txtfmt files recursively under the current directory.
+	Note: Txtfmt will process up to |txtfmtModelines| modelines at the
+	beginning or end of a file; thus, the command above simply adds a new
+	modeline without bothering to check for an existing one.
+
+	Of course, the strategy outlined above is merely a suggestion. You can
+	use a combination of Txtfmt modeline and buffer-local / global option
+	settings to achieve whatever behavior you desire.
+
+		*txtfmt-'concealcursor'* *txtfmt-'cocu'* *txtfmtConcealcursor*
+'concealcursor' 'cocu'
+txtfmtConcealcursor	string (default: "nvic")
+			global or buffer-local
+			*** New in version 2.4 ***
+	Important Note: The default value of this option may change in a
+	future version of Txtfmt. If you care about its value, you should set
+	it explicitly.
+
+	Note: This option is ignored when the "conceal" feature is disabled
+	(via the |txtfmt-'conceal'| option) or is not supported by the running
+	Vim instance.
+
+	This option determines whether Txtfmt tokens in the line containing
+	the cursor are concealed. Its value is a string of single character
+	flags indicating the modes for which tokens in the cursor line should
+	be concealed. The flags are defined as follows in the Vim help:
+
+	  n		Normal mode
+	  v		Visual mode
+	  i		Insert mode
+	  c		Command line editing, for 'incsearch'
+		
+	For detailed descriptions, see Vim help on 'concealcursor'...
+
+	Note: Some new users might be disconcerted by the fact that with the
+	default setting of this option, the tokens disappear as soon as they
+	are entered. (After all, he might wish to delete them at some point.)
+	This will not be a concern at all once visual maps (targeted for next
+	release) have been added. These maps will automate addition/removal of
+	tokens completely, such that the user needn't even be aware of the
+	tokens' existence. In the meantime, however, the best way to locate
+	existing tokens does not require you to see them: it involves use of
+	the |txtfmt-jump-to-tok| maps, which facilitate locating Txtfmt tokens
+	by their types; additionally, the |\ga| map (|txtfmt-get-tok-info|)
+	may be used to learn the nature of the token under the cursor, even
+	when the token is completely concealed (i.e., occupying zero width).
+
+				*txtfmt-'escape'* *txtfmt-'esc'* *txtfmtEscape*
 'escape' 'esc'
 txtfmtEscape		string (default: "none")
 			global or buffer-local
@@ -1267,7 +1357,7 @@ The default values for the 8 colors are given below: >
 	txtfmtColor{1} = '^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000'
 	txtfmtColor{2} = '^b\\%[lue]$,c:DarkBlue,g:#0000FF'
 	txtfmtColor{3} = '^g\\%[reen]$,c:DarkGreen,g:#00FF00'
-	txtfmtColor{4} = '^t\\%[urquoise]$,c:LightGreen,g:#00FFFF'
+	txtfmtColor{4} = '^t\\%[urquoise]$,c:DarkCyan,g:#00FFFF'
 	txtfmtColor{5} = '^r\\%[ed]$,c:DarkRed,g:#FF0000'
 	txtfmtColor{6} = '^v\\%[iolet]$,c:DarkMagenta,g:#FF00FF'
 	txtfmtColor{7} = '^y\\%[ellow]$,c:DarkYellow,g:#FFFF00'
