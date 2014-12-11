@@ -490,6 +490,1849 @@ fu! s:Adjust_cursor()
 	return ''
 endfu
 " >>>
+" Function: s:Delete_cur_char() <<<
+" Purpose: Delete the character at the cursor position
+" Return: Number of bytes deleted
+" Assumption: Caller saves and restores @z, which is used by this function
+fu! s:Delete_cur_char()
+	" Obtain the character about to be deleted so we can determine its length
+	normal! "zyl
+	" Delete into black hole
+	" TODO: Decide whether to use the small delete register, in which case we
+	" wouldn't need the step above.
+	normal! "_x
+	" Return number of bytes removed
+	return strlen(@z)
+endfu
+" >>>
+" Function: s:Get_cur_char() <<<
+" Purpose: Get and return the character under the cursor
+" Return: Character under the cursor or empty string if ga would display NUL
+" Assumption: Caller saves and restores @z, which is used by this function
+fu! s:Get_cur_char()
+	normal! "zyl
+	" Return the character
+	return @z
+endfu
+" >>>
+" Function: s:Restore_visual_mode() <<<
+" Purpose: Visually select the range indicated by the input positions, using
+" the visual mode command returned by visualmode().
+" Inputs:
+" Return:
+" Error:
+" Assumptions:
+fu! s:Restore_visual_mode(l1, c1, l2, c2)
+	call cursor(a:l1, a:c1)
+	exe 'normal! ' . visualmode() 
+	call cursor(a:l2, a:c2)
+	" Leave cursor at start of selection
+	normal! o
+endfu
+" >>>
+" TODO: Header comments and convert to static
+" Function: s:Is_esc_tok() <<<
+" Purpose: Determine whether the char under the cursor is a Txtfmt escape
+" token.
+" Inputs: 
+" Return: Nonzero if and only if the cursor is sitting on a Txtfmt escape
+" char.
+" Error: N/A
+" TESTING: Tested on both a self and bslash test page.
+fu! s:Is_esc_tok()
+	" Take care of the obvious cases first...
+	if !Is_cursor_on_char()
+		return 0
+	endif
+	if b:txtfmt_cfg_escape == 'none'
+		return 0
+	endif
+	" Get name of syntax group under cursor
+	let s = synIDattr(synID(line("."), col("."), 1), "name")
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	" Any of the following regions result in nonzero return
+	" Tf_outer_esc
+	" Tf_any_stok_inner_esc
+	" Tf_fmt_etok_inner_esc
+	" Tf_clr_etok_inner_esc
+	" Tf_bgc_etok_inner_esc
+	if s =~
+		\ '^Tf_\%('
+			\ . 'outer'
+			\ . '\|\%('
+				\ . 'any_s'
+				\ . '\|\%('
+					\ . 'fmt'
+					\ . (clr_active ? '\|clr' : '')
+					\ . (bgc_active ? '\|bgc' : '')
+				\ . '\)_e'
+			\ . '\)tok_inner'
+		\ . '\)_esc$'
+		return 1
+	else
+		return 0
+	endif
+endfu
+" >>>
+" Function: s:Can_delete_tok() <<<
+" Purpose: Return true if and only if the token under the cursor can be
+" deleted. A return of false indicates that the token should be replaced with
+" a single space.
+" Logic: If 'keepsep' is false, we can always delete. Otherwise, we can delete
+" a token whenever doing so does not result in the joining of 2
+" non-whitespace, non-token chars that were previously separated by apparent
+" whitespace. As a special case, I allow deletion of a token just prior to
+" what appears to be the punctuation at the end of a sentence or phrase.
+" Assumption: Cursor is positioned on a token. (We don't check.)
+" Assumption: Caller saves and restores @z, which is used by this function
+fu! s:Can_delete_tok()
+	" TODO: Eventually, make this (or something similar) an option
+	let b:txtfmt_cfg_keepsep = 1
+	" Initialize return value to false
+	let ret_val = 0
+	if !b:txtfmt_cfg_keepsep
+		" If tokens are not used as space, we can always delete
+		let ret_val = 1
+	else
+		" Cache cursor column position
+		let tok_col = col('.')
+		if tok_col == 1 || tok_col + strlen(s:Get_cur_char()) >= col('$')
+			" We can always delete a token at the beginning or end of the line
+			let ret_val = 1
+		else
+			" Assumption: There's at least one char both before and after
+			" token under char. (This simplifies searches.)
+			" Design Decision: Inactive color is not treated as token, since
+			" it will not appear as whitespace.
+			" TODO: Decide whether this is what I want...
+			let tok_line = line('.')
+			" Create line/col constraint regex that can be used both for
+			" forward and backward search
+			let re_lcc = '\%' . tok_line . 'l\%' . tok_col . 'c'
+			" VIM BUG: If backward search is performed from a multi-byte char
+			" just after a space char, the backward search will not find the
+			" space char.
+			" Workaround: Move forward one char position before performing
+			" backward search. (I've verified that this works even when the
+			" char just after the multi-byte char is also multi-byte.)
+			" Assumption: We've already verified that we're not at the end of
+			" the line
+			" Note: The subsequent if and else are responsible for restoring
+			" cursor position
+			normal! l
+			if search('\%(' . b:txtfmt_re_any_tok . '\|\s\)' . re_lcc, 'bW', tok_line)
+				" There's whitespace or token space to the left of cursor
+				" position
+				let ret_val = 1
+				" Restore cursor pos after successful search
+				normal! l
+			else
+				" Move back to cursor pos
+				normal! h
+				" Define a regex corresponding *roughly* to Vim's concept of a
+				" sentence when cpoptions does not contain 'J'
+				" :help sentence
+				" Variation: I permit 1 (period) or 3 (ellipsis) dots, and any
+				" combination of bangs and question marks.
+				" Rationale: A sentence is sometimes ended with ..., !!!, ???
+				" !?!?, etc... Note that such sentences would be recognized by
+				" Vim, which doesn't care what comes before the final [.!?].
+				let re_punct = '\%(\.\|\.\{3}\|[!?]\+\)'
+				let re_eos = re_punct . '[])"'']*\%($\|\s\)'
+				" Additionally, define regex corresponding to *my* concept of
+				" a 'clause' (e.g., something ending with comma, semicolon or
+				" colon)
+				" Note: The `\%l \%c .' within the lookbehind assertion
+				" ensures that the pattern must match just after cursor pos
+				let re_eoc = '[,;:]\%($\|\s\)'
+				if search(
+					\ '\%(' . re_lcc . '.\)\@<=\%(' . b:txtfmt_re_any_tok
+					\ . '\|\s\|' . re_eos . '\|' . re_eoc . '\)', 'W', tok_line
+					\ )
+					let ret_val = 1
+					" Restore cursor pos after successful search
+					normal! h
+				endif
+			endif
+		endif
+	endif
+	return ret_val
+endfu
+" >>>
+" TODO: Perhaps move elsewhere...
+fu! Is_cursor_on_char()
+	" Note: The following test for something under the cursor works well even
+	" when 'virtualedit' is active.
+	if col('.') == col('$')
+		" Nothing under the cursor
+		return 0
+	else
+		return 1
+	endif
+endfu
+" TODO: Perhaps move elsewhere...
+fu! Is_active_color_index(typ, idx)
+	" TODO: Possibly refactor this test into a function that could
+	" be called from other places as well?
+	let fg_or_bg = a:typ == 'clr' ? 'fg' : 'bg'
+	" Is this color active?
+	let ip = 1
+	let i = -1 " set invalid in case we never enter loop
+	" Loop over active colors
+	while ip <= b:txtfmt_cfg_num{fg_or_bg}colors
+		" Obtain index into the arrays containing both active and
+		" inactive colors
+		let i = b:txtfmt_cfg_{fg_or_bg}color{ip}
+		if a:idx == i
+			" Found it - index corresponds to active color
+			return 1
+		endif
+		let ip = ip + 1
+	endwhile
+	" If we get here, the color isn't active
+	return 0
+endfu
+" Function: Search_in_range
+" Purpose: Efficiently wraps builtin search() routine, searching only within
+" input range, regardless of cursor position
+" Return: Value returned by Vim's search() routine. If match occurs, cursor
+" will be positioned on matching char; otherwise, it will be left at starting
+" location.
+fu! Search_in_range(re, l1, c1, l2, c2)
+	" Save original position
+	let l_orig = line('.')
+	let c_orig = col('.')
+	" Move to start of region to be searched
+	call cursor(a:l1, a:c1)
+	" Position ourselves on the char from which search will be attempted, and
+	" set search flags and stopline accordingly.
+	" Note: The purpose of this logic is to ensure that we search the entire
+	" region (including first and last chars), without searching more of the
+	" buffer than necessary.
+	if a:c1 > 1
+		" Move to char just prior to region
+		normal! h
+		let sflags = 'W'
+		let stopline = a:l2
+	elseif a:l1 > 1
+		" Couldn't move back on starting line, but we can move to end of line
+		" prior to region start
+		normal! k$
+		let sflags = 'W'
+		let stopline = a:l2
+	else
+		" Try backward search from region end
+		call cursor(a:l2, a:c2)
+		" Attempt to move rightward
+		normal! l
+		if col('.') > a:c2
+			" This is an acceptable starting point for backward search
+			let sflags = 'bW'
+			let stopline = a:l1
+		elseif line('$') > a:l2
+			" Couldn't move rightward, but we can move to beginning of first
+			" line beyond region
+			normal! j0
+			let sflags = 'bW'
+			let stopline = a:l1
+		else
+			" Search region encompasses entire file. Move to end and permit
+			" wrap
+			normal! G$
+			let sflags = ''
+			let stopline = 0
+		endif
+	endif
+	" Build the regex with appropriate line/col constraints
+	" Note: The following constrained regex would work even without the logic
+	" above; the logic above is required to ensure that we don't search more
+	" of the buffer than necessary.
+	let re = '\%('
+		\ . '\%(\%>' . a:l1 . 'l\|\%>' . (a:c1 - 1) . 'c\)\&'
+		\ . '\%(\%<' . a:l2 . 'l\|\%<' . (a:c2 + 1) . 'c\)'
+		\ . '\)\&' . a:re
+	" Perform the search
+	if stopline
+		let ret_val = search(re, sflags, stopline)
+	else
+		" Note: I believe setting stopline to 0 works just like omitting the
+		" argument, but the Vim docs are a bit ambiguous on this point...
+		let ret_val = search(re, sflags)
+	endif
+	if !ret_val
+		" Search was unsuccessful. Return to original location
+		call cursor(l_orig, c_orig)
+	endif
+	" Return the value returned by search()
+	return ret_val
+endfu
+
+" Function: s:Get_cur_tok_for_rgn() <<<
+" Purpose: If cursor is within the body of a Txtfmt highlighting region (i.e.,
+" not on an escape, start or end token) return the applicable token;
+" otherwise, return empty string.
+" Inputs: 
+" rgn    One of the following 3 strings: 'clr', 'fmt', 'bgc
+"        Indicates the region type of interest
+" Return: If the cursor lies within a region of the following form...
+" Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
+" ...return the token corresponding to {rgn}, or the corresponding default
+" token; otherwise, return the empty string.
+" Error: N/A
+" Assumptions: In order for this routine to be useful, caller should ensure
+" that the character under the cursor falls into one of the following two
+" categories:
+" 1. Is not within a Txtfmt region
+" 2. Is within the non-special portion of a Txtfmt region: i.e., not on an
+"    escaping char or a region start/end token
+" TESTING: Did 1st level of testing on 23Oct2009. Worked like a charm with no
+" need for debugging.
+fu! s:Get_cur_tok_for_rgn(rgn)
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	let rgn_idx_max_fmt = b:txtfmt_num_formats - 1
+	" Note: The following provide only upper bounds for color indices; an
+	" additional test for color activity will be required.
+	" Note: b:txtfmt_num_colors includes the default token; hence, the -1
+	let rgn_idx_max_clr = b:txtfmt_num_colors - 1
+	let rgn_idx_max_bgc = b:txtfmt_num_colors - 1
+
+	if !Is_cursor_on_char()
+		" Nothing under cursor - we can't determine anything about current
+		" region type
+		return ''
+	endif
+	" Get name of syntax group under cursor
+	let s = synIDattr(synID(line("."), col("."), 1), "name")
+	" Define regexes used in parsing syntax name
+	let re_hdr = '^\%(Tf\%(0\|[1-9][0-9]*\)_\)'
+	let re_rgn = '^\%(' . 'fmt' . (clr_active ? '\|\%(clr\)' : '') . (bgc_active ? '\|\%(bgc\)' : '') . '\)'
+	let re_num = '^\%(_\([1-9][0-9]*\)\)'
+	let re_ftr = '^\%(_rtd\)\?$'
+	" Assume highlighted region of the following form:
+	" Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
+	if s =~ re_hdr
+		let s = substitute(s, re_hdr, '', '')
+	else
+		return ''
+	endif
+	" Extract the list of region types involved
+	let rgn_idx = 0
+	while 1
+		if s =~ re_rgn
+			let rgn = substitute(s, '\(...\).*', '\1', '')
+			let s = substitute(s, '...', '', '')
+			" Validate rgn
+			" Note: The following 2 tests obviate the need to test for too
+			" many rgns
+			if rgn == 'clr' && !clr_active || rgn == 'bgc' && !bgc_active
+				" Ooops! This region shouldn't exist
+				return ''
+			endif
+			if exists('l:rgn_idxs_' . rgn)
+				" Ooops! We've seen this one already
+				return ''
+			endif
+			" Record index at which this rgn type was found
+			let rgn_idxs_{rgn} = rgn_idx
+			" Record the rgn type seen at this index
+			let rgns{rgn_idx} = rgn
+			let rgn_idx = rgn_idx + 1
+		else
+			if !rgn_idx
+				" Not a valid Txtfmt region
+				return ''
+			else
+				" Break out of loop to process the indices
+				break
+			endif
+		endif
+	endwhile
+	" Process the list of _<num>, each of which corresponds to a region type
+	" within rgns{} array
+	let num_idx = 0
+	while 1
+		if s =~ re_num
+			if num_idx >= rgn_idx
+				" Oops! More rgn indices than rgns
+				return ''
+			endif
+			" Extract the region number
+			let num = substitute(s, re_num . '.*', '\1', '')
+			let s = substitute(s, re_num, '', '')
+			" Validate the region number
+			" Test for region number too high
+			" Note: There will be an additional test for colors to determine
+			" whether they're active
+			if num > rgn_idx_max_{rgns{num_idx}}
+				" Oops! No such region token
+				return ''
+			endif
+			" Additional tests for color regions
+			if rgns{num_idx} == 'clr' || rgns{num_idx} == 'bgc'
+				if !Is_active_color_index(rgns{num_idx}, num)
+					" Ooops! num corresponds to inactive color
+					return ''
+				endif
+			endif
+			" All validity checks have passed
+			" Save the region number and update index
+			let rgn_nr{num_idx} = num
+			let num_idx = num_idx + 1
+		else
+			" This is not another _<index>
+			if num_idx < rgn_idx
+				" Didn't find enough indices
+				return ''
+			else
+				" Break out of loop to process possible _rtd
+				break
+			endif
+		endif
+	endwhile
+	" Allow both normal and _rtd variants
+	if s == '' || s =~ re_ftr
+		" Valid region
+		" Return applicable token
+		if exists('l:rgn_idxs_' . a:rgn)
+			" This rgn type was mentioned explicitly in the region name
+			return nr2char(b:txtfmt_{a:rgn}_first_tok + rgn_nr{l:rgn_idxs_{a:rgn}})
+			"return a:rgn . ": " . rgn_nr{l:rgn_idxs_{a:rgn}}
+		else
+			" The rgn of interest was not mentioned explicitly; assume default
+			return nr2char(b:txtfmt_{a:rgn}_first_tok)
+			"return a:rgn . ": default"
+		endif
+	else
+		" Not a valid Txtfmt group
+		return ''
+	endif
+endfu
+" >>>
+" Function: s:Cleanup_tokens_working() <<<
+" TODO: Make static after testing
+fu! Cleanup_tokens_working(startline, stopline)
+	" Save original position
+	let orig_line = line('.')
+	let orig_col = col('.')
+	" Create array to facilitate looping over region types:
+	" Note: Ignore inactive tokens completely.
+	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
+	"  for building other var names
+	let rgn_arrlen = 0
+	if b:txtfmt_cfg_numfgcolors > 0
+		let rgn{rgn_arrlen} = 'clr'
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	let rgn{rgn_arrlen} = 'fmt'
+	let rgn_arrlen = rgn_arrlen + 1
+	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+		let rgn{rgn_arrlen} = 'bgc'
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	" Loop over region types
+	let rgn_idx = 0
+	while rgn_idx < rgn_arrlen
+		" Set some convenience vars for current region type
+		" --re_hlable--
+		" Define regex that matches any char that is hlable for current region
+		" type: i.e., for bgc regions, anything that's not a token, and for
+		" non-bgc regions, anything that's neither token nor whitespace
+		let re_hlable = b:txtfmt_re_any_ntok
+		if rgn{rgn_idx} != 'bgc'
+			" Whitespace is hlable only for bgc regions
+			let re_hlable = re_hlable . '\&\S'
+		endif
+		" --rgn_typ--
+		" 3 char rgn name (clr|fmt|bgc)
+		let rgn_typ = rgn{rgn_idx}
+		" --re_tok--
+		" Define regex that matches any token (start or end) for current
+		" region type
+		let re_tok = b:txtfmt_re_{rgn_typ}_tok
+		let re_stok = b:txtfmt_re_{rgn_typ}_stok
+		let re_etok = b:txtfmt_re_{rgn_typ}_etok
+
+		" Ensure that certain vars are undefined upon loop entry
+		" Note: pptok (prev prev tok) is used to save the token that's about
+		" to be overwritten in ptok, but only when something hlable separates
+		" ptok from the tok under consideration (tok).
+		" Rationale: Each time through the loop, we consider 2 tokens: tok and
+		" ptok. If nothing hlable separates them, at least one of them will be
+		" deleted; in some cases, both tok and ptok will be deleted. As long
+		" as something is being deleted, ptok should be sufficient to hold
+		" whatever token needs saving. When neither token is being deleted,
+		" we need to ensure that whatever is in ptok is not lost, since it's
+		" always possible that the token about to be assigned to ptok will
+		" eventually be deleted, in which case, we'll need to know what region
+		" was active before it was encountered. (Note that we don't need
+		" pptok_line and pptok_col, since a token followed by hlable chars
+		" won't be deleted.)
+		unlet! ptok ptok_line ptok_col
+		unlet! pptok
+
+		" Move to requested starting position
+		call cursor(a:startline, 1)
+		let tok_line = line('.')
+		let tok_col = col('.')
+		let tok = s:Get_cur_char()
+		if tok =~ re_tok
+			" Process this token first time through loop
+			" Don't search for hlable, which won't be used this time through
+			" anyway
+			let hlable = 0 " value doesn't matter
+			let hlable_override = 1
+			let tok_override = 1
+		elseif tok =~ re_hlable
+			" Skip the hlable test first time through
+			let hlable = 1 " value doesn't matter
+			let hlable_override = 1
+			let tok_override = 0
+		else
+			" Nothing special about this char; we can do first search from it
+			let hlable_override = 0
+			let tok_override = 0
+		endif
+		" Loop until all tokens within region have been processed
+		while 1
+			" Perform hlable test if necessary
+			if !hlable_override
+				" Init hlable to 0. May be set later, depending upon search
+				" results
+				let hlable = 0
+				" Search for next hlable char within region
+				let hl_line = search(re_hlable, 'W', a:stopline)
+				if hl_line
+					let hl_col = col('.')
+					" Return to current pos
+					call cursor(tok_line, tok_col)
+				endif
+			endif
+			" Search for next tok within region if we don't already have it
+			if !tok_override
+				let tok_line = search(re_tok, 'W', a:stopline)
+				if tok_line
+					let tok_col = col('.')
+					let tok = s:Get_cur_char()
+				endif
+			endif
+
+			" Is there anything to delete from preceding iteration?
+			if exists('l:del_line')
+				" Move to char to be deleted
+				call cursor(del_line, del_col)
+				let len = s:Delete_cur_char()
+				" Adjust column positions and return to saved pos (but only if
+				" we're coming back through loop)
+				if tok_line
+					" Assumption: tok_line/tok_col is beyond the deleted char
+					if tok_line == del_line
+						let tok_col = tok_col - len
+					endif
+					" Assumption: ptok_line/ptok_col could be before or after
+					" deleted token (but cannot be the deleted token)
+					if exists('l:ptok_line') && ptok_line == del_line
+						if ptok_col > del_col
+							let ptok_col = ptok_col - len
+						endif
+					endif
+					" Assumption: Search for hlable is always past any char
+					" deleted on preceding iteration
+					if !hlable_override && hl_line == del_line
+						let hl_col = hl_col - len
+					endif
+					" Return to saved pos
+					call cursor(tok_line, tok_col)
+				endif
+				" Make sure we don't try to delete again
+				unlet del_line del_col
+			endif
+
+			" Are we done with this region type?
+			if !tok_line
+				break
+			endif
+				
+			" Account for only remaining way that hlable could become set
+			if !hlable_override && hl_line && (hl_line < tok_line || hl_line == tok_line && hl_col < tok_col)
+				let hlable = 1
+			endif
+
+			" Clear any active overrides
+			let tok_override = 0
+			let hlable_override = 0
+
+			if !exists('l:ptok')
+				" No knowledge of previous token means we can't possibly
+				" delete anything this time through...
+				let ptok = tok
+				let ptok_line = tok_line
+				let ptok_col = tok_col
+			else
+				" Consider current and previous token...
+				if tok =~ re_stok && ptok =~ re_stok
+					" Start tok preceded by start tok
+					if !hlable && ptok != tok
+						" Start toks are different and not separated by
+						" hlable. Delete useless ptok
+						call cursor(ptok_line, ptok_col)
+						let len = s:Delete_cur_char()
+						" Adjust column positions
+						if tok_line == ptok_line
+							let tok_col = tok_col - len
+						endif
+						" Return to current position
+						call cursor(tok_line, tok_col)
+						" Is new tok redundant with the one we just deleted?
+						if exists('l:pptok') && tok == pptok
+							" Mark redundant tok for deletion
+							let del_line = tok_line | let del_col = tok_col
+							" Restore pptok
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else pptok would have
+							" been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" Advance to new tok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					else
+						" Either stoks are the same or they're separated by
+						" hlable (or both)
+						if ptok == tok
+							" Mark redundant (second) tok for deletion
+							" Note: We're not overwriting ptok so save to
+							" pptok is not necessary, even if hlable is set
+							let del_line = tok_line | let del_col = tok_col
+							if hlable
+								" No need to search for hlable next iteration,
+								" since this hlable is after ptok
+								let hlable_override = 1
+							endif
+						else
+							" hlable separates different stoks
+							" Advance without deleting any tokens
+							" Note: Must save ptok before overwriting since
+							" tok could eventually be deleted.
+							let pptok = ptok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					endif
+				elseif tok =~ re_etok && ptok =~ re_stok
+					" End tok preceded by start tok
+					if hlable
+						" Start token (ptok) will never be deleted now, but
+						" end token (tok) still could be, so save ptok
+						let pptok = ptok
+						" Advance ptok
+						let ptok = tok
+						let ptok_line = tok_line
+						let ptok_col = tok_col
+					else
+						" Delete empty region
+						" First delete ptok, which we're no longer sitting on...
+						call cursor(ptok_line, ptok_col)
+						let len = s:Delete_cur_char()
+						" Adjust column positions
+						if tok_line == ptok_line
+							let tok_col = tok_col - len
+						endif
+						" Return to current position
+						call cursor(tok_line, tok_col)
+						" Mark end token for deletion
+						let del_line = tok_line | let del_col = tok_col
+						" Restore pptok if possible
+						if exists('l:pptok')
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else one of them would
+							" have been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" We'll have to sync up again
+							unlet! ptok ptok_line ptok_col
+						endif
+					endif
+				elseif tok =~ re_etok && ptok =~ re_etok
+					" End tok preceded by end tok. The second one is unnecessary.
+					" Delete it.
+					let del_line = tok_line | let del_col = tok_col
+					echomsg "Deleting 2nd of 2 etoks"
+					if hlable
+						" The first etok can never be deleted now
+						" Note: No need to save ptok to pptok since we're not
+						" overwriting ptok; however, we need to make sure we
+						" skip the search for hlable next time through loop.
+						let hlable_override = 1
+					endif
+				elseif tok =~ re_stok && ptok =~ re_etok
+					" Start tok preceded by end tok
+					if hlable
+						echomsg "etok not useless"
+						" End tok can never be deleted now but start tok
+						" eventually could be, so save end tok
+						let pptok = ptok
+						" Advance ptok
+						let ptok = tok
+						let ptok_line = tok_line
+						let ptok_col = tok_col
+					else
+						echomsg "Deleting useless etok"
+						" Delete the useless etok
+						call cursor(ptok_line, ptok_col)
+						let len = s:Delete_cur_char()
+						" Adjust column positions
+						if tok_line == ptok_line
+							let tok_col = tok_col - len
+						endif
+						" Move back to current position
+						call cursor(tok_line, tok_col)
+						" Is start tok redundant with the tok prior to the end
+						" tok we just deleted?
+						if exists('l:pptok') && tok == pptok
+							" Mark redundant stok for deletion
+							let del_line = tok_line | let del_col = tok_col
+							" Restore pptok
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else one of them would
+							" have been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" Advance to new tok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					endif
+				endif
+			endif
+		endwhile
+		" Next region type
+		let rgn_idx = rgn_idx + 1
+	endwhile
+	" Restore starting position
+	call cursor(orig_line, orig_col)
+endfu
+" >>>
+" Function: s:Cleanup_tokens() <<<
+" TODO: Make static after testing
+fu! Cleanup_tokens(startline, stopline, adj_vsel)
+	" Save original position
+	let orig_line = line('.')
+	let orig_col = col('.')
+	" Create array to facilitate looping over region types:
+	" Note: Ignore inactive tokens completely.
+	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
+	"  for building other var names
+	let rgn_arrlen = 0
+	if b:txtfmt_cfg_numfgcolors > 0
+		let rgn{rgn_arrlen} = 'clr'
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	let rgn{rgn_arrlen} = 'fmt'
+	let rgn_arrlen = rgn_arrlen + 1
+	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+		let rgn{rgn_arrlen} = 'bgc'
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	" Loop over region types
+	let rgn_idx = 0
+	while rgn_idx < rgn_arrlen
+		" Set some convenience vars for current region type
+		" --re_hlable--
+		" Define regex that matches any char that is hlable for current region
+		" type: i.e., for bgc regions, anything that's not a token, and for
+		" non-bgc regions, anything that's neither token nor whitespace
+		let re_hlable = b:txtfmt_re_any_ntok
+		if rgn{rgn_idx} != 'bgc'
+			" Whitespace is hlable only for bgc regions
+			let re_hlable = re_hlable . '\&\S'
+		endif
+		" --rgn_typ--
+		" 3 char rgn name (clr|fmt|bgc)
+		let rgn_typ = rgn{rgn_idx}
+		" --re_tok--
+		" Define regex that matches any token (start or end) for current
+		" region type
+		let re_tok = b:txtfmt_re_{rgn_typ}_tok
+		let re_stok = b:txtfmt_re_{rgn_typ}_stok
+		let re_etok = b:txtfmt_re_{rgn_typ}_etok
+
+		" Ensure that certain vars are undefined upon loop entry
+		" Note: pptok (prev prev tok) is used to save the token that's about
+		" to be overwritten in ptok, but only when something hlable separates
+		" ptok from the tok under consideration (tok).
+		" Rationale: Each time through the loop, we consider 2 tokens: tok and
+		" ptok. If nothing hlable separates them, at least one of them will be
+		" deleted; in some cases, both tok and ptok will be deleted. As long
+		" as something is being deleted, ptok should be sufficient to hold
+		" whatever token needs saving. When neither token is being deleted,
+		" we need to ensure that whatever is in ptok is not lost, since it's
+		" always possible that the token about to be assigned to ptok will
+		" eventually be deleted, in which case, we'll need to know what region
+		" was active before it was encountered. (Note that we don't need
+		" pptok_line and pptok_col, since a token followed by hlable chars
+		" won't be deleted.)
+		unlet! ptok ptok_line ptok_col
+		unlet! pptok
+
+		" Move to requested starting position
+		call cursor(a:startline, 1)
+		let tok_line = line('.')
+		let tok_col = col('.')
+		let tok = s:Get_cur_char()
+		" Note: Some of the complexity associated with the '_overrides' could
+		" go away if we refactored using Vim 7 capabilities: specifically, the
+		" ability to find a match at the cursor position.
+		if tok =~ re_tok
+			" Process this token first time through loop
+			" Don't search for hlable, which won't be used this time through
+			" anyway
+			let hlable = 0 " value doesn't matter
+			let hlable_override = 1
+			let tok_override = 1
+		elseif tok =~ re_hlable
+			" Skip the hlable test first time through
+			let hlable = 1 " value doesn't matter
+			let hlable_override = 1
+			let tok_override = 0
+		else
+			" Nothing special about this char; we can do first search from it
+			let hlable_override = 0
+			let tok_override = 0
+		endif
+		" Nothing to delete on first iteration
+		let del_cnt = 0
+		" Loop until all tokens within region have been processed
+		while 1
+			" Perform hlable test if necessary
+			if !hlable_override
+				" Init hlable to 0. May be set later, depending upon search
+				" results
+				let hlable = 0
+				" Search for next hlable char within region
+				let hl_line = search(re_hlable, 'W', a:stopline)
+				if hl_line
+					let hl_col = col('.')
+					" Return to current pos
+					call cursor(tok_line, tok_col)
+				endif
+			endif
+			" Search for next tok within region if we don't already have it
+			if !tok_override
+				let tok_line = search(re_tok, 'W', a:stopline)
+				if tok_line
+					let tok_col = col('.')
+					let tok = s:Get_cur_char()
+				endif
+			endif
+
+			" Is there anything to delete from preceding iteration?
+			" Do it in reverse order to ensure we don't have to update
+			" positions of tokens to be deleted
+			let del_idx = del_cnt - 1
+			while del_idx >= 0
+				" Move to char to be deleted
+				call cursor(del{del_idx}_line, del{del_idx}_col)
+				let len = s:Delete_cur_char()
+				if tok_line
+					" The following col adjustments are required only if we're
+					" going through loop again.
+					" Assumption: tok_line/tok_col is beyond the deleted char
+					if tok_line == del{del_idx}_line
+						let tok_col = tok_col - len
+					endif
+					" Assumption: ptok_line/ptok_col could be before or after
+					" deleted token (but cannot be the deleted token)
+					" Rationale: Logic within loop never leaves
+					" ptok_line/ptok_col pointing at a char about to be
+					" deleted. It may unlet ptok_line and ptok_col.
+					if exists('l:ptok_line') && ptok_line == del{del_idx}_line
+						" Adjustment required only if ptok is after deleted
+						" tok
+						if ptok_col > del{del_idx}_col
+							let ptok_col = ptok_col - len
+						endif
+					endif
+					" Assumption: Search for hlable (when it occurs) is always
+					" past any char deleted on preceding iteration
+					if !hlable_override && hl_line == del{del_idx}_line
+						let hl_col = hl_col - len
+					endif
+				endif
+				" Are we adjusting visual selection?
+				if a:adj_vsel
+					if s:vsel_beg_line == del{del_idx}_line
+						if s:vsel_beg_col > del{del_idx}_col
+							let s:vsel_beg_col = s:vsel_beg_col - len
+						elseif s:vsel_beg_col == del{del_idx}_col
+							" If token being deleted is also vsel_end, unlet
+							" the latter to indicate null selection
+							if exists('s:vsel_end_line')
+								\ && s:vsel_beg_line == s:vsel_end_line
+								\ && s:vsel_beg_col == s:vsel_end_col
+								unlet s:vsel_end_line s:vsel_end_col
+							endif
+							" Token to be deleted is at vsel_beg. Col position
+							" won't change unless the token is at the end of
+							" the line.
+							" Attempt to move vsel_beg to next char rightward.
+							" If vsel_beg is at end of line, move to start of
+							" next line. If it's also at end of buffer, move
+							" vsel_beg one char beyond last char in buffer.
+							" Design Alternative: Could leave on last char in
+							" buffer. It doesn't really matter because a call
+							" to cursor() makes no distinction between a
+							" position at end of line and 1 past end of line.
+							" Design Alternative: Could move vsel_beg
+							" rightward if and only if original vsel_end was
+							" beyond current line (for aesthetic, intuitive
+							" reasons).
+							if s:vsel_beg_col + len >= col('$')
+								" Token deleted is at end of line
+								" Note: If this is last line in buffer, we
+								" don't need to do anything, since
+								" s:vsel_beg_col will naturally end up being 1
+								" char past end of line, which is what we want.
+								if del{del_idx}_line != line('$')
+									let s:vsel_beg_col = 1
+									let s:vsel_beg_line = s:vsel_beg_line + 1
+								endif
+							endif
+						endif
+					endif
+					" Now look at end of selection
+					if exists('s:vsel_end_line')
+						if s:vsel_end_line == del{del_idx}_line
+							if s:vsel_end_col > del{del_idx}_col
+								let s:vsel_end_col = s:vsel_end_col - len
+							elseif s:vsel_end_col == del{del_idx}_col
+								" Assumption: Deleted char can't be both
+								" vsel_beg and vsel_end. That case is handled
+								" above in vsel_beg logic.
+								" Deleted token is at vsel_end
+								" Move leftward if possible
+								if s:vsel_end_col == 1
+									" At start of line
+									" Assumption: This really can't be start
+									" of buffer.
+									" Rationale: vsel_beg has to be before
+									" vsel_end; hence, we would have processed
+									" this token already as part of the
+									" vsel_beg logic.
+									" Design Decision: Should we take
+									" advantage of the assumption, or try to
+									" fix things if necessary?
+									if del{del_idx}_line > 1
+										" Move to end of preceding line and
+										" obtain its position
+										normal! k$
+										let s:vsel_end_line = s:vsel_end_line - 1
+										let s:vsel_end_col = col('.')
+									endif
+								else
+									" Not at start of line
+									normal! h
+									let s:vsel_end_col = col('.')
+								endif
+							endif
+						endif
+					endif
+				endif
+
+				" Retreat to preceding deletion
+				let del_idx = del_idx - 1
+			endwhile
+			" Cleanup after deletions
+			if del_cnt
+				" Return to saved pos after deletions if we're not done yet
+				if tok_line
+					call cursor(tok_line, tok_col)
+				endif
+				" Any pending deletions have been performed
+				let del_cnt = 0
+			endif
+
+			" Are we done with this region type?
+			if !tok_line
+				break
+			endif
+				
+			" Account for only remaining way that hlable could become set
+			if !hlable_override && hl_line && (hl_line < tok_line || hl_line == tok_line && hl_col < tok_col)
+				let hlable = 1
+			endif
+
+			" Clear any active overrides
+			let tok_override = 0
+			let hlable_override = 0
+
+			if !exists('l:ptok')
+				" No knowledge of previous token means we can't possibly
+				" delete anything this time through...
+				let ptok = tok
+				let ptok_line = tok_line
+				let ptok_col = tok_col
+			else
+				" Consider current and previous token...
+				if tok =~ re_stok && ptok =~ re_stok
+					" Start tok preceded by start tok
+					if !hlable && ptok != tok
+						" Start toks are different and not separated by
+						" hlable. Delete useless ptok
+						let del{del_cnt}_line = ptok_line | let del{del_cnt}_col = ptok_col
+						let del_cnt = del_cnt + 1
+						" Is new tok redundant with the one marked for
+						" deletion?
+						if exists('l:pptok') && tok == pptok
+							" Mark redundant tok for deletion
+							let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
+							let del_cnt = del_cnt + 1
+							" Restore pptok
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else pptok would have
+							" been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" Advance to new tok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					else
+						" Either stoks are the same or they're separated by
+						" hlable (or both)
+						if ptok == tok
+							" Mark redundant (second) tok for deletion
+							" Note: We're not overwriting ptok so save to
+							" pptok is not necessary, even if hlable is set
+							let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
+							let del_cnt = del_cnt + 1
+							if hlable
+								" No need to search for hlable next iteration,
+								" since this hlable is after ptok
+								let hlable_override = 1
+							endif
+						else
+							" hlable separates different stoks
+							" Advance without deleting any tokens
+							" Note: Must save ptok before overwriting since
+							" tok could eventually be deleted.
+							let pptok = ptok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					endif
+				elseif tok =~ re_etok && ptok =~ re_stok
+					" End tok preceded by start tok
+					if hlable
+						" Start token (ptok) will never be deleted now, but
+						" end token (tok) still could be, so save ptok
+						let pptok = ptok
+						" Advance ptok
+						let ptok = tok
+						let ptok_line = tok_line
+						let ptok_col = tok_col
+					else
+						" Delete empty region
+						" Mark start tok for deletion
+						let del{del_cnt}_line = ptok_line | let del{del_cnt}_col = ptok_col
+						let del_cnt = del_cnt + 1
+						" Mark end tok for deletion
+						let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
+						let del_cnt = del_cnt + 1
+						" Restore pptok if possible
+						if exists('l:pptok')
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else one of them would
+							" have been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" We'll have to sync up again
+							unlet! ptok ptok_line ptok_col
+						endif
+					endif
+				elseif tok =~ re_etok && ptok =~ re_etok
+					" End tok preceded by end tok. The second one is unnecessary.
+					" Delete it.
+					let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
+					let del_cnt = del_cnt + 1
+					if hlable
+						" The first etok can never be deleted now
+						" Note: No need to save ptok to pptok since we're not
+						" overwriting ptok; however, we need to make sure we
+						" skip the search for hlable next time through loop.
+						let hlable_override = 1
+					endif
+				elseif tok =~ re_stok && ptok =~ re_etok
+					" Start tok preceded by end tok
+					if hlable
+						" End tok can never be deleted now but start tok
+						" eventually could be, so save end tok
+						let pptok = ptok
+						" Advance ptok
+						let ptok = tok
+						let ptok_line = tok_line
+						let ptok_col = tok_col
+					else
+						" Delete the useless etok
+						let del{del_cnt}_line = ptok_line | let del{del_cnt}_col = ptok_col
+						let del_cnt = del_cnt + 1
+						" Is start tok redundant with the tok prior to the end
+						" tok we just deleted?
+						if exists('l:pptok') && tok == pptok
+							" Mark redundant stok for deletion
+							let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
+							let del_cnt = del_cnt + 1
+							" Restore pptok
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else one of them would
+							" have been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" Advance to new tok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					endif
+				endif
+			endif
+		endwhile
+		" Next region type
+		let rgn_idx = rgn_idx + 1
+	endwhile
+	" Restore starting position
+	call cursor(orig_line, orig_col)
+endfu
+" >>>
+" Function: s:Highlight_selection() <<<
+" Called_from: 'visual' mode mapping
+" Purpose: Highlight the visual selection according to fmt/clr spec string
+" obtained from user (by this function).
+" Inputs:
+" Return:
+" Error:
+" Assumptions:
+fu! s:Highlight_selection()
+	" Blockwise visual selections not supported!
+	if visualmode() == "\<C-V>"
+		echoerr "Highlight_selection(): blockwise-visual mode not supported"
+		return
+	endif
+	" Prompt user for desired highlighting
+	let tokstr = s:Prompt_fmt_clr_spec()
+	" Strip surrounding whitespace, which is ignored.
+	" Note: Only surrounding whitespace is ignored! Whitespace not
+	" permitted within fmt/clr spec list.
+	let tokstr = substitute(tokstr, '^\s*\(.\{-}\)\s*$', '\1', 'g')
+	" Check for Cancel request
+	if tokstr == ''
+		" Note that nothing about position or mode has changed at this point
+		" TODO: Probably want to restore selection here...
+		return
+	endif
+	" Translate and validate fmt/clr spec
+	let tokstr = s:Translate_fmt_clr_list(tokstr)
+	if tokstr == ''
+		" Invalid fmt/clr sequence
+		echoerr "Highlight_selection(): Invalid fmt/clr sequence entered: ".s:err_str
+		" Note that nothing about position or mode has changed at this point
+		" TODO: Probably want to restore selection here...
+		return
+	endif
+	" At this point, we have a translated fmt/clr spec comprising an offset
+	" followed by the actual fmt/clr token sequence.
+	" Note: offset has no meaning for selection highlighting; hence, we simply
+	" throw it away.
+	let tokstr = substitute(tokstr, '[^,]\+,\(.*\)', '\1', '')
+	" Important Note: We have an extra level of validation to perform:
+	" the returned string should contain 3 tokens maximum, with no more than 1
+	" of each type (fmt, clr or bgc).
+	" TODO: Decide whether to do this, or simply defer to test below, which
+	" will report multiple tokens of the same type...
+	if tokstr =~ '....'
+		" Too many tokens!
+		echoerr "Highlight_selection(): Too many fmt/clr specs entered"
+		" Note that nothing about position or mode has changed at this point
+		" TODO: Probably want to restore selection here...
+		return
+	endif
+	" Create several arrays:
+	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
+	"  for looping over rgn types in deterministic order.
+	" -rgn_tok{0,...} is list of tokens in order of specification within
+	"  fmt/clr spec list. Length of array held in rgn_tok_arrlen
+	" -rgn_tok_idx_{clr,fmt,bgc} contains either -1 or index of corresponding
+	"  entry in rgn_tok{0,...}. (Facilitates processing tokens in order
+	"  determined by token type, rather than order within fmt/clr spec list.)
+	" Facilitate looping over region types in deterministic order
+	let rgn_arrlen = 0
+	if b:txtfmt_cfg_numfgcolors > 0
+		let rgn{rgn_arrlen} = 'clr'
+		let rgn_tok_idx_clr = -1
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	let rgn{rgn_arrlen} = 'fmt'
+	let rgn_tok_idx_fmt = -1
+	let rgn_arrlen = rgn_arrlen + 1
+	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+		let rgn{rgn_arrlen} = 'bgc'
+		let rgn_tok_idx_bgc = -1
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	let rgn_tok_arrlen = 0
+	" The following flags will be set to reflect the types of regions
+	" represented in the fmt/clr string
+	let bgc_flag = 0
+	let nonbgc_flag = 0
+	" Determine what user chose to override for the selected region
+	while strlen(tokstr)
+		" Process token at head
+		let tok = substitute(tokstr, '\(.\).*', '\1', '')
+		" Loop over rgn types to see which we have
+		let ridx = 0
+		while ridx < rgn_arrlen
+			if tok =~ b:txtfmt_re_{rgn{ridx}}_tok
+				if rgn_tok_idx_{rgn{ridx}} != -1
+					" User already specified token for this region type!
+					echomsg "Warning: Ignoring all but first " . rgn{ridx} ." spec for selected region"
+				else
+					if rgn{ridx} == 'bgc'
+						let bgc_flag = 1
+					else
+						let nonbgc_flag = 1
+					endif
+					" Store the token in rgn_tok{0,...} array
+					let rgn_tok{rgn_tok_arrlen} = tok
+					" Store the rgn type associated with this token
+					let rgn_typ{rgn_tok_arrlen} = rgn{ridx}
+					" Associate the index of the token just stored with its
+					" rgn type
+					let rgn_tok_idx_{rgn{ridx}} = rgn_tok_arrlen
+					let rgn_tok_arrlen = rgn_tok_arrlen + 1
+				endif
+				" Look no further - we found it
+				break
+			endif
+			let ridx = ridx + 1
+		endwhile
+		" Strip off token just processed
+		let tokstr = substitute(tokstr, '.', '', '')
+	endwhile
+
+	" Register z is heavily used in this function (e.g., by Delete_cur_char,
+	" Get_cur_char and Can_delete_tok). Save here and restore at end
+	let regz_save = @z
+
+	" Determine the start and end of the selection
+	" Note: In both visual and select mode, col("'>") corresponds to the
+	" position of the last selected character. col("'<") corresponds to
+	" the position of the first selected character.
+	let ss_line = line("'<")
+	let ss_col = col("'<")
+	let se_line = line("'>")
+	let se_col = col("'>")
+	" Adjust visual selection bounds to include any partially-selected
+	" escape-escapee pairs
+	" Start of region
+	call cursor(ss_line, ss_col)
+	if !s:Is_esc_tok()
+		" Look backward 1 char if possible
+		if ss_col != 1
+			normal! h
+			if s:Is_esc_tok()
+				let ss_col_adj = col('.')
+			endif
+		endif
+	endif
+	" End of region
+	call cursor(se_line, se_col)
+	if s:Is_esc_tok()
+		normal! l
+		let se_col_adj = col('.')
+	endif
+	
+	" Will all specified tokens have a visible effect?
+	" Note: If we had to adjust either start or end of region, we know we have
+	" at least 1 hlable char (since escaped tokens can be highlighted by all
+	" region types).
+	if !exists('l:ss_col_adj') && !exists('l:se_col_adj')
+		" Look for a character that is hlable within visual selection
+		let re_needed_for_hl = b:txtfmt_re_any_ntok
+		if nonbgc_flag
+			" If we have any non-bgc tokens, make sure the non-token is also
+			" non-whitespace
+			let re_needed_for_hl = re_needed_for_hl . '\&\S'
+		endif
+		if !Search_in_range(re_needed_for_hl, ss_line, ss_col, se_line, se_col)
+			" At least 1 token will have no effect - warn user and return
+			" after restoring visual selection
+			call s:Restore_visual_mode(ss_line, ss_col, se_line, se_col)
+			echoerr 'TODO - Fix up msg - nothing hlable'
+			return
+		endif
+	else
+		" Make region adjustments as necessary
+		if exists('l:ss_col_adj')
+			let ss_col = ss_col_adj
+			unlet ss_col_adj
+		endif
+		if exists('l:se_col_adj')
+			let se_col = se_col_adj
+			unlet se_col_adj
+		endif
+	endif
+
+	" If here, we've got a set of tokens and all of them will have a visible
+	" effect when applied to the region.
+	" Define some variables for use in the loop below...
+	let space_char = "\<Space>"
+	let space_len = strlen(space_char)
+
+	" Process tokens in the order they were specified
+	let idx = 0
+	while idx < rgn_tok_arrlen
+		" BEGIN REFACTORABLE SECTION
+		" Cache some things for convenience (and also to facilitate
+		" refactoring)...
+		let rgn_tok = rgn_tok{idx}
+		let rgn_typ = rgn_typ{idx}
+		" Cache the applicable token regex for convenience
+		let re_rgn_tok = b:txtfmt_re_{rgn_typ}_tok
+		" Create regex for a 'break' character: one that's hlable by token
+		" under consideration
+		if rgn_typ == 'bgc'
+			let re_brk = b:txtfmt_re_any_ntok
+		else
+			let re_brk = b:txtfmt_re_any_ntok . '\&\S'
+		endif
+		" Insert a test space at start of region
+		call cursor(ss_line, ss_col)
+		exe "normal! i" . space_char
+		let spc1_col = ss_col
+		let ss_col = ss_col + space_len
+		if se_line == ss_line
+			let se_col = se_col + space_len
+		endif
+		" Determine highlighting in effect at start of region. (Recall that
+		" we're sitting on space char.)
+		let ss_tok = s:Get_cur_tok_for_rgn(rgn_typ)
+		if ss_tok == ''
+			" We're not within a Txtfmt region, so assume default
+			let ss_tok = nr2char(b:txtfmt_{rgn_typ}_first_tok)
+		endif
+
+		" Search forward from space added at head of region, using line/col
+		" constraint preventing match beyond end of region, with stopline of
+		" se_line, looking for tokens of applicable type. The tokens must be
+		" deleted, but also, their effect on highlighting at the end of the
+		" region must be taken into account.
+		" Note: Initialize se_tok to ss_tok, and adjust it as necessary as
+		" tokens are encountered and deleted.
+		let se_tok = ss_tok
+		let search_line = 1 " Make sure we get into loop at least once
+		" Make sure the following vars don't exist upon loop entry
+		unlet! tok_line tok_col save_line save_col
+		while search_line
+			" Create regex that will prevent match beyond se_line/se_col
+			" Note: Must be updated each time through loop, as col constraints
+			" can change
+			" Note: I have verified (empirically) that \%< (se_col + 1) c
+			" works even when the char sitting at se_col is multi-byte
+			let re_lcc = '\&\%(\%<' . se_line . 'l\|\%<' . (se_col + 1) . 'c\)'
+			let search_line = search(re_rgn_tok . re_lcc, 'W', se_line)
+			" Now it's safe to handle any pending char deletion
+			if exists('l:tok_line')
+				if search_line
+					" We're sitting on newly-found char, rather than char to
+					" be deleted. Save newly-found position, since we're about
+					" to move back to token to be deleted.
+					let save_line = line('.')
+					let save_col = col('.')
+				endif
+				" Move to token to be deleted (or replaced with space)
+				call cursor(tok_line, tok_col)
+				" Make any required adjustments to se_line/se_col. (save_col
+				" will be adjusted later if necessary)
+				" Note: There are some cases below in which Can_delete_tok
+				" needn't be called; thus, we create a can_del flag that can
+				" be set false after initialization.
+				" Post Constraint: The code within the following if/else may
+				" move the cursor temporarily, but must ensure it is left
+				" positioned on the token to be deleted.
+				let can_del = 1
+				if tok_line == se_line && tok_col == se_col
+					" Special case: about to delete end of selection
+					if tok_col == 1
+						" End of selection was at head of line. Move it back
+						" to end of previous line, unless end of selection is
+						" also start of selection, in which case we leave it
+						" alone.
+						" Note: Currently, it's not possible for token to be
+						" start and end of selection because of the constraint
+						" that hlable chars must be highlighted. This may
+						" change, however.
+						if ss_line < se_line
+							normal! k$
+							let se_line = line('.')
+							let se_col = col('.')
+							" Move back to token to be deleted
+							call cursor(tok_line, tok_col)
+						endif
+					else
+						" End of selection is not head of line.
+						" Note: The following test could be used (even when
+						" 'virtualedit' is active) to determine whether token
+						" is at end of line; however, refactoring has obviated
+						" the need for it.
+						"if tok_col + strlen(se_tok) == col('$')
+						" Adjust selection's border leftward one char pos
+						" Design Decision: Doing this unconditionally ensures
+						" that a space that replaces a removed token will be
+						" excluded from the selection.
+						" Rationale: Keeping it within the region might
+						" suggest that it could subsequently be converted back
+						" to a token. Also, as a general rule, I favor keeping
+						" separating space outside selection.
+						normal! h
+						let se_col = col('.')
+						" Move back to token to be deleted
+						call cursor(tok_line, tok_col)
+						" Can we delete or must we convert token to space?
+						let can_del = s:Can_delete_tok()
+					endif
+				else
+					" Token is not at end of selection. Handle any needed col
+					" adjustments, after determining whether token can be
+					" deleted or whether it must be converted to space
+					let can_del = s:Can_delete_tok()
+					if tok_line == se_line
+						let se_col = se_col - strlen(se_tok)
+						if !can_del
+							" Account for space being added
+							let se_col = se_col + space_len
+						endif
+					endif
+				endif
+				" Delete or replace the token
+				if can_del
+					normal! "_x
+				else
+					" Replace the token with a single space
+					exe "normal! s" . space_char
+				endif
+				if exists('l:save_line')
+					" Return to saved position (after making any required col
+					" adjustment)
+					if tok_line == save_line
+						" TODO: Perhaps factor out the strlen() call
+						let save_col = save_col - strlen(se_tok)
+						if !can_del
+							" Account for space that's been added
+							let se_col = se_col + space_len
+						endif
+					endif
+					call cursor(save_line, save_col)
+					unlet! save_line save_col
+				endif
+				" Make sure we don't attempt to delete the same char again
+				unlet! tok_line tok_col
+			endif
+			if search_line
+				" Found a token!
+				" Take its effect on highlighting at end of region into
+				" account
+				let se_tok = s:Get_cur_char()
+				" Note: We need to delete this token, but doing so now would
+				" break the search if the subsequent char is a fmt/clr token;
+				" thus, simply save the information.
+				let tok_line = line('.')
+				let tok_col = col('.')
+			endif
+		endwhile
+
+		" From space added at head of selection, search backward, with
+		" stopline of ss_line - 1, for first break char. Save as
+		" ssbrk_line/ssbrk_col
+		call cursor(ss_line, spc1_col)
+		" Note: Subsequent logic expects ssbrk_line to exist, even if there's
+		" no break (in which case, it will be 0)
+		let ssbrk_line = search(re_brk, 'bW', ss_line - 1)
+		" Create constraint regex and associated stopline that will
+		" prevent match at or before ssbrk_line/ssbrk_col if break exists, and
+		" prior to ss_line - 1 if it doesn't.
+		if ssbrk_line
+			let ssbrk_col = col('.')
+			" Build line/col constraints for backward search
+			let re_lcc = '\&\%(\%>' . ssbrk_line . 'l\|\%>' . ssbrk_col . 'c\)'
+			let stopline = ssbrk_line
+		else
+			" Rely on stopline alone for backward search constraint
+			let re_lcc = ''
+			let stopline = ss_line - 1
+		endif
+
+		" From space added at head of selection, search backward in loop,
+		" using aforementioned line/col constraints, looking for tokens of
+		" applicable type. We will eventually delete the tokens found, after
+		" updating ss_tok accordingly.
+		call cursor(ss_line, spc1_col)
+		let search_line = 1
+		" Make sure the following vars don't exist upon loop entry
+		unlet! tok_line tok_col tok_len save_line save_col
+		while search_line
+			let search_line = search(re_rgn_tok . re_lcc, 'bW', stopline)
+			if exists('l:tok_line')
+				" Handle pending char deletion
+				if search_line
+					" We're sitting on newly-found char, rather than char to
+					" be deleted. Save newly-found position, then move to char
+					" to be deleted.
+					let save_line = search_line
+					let save_col = col('.')
+					call cursor(tok_line, tok_col)
+				endif
+				" Delete the token
+				" Note: At this point, the 'token' to be deleted has already
+				" been replaced with a space (to permit use of
+				" s:Get_cur_tok_for_rgn). The inserted space at the head of
+				" the selection ensures it's safe to delete this one.
+				normal! "_x
+				" Handle any needed col adjustments
+				" Note: We didn't adjust anything when space was substituted for
+				" token, so we adjust by full length of token, not difference in
+				" lengths
+				if tok_line == ss_line
+					let ss_col = ss_col - tok_len
+					let spc1_col = spc1_col - tok_len
+					" Make adjustment for single-line selection as well
+					if ss_line == se_line
+						let se_col = se_col - tok_len
+					endif
+				endif
+				if exists('l:save_line')
+					" Need to return to saved position
+					call cursor(save_line, save_col)
+					unlet! save_line save_col
+				endif
+				" Make sure we don't attempt to delete the same char again
+				unlet! tok_line tok_col tok_len
+			endif
+			" Was a token found?
+			if search_line
+				" Record length and location of char to be removed. (Removal
+				" deferred until after search for next token)
+				let ch = s:Get_cur_char()
+				let tok_len = strlen(ch)
+				let tok_line = search_line
+				let tok_col = col('.')
+				" Change token to space
+				exe "normal! s" . space_char
+				" Determine highlighting of the space
+				let ss_tok = s:Get_cur_tok_for_rgn(rgn_typ)
+				if ss_tok == ''
+					" We're not within a Txtfmt region, so assume default
+					let ss_tok = nr2char(b:txtfmt_{rgn_typ}_first_tok)
+				endif
+			endif
+		endwhile
+
+		" Figure out if/where to insert start token
+		if rgn_tok == ss_tok
+			" Don't insert a token at all since hl at start of region is
+			" correct already
+			let add_loc = ''
+		elseif rgn_typ != 'bgc' && (!ssbrk_line || ssbrk_line < ss_line)
+			" Consider adding token prior to ss_line...
+			" ...but not if there aren't any break chars on ss_line at ss_col
+			" or beyond (i.e., if ss_line contains only non-break chars)
+			" Begin search at space inserted at start of region
+			call cursor(ss_line, spc1_col)
+			if search(re_brk, 'W', ss_line)
+				" Token goes prior to ss_line, since there's at least one
+				" highlightable char on ss_line
+				if ss_line == 1
+					let add_loc = 'bof'
+				else
+					let add_loc = 'eop'
+				endif
+			else
+				" The current line contains nothing highlightable, so just
+				" insert token at start of selection
+				let add_loc = 'sos'
+			endif
+		else
+			" Either we're inserting a bgc token, or there are break chars
+			" prior to start of selection on ss_line; in either case, we don't
+			" want an insert location prior to ss_line
+			let add_loc = 'sos'
+		endif
+		" Insert token at (or near) head of region
+		" Note: When add_loc is empty string, nothing will be inserted
+		if add_loc == 'sos'
+			call cursor(ss_line, spc1_col)
+			let ins_str = rgn_tok
+			if b:txtfmt_cfg_escape == 'bslash'
+				" If the inserted space we're about to replace is escaped,
+				" ensure that we prepend a bslash to the token with which
+				" we're replacing it (to ensure that the added bslash is
+				" escaped instead of the added token)
+				" Note: Use stopline in case Vim's regex engine doesn't
+				" optimize the \%l and \%c constructs
+				" TODO_Vim7: Simplify the logic with use of 'n' or 'e' flags
+				" (to avoid moving the cursor off the inserted space)
+				if search('\%(^\|[^\\]\)\%(\\\\\)*\\' . '\%' . ss_line . 'l' . '\%' . spc1_col . 'c', 'bW', ss_line)
+					" Move back to space about to be substituted
+					call cursor(ss_line, spc1_col)
+					let ins_str = '\' . ins_str
+				endif
+			endif
+			exe 'normal! s'."\<C-R>\<C-R>=l:ins_str\<CR>"
+			let len = strlen(ins_str)
+			" Adjust ss_col/se_col as necessary, using signed difference
+			" between length of inserted string and space char
+			let ss_col = ss_col + (len - space_len)
+			" TODO: Do we need spc1_col anymore? If not, unlet it.
+			if ss_line == se_line
+				let se_col = se_col + (len - space_len)
+			endif
+		elseif add_loc == 'eop'
+			let ins_str = rgn_tok
+			if b:txtfmt_cfg_escape == 'bslash'
+				" If there's an unescaped bslash at the end of the preceding
+				" line, ensure that we prepend a bslash to the token we're
+				" about to append to the line (to ensure that the added bslash
+				" is escaped instead of the appended token)
+				" Note: Start backward search from beginning of line following
+				" the one on which we're looking for unescaped bslash. (This
+				" ensures the search will work, even when bslash sequence
+				" begins at start of line.)
+				call cursor(ss_line, 1)
+				if search('\%(^\|[^\\]\)\%(\\\\\)*\\$', 'bW', ss_line - 1)
+					let ins_str = '\' . ins_str
+				endif
+			endif
+			" Append token to line preceding start of region
+			exe (ss_line - 1) . 'normal! A'."\<C-R>\<C-R>=l:ins_str\<CR>"
+		elseif add_loc == 'bof'
+			" Insert on new line added at beginning of file
+			" Note: The 0CTRL-D is necessary to get rid of any autoindent
+			" (which will be present if space inserted at beginning of region
+			" is at the beginning of 1st line)
+			exe "1normal! O0\<C-D>\<C-R>\<C-R>=l:rgn_tok\<CR>"
+			" Adjust line numbers to account for added line
+			let ss_line = ss_line + 1
+			let se_line = se_line + 1
+		endif
+		" Delete the space char inserted at head of region (unless it's
+		" already been replaced with a token, or is needed to prevent joining
+		" of 2 separate words)
+		if add_loc != 'sos'
+			call cursor(ss_line, spc1_col)
+			" Before deleting the inserted space, use Can_delete_tok to make
+			" sure we should
+			if add_loc == ''
+				" Note: It is possible that add_loc would have been eop or
+				" bof, but for rgn_tok == ss_tok; in such cases, the call to
+				" s:Can_delete_tok is unnecessary, but the refactoring
+				" required to prevent it has been deemed more costly than the
+				" unnecessary call; in particular, by setting add_loc to null
+				" as soon as we realize we don't need to insert a token at the
+				" head of the region, we can skip the backward search that is
+				" required to determine eop or bof.
+				let can_del = s:Can_delete_tok()
+			else
+				" add_loc equals eop or bof, in which case, removal of the
+				" inserted space can't possibly join words
+				let can_del = 1
+			endif
+			" Delete space if appropriate
+			if can_del
+				" TODO: Decide whether it makes more sense to use
+				" s:Delete_cur_char()
+				normal! "_x
+				" Adjust col positions as necessary to account for space deletion
+				let ss_col = ss_col - space_len
+				if ss_line == se_line
+					let se_col = se_col - space_len
+				endif
+			endif
+		endif
+		" <<< UNDER CONSTRUCTION - I believe I'm done with this function
+		" now... >>>
+		" We're done with start of region now. Move to end...
+		call cursor(se_line, se_col)
+		" Search forward, with stopline set to se_line + 1, for first break
+		" char. Save as sebrk_line/sebrk_col.
+		let sebrk_line = search(re_brk, 'W', se_line + 1)
+		if sebrk_line
+			let sebrk_col = col('.')
+		endif
+		" Again from se_line/se_col, search forward in loop (using
+		" constraints created from sebrk_line/sebrk_col), with stopline of
+		" sebrk_line, looking for tokens of the applicable type.
+		call cursor(se_line, se_col)
+		let search_line = 1 " Make sure we get into loop at least once
+		" Make sure the following vars don't exist upon loop entry
+		unlet! tok_line tok_col save_line save_col
+		while search_line
+			" Create constraint regex and associated stopline that will
+			" prevent match beyond sebrk_line/sebrk_col if break exists, and
+			" se_line + 1 if it doesn't.
+			" Note: Must be updated each time through loop, as col constraints
+			" are changed by token deletions
+			if sebrk_line
+				let re_lcc = '\&\%(\%<' . sebrk_line . 'l\|\%<' . sebrk_col . 'c\)'
+				let stopline = sebrk_line
+			else
+				let re_lcc = ''
+				let stopline = se_line + 1
+			endif
+			" Perform the constrained search
+			let search_line = search(re_rgn_tok . re_lcc, 'W', stopline)
+			" Note: When a token is found, we don't delete it right away.
+			" Special logic is applied for the final token
+			if exists('l:tok_line')
+				if search_line
+					" We're sitting on newly-found char, rather than char to
+					" be deleted. Save newly-found position, then move to char
+					" to be deleted.
+					" Note: The implication of the fact that we've found
+					" another token is that removal of the preceding token
+					" can't possibly join two words; hence, we needn't call
+					" s:Delete_cur_char here.
+					let save_line = search_line
+					let save_col = col('.')
+					call cursor(tok_line, tok_col)
+					" Delete the old token
+					let len = s:Delete_cur_char()
+					" Handle any needed col adjustments
+					" Assumption: tok_line and sebrk_line cannot be equal when
+					" sebrk_line == 0 (i.e., when there is no break)
+					if tok_line == sebrk_line
+						let sebrk_col = sebrk_col - len
+					endif
+					" Return to saved position (after making any required col
+					" adjustment)
+					if tok_line == save_line
+						let save_col = save_col - len
+					endif
+					call cursor(save_line, save_col)
+					unlet! save_line save_col
+				else
+					" This is the last token found (i.e., final loop
+					" iteration) If it's redundant, remove it (replacing with
+					" space if deletion would join two words); otherwise,
+					" leave it in place and skip inserting new one.
+					" Note: Col adjustments unnecessary on last iteration
+					if rgn_tok == s:Get_cur_char()
+						" Delete or replace the redundant token
+						if s:Can_delete_tok()
+							normal! "_x
+						else
+							" Replace the token with a single space
+							exe "normal! s" . space_char
+						endif
+					endif
+				endif
+			endif
+			if search_line
+				" Found a token!
+				" Note: We may or may not need to delete this token. For now,
+				" simply save its location
+				let tok_line = search_line
+				let tok_col = col('.')
+			elseif !exists('l:tok_line') && rgn_tok != se_tok
+				" First and last iteration (no tokens found), and hl is
+				" discontinuous at end of selection.
+				" Move to end of region and insert token to return text to what it
+				" was prior to the insert
+				call cursor(se_line, se_col)
+				" Note: Defer adding se_tok to ins_str so that a null ins_str
+				" can be used as indication that no escaping is needed
+				let ins_str = ''
+				if b:txtfmt_cfg_escape == 'bslash'
+					" If the token we're about to insert would be escaped,
+					" prepend a bslash to ensure that it's not.
+					" Post Condition: However we make it through the following
+					" if/else, we must be sure that last_tok contains the tok
+					" at se_col if we're going to be prepending an escape
+					if se_col == 1
+						" Handle beginning of line specially, since we may not
+						" be able to match anything prior to se_col
+						let last_tok = s:Get_cur_char()
+						if last_tok == '\'
+							let ins_str = '\'
+						endif
+					else
+						" Note: Backward search works because the regex is
+						" guaranteed to match something prior to se_col
+						if search('\%(^\|[^\\]\)\%(\\\\\)*\\\@='
+							\ . '\%' . se_line . 'l\%' . se_col . 'c'
+							\ , 'bW', ss_line)
+							let ins_str = '\'
+							" Move back to char after which token is to be
+							" appended
+							call cursor(se_line, se_col)
+							" Satisfy Post Condition
+							let last_tok = s:Get_cur_char()
+						endif
+					endif
+					" Note: Ordinarily, se_col would need no adjustment
+					" because the token about to be appended is to be kept
+					" outside the selection; however, if we're prepending a
+					" bslash to the inserted token, the bslash goes within the
+					" selection
+					if ins_str == '\'
+						" Ensure that se_col points to the prepended bslash
+						let se_col = se_col + strlen(last_tok)
+					endif
+				endif
+				" Regardless of escaping, make sure token is inserted
+				let ins_str = ins_str . se_tok
+				exe 'normal! a'."\<C-R>\<C-R>=l:ins_str\<CR>"
+			else
+				" Last iteration (but not the first)
+				" Clean up before exiting loop
+				" Note: It is never necessary to add a token at the end of the
+				" selection when there is one or more tokens there already.
+				unlet! tok_line tok_col
+			endif
+		endwhile
+
+		" END REFACTORABLE SECTION
+		let idx = idx + 1
+	endwhile
+
+	let @z = regz_save " Restore reg z
+	" Restore the visual selection
+	call s:Restore_visual_mode(ss_line, ss_col, se_line, se_col)
+endfu
+" >>>
 " Function: s:Prompt_fmt_clr_spec() <<<
 " Purpose: Prompt user for type of formatting region desired, and return
 " the string entered
@@ -2646,6 +4489,15 @@ call s:Def_map('n', '<LocalLeader>vs', '<Plug>TxtfmtInsertTok_vs',
 call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\"<C-R>=<SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
+" >>>
+" visual mode insert token mappings <<<
+" NOTE: Default is to use something that wouldn't be typed as text for the
+" insert mode map. User may wish to remap this one to a Function key or
+" something else entirely. I find <C-\><C-\> very easy to type...
+" TODO_BEFORE_RELEASE - Perhaps rename the <Plug> function...
+" Note: The following will work for either visual or select mode
+call s:Def_map('v', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_v',
+			\":<C-U>call <SID>Highlight_selection()<CR>")
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
