@@ -106,16 +106,16 @@ fu! s:Parse_fmt_clr_transformer(spec)
 		" to act as one.
 		let rret = ret[tt]
 		if tt == 'f'
-			" Initialize if necessary.
-			if empty(rret)
-				let rret.add = 0
-				let rret.sub = 0
-				let rret.replace = {}
-			endif
 			let atoms = spec[1:]
 			if empty(atoms)
 				" Discard empty f spec
 				continue
+			endif
+			" Initialize if necessary (now that we know the spec isn't empty)
+			if empty(rret)
+				let rret.add = 0
+				let rret.sub = 0
+				let rret.replace = {}
 			endif
 			" Break into add/sub parts. 'keepempty' guarantees at least an add part (possibly empty).
 			let [add; rest] = split(atoms, '-', 1)
@@ -182,13 +182,38 @@ fu! s:Parse_fmt_clr_transformer(spec)
 								return {}
 							endif
 							" Augment replacement dict.
-							rret.replace[s:ubisrc_mask[s]] = s:ubisrc_mask[t]
+							let rret.replace[s:ubisrc_mask[s]] = s:ubisrc_mask[t]
 						endif
 					endfor
 				endif
 			endif
 		elseif tt == 'c' || tt == 'k'
-			" TODO: Handle colors...
+			" Valid Formats:
+			" c{namepat} c- c{namepat1}>[{namepat2}]
+			" Note: c{namepat}> is a degenerate case of the final form: it replaces color matching {namepat} with
+			" nothing (i.e., no color).
+			let atoms = spec[1:]
+			if empty(atoms)
+				" Discard empty f spec
+				continue
+			endif
+			if empty(rret)
+				" Constraint: set and replace fields are mutually-exclusive; thus, use set's value as a flag indicating
+				" which is used.
+				" If used, set is a color number between 0 (no color) and max active color.
+				let rret.set = -1
+				" If used, replace is a dict mapping old color numbers to new.
+				let rret.replace = {}
+			endif
+			" Break into atoms.
+			for atom in split(atoms, ';')
+				let ls = []
+			   	for s in split(atom, '>')
+					call add(ls, 
+				endfor
+				if empty(rest)
+					
+			endfor
 		else
 			let s:err_str = "Invalid type specifier in fmt/clr transformer spec: ".tt
 			return {}
