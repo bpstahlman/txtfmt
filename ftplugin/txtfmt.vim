@@ -2654,6 +2654,60 @@ endfu
 " Binary progression: ubisrc
 let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
 
+" Return:
+" {
+"   fmt: <fmt-mask>
+"   clr: <fg-color-number>
+"   bgc: <bg-color-number>
+" }
+fu! Get_cur_rgn_info()
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	let rgn_idx_max_fmt = b:txtfmt_num_formats - 1
+	" Note: The following provide only upper bounds for color indices; an
+	" additional test for color activity will be required.
+	" Note: b:txtfmt_num_colors includes the default token; hence, the -1
+	let rgn_idx_max_clr = b:txtfmt_num_colors - 1
+	let rgn_idx_max_bgc = b:txtfmt_num_colors - 1
+
+	let info = {'fmt': 0, 'clr': 0, 'bgc': 0}
+	if !Is_cursor_on_char()
+		" Nothing under cursor - we can't determine anything about current
+		" region type
+		return info
+	endif
+	" Define regexes used in parsing syntax name
+	let re_hdr = '\%(Tf\%(0\|[1-9][0-9]*\)_\)'
+	let re_rgn = '\%(' . 'fmt' . (clr_active ? '\|\%(clr\)' : '') . (bgc_active ? '\|\%(bgc\)' : '') . '\)'
+	let re_num = '\%([1-9][0-9]*\)'
+	let re_ftr = '\%(_rtd\)'
+	" Construct a regex using the atoms above.
+	let re = '^' . re_hdr . '\%(\(' . re_rgn . '\)\%(\(' . re_rgn . '\)\(' . re_rgn . '\)\?\)\?\)'
+		\. '\%(_\(' . re_num . '\)\%(_\(' . re_num . '\)\%(_\(' . re_num . '\)\)\?\)\?\)'
+		\. re_ftr . '\?$'
+	" Get syntax stack at cursor
+	for id in synstack(line('.'), col('.'))
+		let s = synIDattr(id, "name")
+		" Assume highlighted region of the following form:
+		" Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
+		let m = matchlist(s, re)
+		if empty(m)
+			" Not what we're looking for...
+			continue
+		else
+			for i in range(1, 3)
+				let [rtyp, rval] = [m[i], m[i + 3]]
+				" Store the bitmask/colornum
+				let info[rtyp] = rval
+				if empty(m[i + 1])
+					break
+				endif
+			endfor
+		endif
+	endfor
+	return info
+endfu
+
 fu! s:Parse_fmt_clr_transformer(spec)
 	" Initalize return object.
 	let ret = {'f': {}, 'c': {}, 'k': {}}
@@ -2798,7 +2852,7 @@ fu! s:Parse_fmt_clr_transformer(spec)
 					let s:err_str = "Too many `>' in " . (tt == 'c' ? 'fg' : 'bg') . " color section of fmt/clr transformer spec: `" . atom . "'"
 					return {}
 				elseif len(clr_names) == 2
-					if rret.set != -1
+					if has_key(rret, 'set')
 						let s:err_str = "Invalid fmt/clr transformer spec: set/replace are mutually-exclusive."
 						return {}
 					endif
@@ -2819,7 +2873,7 @@ fu! s:Parse_fmt_clr_transformer(spec)
 				else
 					" Single set. Can't be any replacements or any other set
 					" of same type.
-					if !empty(rret.replace) || rret.set != -1
+					if has_key(rret, 'replace') || has_key(rret, 'set')
 						let s:err_str = "Invalid fmt/clr transformer spec: set/replace are mutually-exclusive."
 						return {}
 					endif
@@ -2853,6 +2907,9 @@ fu! s:Parse_fmt_clr_transformer(spec)
 							\.atom
 						return {}
 					endif
+					if !has_key(rret, 'replace')
+						let rret.replace = {}
+					endif
 					let rret.replace[src_clr] = tgt_clr
 				else
 					let rret.set = src_clr
@@ -2873,6 +2930,37 @@ fu! Test(spec)
 		echoerr s:err_str
 	endif
 endfu
+
+fu! Highlight_selection2(spec)
+	" Blockwise visual selections not supported!
+	if visualmode() == "\<C-V>"
+		echoerr "Highlight_selection(): blockwise-visual mode not supported"
+		return
+	endif
+	" Prompt user for desired highlighting
+	let tokstr = s:Prompt_fmt_clr_spec()
+	" Strip surrounding whitespace, which is ignored.
+	" Note: Only surrounding whitespace is ignored! Whitespace not
+	" permitted within fmt/clr spec list.
+	let tokstr = substitute(tokstr, '^\s*\(.\{-}\)\s*$', '\1', 'g')
+	" Check for Cancel request
+	if tokstr == ''
+		" Note that nothing about position or mode has changed at this point
+		" TODO: Probably want to restore selection here...
+		return
+	endif
+	" Translate and validate fmt/clr spec
+	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
+	if empty(tokinfo)
+		" Invalid fmt/clr sequence
+		" Note that nothing about position or mode has changed at this point
+		" TODO: Probably want to restore selection here...
+		throw "Highlight_selection(): Invalid fmt/clr sequence entered: ".s:err_str
+	endif
+
+endfu
+
+
 " >>>
 " Function: s:Jump_to_tok() <<<
 " Purpose: Jumps forward or backwards (as determined by a:dir), to the
