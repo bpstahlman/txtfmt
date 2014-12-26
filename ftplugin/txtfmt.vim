@@ -2708,216 +2708,164 @@ fu! Get_cur_rgn_info()
 	return info
 endfu
 
-fu! s:Parse_fmt_clr_transformer(spec)
+" Convert the input comma-separated f/c/k transformer spec to a struct.
+" Input Format: In lieu of full grammar, here are some illustrative examples:
+" fubi
+"   Set to bold-underline-italic
+" f+ubi
+"   Add bold-underline-italic
+" fubi-
+"   Same as previous (presence of + implied by -)
+" f-ubi
+"   Subtract bold-underline-italic
+" f-
+"   Remove all formats
+" cr
+"   Set fg color to red
+" k-
+"   Remove bg color
+" Output Format:
+" {
+"   fmt:
+"     0-N - {add-fmt-mask}
+"     |
+"     [
+"       0-N - {add-fmt-mask},
+"       0-N - {sub-fmt-mask}
+"     ],
+"   clr: 0-{max-active-clr-num}
+"   bgc: 0-{max-active-bgc-num}
+" }
+" Note: In masks, 0 means `-'; in color numbers, -1 means `-' (both by
+" convention, and naturally, since its 2's complement is an all 1's mask).
+fu! S_Parse_fmt_clr_transformer(specs)
+	fu! l:trim_ws(s)
+		return substitute(a:s, '^\s*\(.\{-}\)\s*$', '\1', '')
+	endfu
 	" Initalize return object.
-	let ret = {'f': {}, 'c': {}, 'k': {}}
-	if empty(a:spec)
+	let ret = {}
+	let specs = l:trim_ws(a:specs)
+	if empty(specs)
 		" Effectively empty spec.
 		return ret
 	endif
-	" Function const
-	let re_tok = '['.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']'
-	" TODO: Rename to f_atom(s) or somesuch
-	let re_atom = '\%(' . re_tok . '\%(>\(' . re_tok . '\)\)\?\)'
-	let re_atoms = '^' . re_atom . '\+$'
-	echo re_atoms
-	" Split the comma-separated f/c/k components.
-	" Design Decision: Deliberately permit more than 1 of each type, which will behave as though they had been
-	" concatenated together.
-	" Design Decision: Silently ignore redundancies (same add/remove multiple times) and harmless oddities (null
-	" component in comma-sep list, or empty f, c or k spec).
-	" Note: keepempty 0 ensures that empty components at beginning or end will be silently discarded, but logic in loop
-	" needs to handle interior empty components.
-	for spec in split(a:spec, ',')
+	" Split the comma-separated f/c/k components
+	let fcks = split(specs, ',', 1)
+	if len(fcks) > 3
+		throw "Parse_fmt_clr_transformer: More than 3 f|c|k components not permitted"
+	endif
+	" Loop over the f/c/k components
+	for spec in fcks
+		let spec = l:trim_ws(spec)
 		if empty(spec)
-			" Discard completely empty component in comma-separated list.
-			continue
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
 		endif
-		" Get token type
-		let tt = spec[0]
+		" Extract token type and remainder of spec
+		let [tt, spec] = [spec[0], spec[1:]]
 		" Validate the type
-		if !has_key(ret, tt)
-			let s:err_str = "Invalid type specifier in fmt/clr transformer spec: `" . tt . "'"
-			return {}
+		if tt !~ '[fck]'
+			throw "Invalid type specifier in fmt/clr transformer spec: `" . tt . "'"
 		endif
-		" Get ref to type-specific object within return object, permitting multiple components of the same type (f/c/k)
-		" to act as one.
-		let rret = ret[tt]
+		let spec = l:trim_ws(spec)
+		if empty(spec)
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc specs not permitted"
+		endif
+		if has_key(ret, tt)
+			throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
+		endif
+		" Switch on type
 		if tt == 'f'
-			let atoms = spec[1:]
-			if empty(atoms)
-				" Discard empty f spec
-				continue
-			endif
-			" Initialize if necessary (now that we know the spec isn't empty)
-			if empty(rret)
-				let rret.add = 0
-				let rret.sub = 0
-				let rret.replace = {}
-			endif
-			" Break into add/sub parts. 'keepempty' guarantees at least an add part (possibly empty).
-			let [add; rest] = split(atoms, '-', 1)
-			if len(rest) > 1
-				let s:err_str = "Too many hyphens in fmt transformer spec: `f" . atoms . "'"
-				return {}
-			endif
-			let sub = empty(rest) ? '' : rest[0]
-			if empty(add) && empty(sub)
+			" Design Decision: Discard spaces (even interior), which have no
+			" meaning in fmt specs.
+			let spec = substitute(spec, '\s\+', '', 'g')
+			if spec == 'f-'
 				" f- special case: return to default (mask all attributes)
-				if rret.add || !empty(rret.replace)
-					let s:err_str = "Conflict in fmt/clr transformer spec: cannot use special `f-' form with any other add/replace mechanism"
-				endif
-				let rret.sub = b:txtfmt_num_formats - 1
+				" Decision: -1 permits distinction to be made if necessary
+				" (i.e., between f- and (e.g.) f-ubisrc)
+				"let ret.fmt = b:txtfmt_num_formats - 1
+				let ret.fmt = -1
 			else
-				" At least 1 of add/sub is non-null.
-				" Process sub first to facilitate validation of add/replace specs.
-				if !empty(sub)
-					if sub !~ re_atoms
-						let s:err_str = "Invalid char(s) in attribute removal section of fmt/clr transformer spec: `f" . atoms . "'"
-						return {}
+				" Break into sub-parts. 'keepempty' guarantees at least an add (or
+				" set) part (possibly empty).
+				" Note: split() will split (e.g.) +u into 1 element.
+				let [add; rest] = split(spec, '-', 1)
+				if len(rest) > 1
+					throw "Too many hyphens in fmt transformer spec: `f" . spec . "'"
+				elseif len(rest) == 1 || add[0] == '+'
+					let additive = 1
+					let sub = len(rest) == 1 ? rest[0] : ''
+					" Strip any leading '+' from the add part.
+					if add[0] == '+'
+						let add = add[1:]
+					endif
+				else
+					let additive = 0
+					let sub = ''
+				endif
+				" Design Decision: Either add or sub can be empty, but not
+				" both.
+				if empty(add) && empty(sub)
+					throw "Parse_fmt_clr_transformer: useless fmt specs not permitted"
+				endif
+				" Add to list to facilitate processing.
+				let cmasks = additive ? [add, sub] : [add]
+				let mask_prev = 0
+				let masks = []
+				" Loop over the specs (1 or 2 of set/add/sub)
+				for cmask in cmasks
+					" Note: Allow either to be empty. We've already verified
+					" at least 1 non-empty.
+					if cmask !~ '^\%(['.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']*\)$'
+						" TODO: Factor this validation logic out; it's used elsewhere...
+						if cmask !~ '[^ubisrc]'
+							if !b:txtfmt_cfg_longformats
+								throw "Parse_fmt_clr_transformer: Only 'u', 'b' and 'i' fmt attributes are permitted when one of the 'short' formats is in effect"
+							else
+								throw "Parse_fmt_clr_transformer: Undercurl attribute supported only in Vim 7 or later"
+							endif
+						else
+							throw "Parse_fmt_clr_transformer: Invalid char(s) in attribute mask within fmt/clr transformer spec: `f" . spec . "'"
+						endif
 					endif
 					" Process individual attr chars to build sub mask.
-					" Decision: Don't treat redundancies as error.
-					for atom in split(sub, '\zs')
-						if and(rret.add, s:ubisrc_mask[atom]) || index(values(rret.replace), atom) != -1
-							let s:err_str = "Conflict in fmt/clr transformer spec: attempt to both add and remove the same attribute: `" . atom . "'"
-							return {}
+					" Decision: Treat conflict but not redundancies as error.
+					let mask = 0
+					for atom in split(cmask, '\zs')
+						if and(mask_prev, s:ubisrc_mask[atom])
+							throw "Conflict in fmt/clr transformer spec: attempt to both add and remove the same attribute: `" . atom . "'"
 						endif
-						let rret.sub = or(rret.sub, s:ubisrc_mask[atom])
+						let mask = or(mask, s:ubisrc_mask[atom])
 					endfor
-				endif
-				if !empty(add)
-					if add !~ re_atoms
-						let s:err_str = "Invalid char(s) in attribute addition section of fmt/clr transformer spec: `f" . atoms . "'"
-						return {}
-					endif
-					" Process individual atoms: e.g., c or c>c
-					" Note: The split() pattern matches at start of all chars not preceded by `>'.
-					for atom in split(add, '>\@<!' . re_atom . '\@=')
-						" Note: Earlier validation guarantees valid atom.
-						let [s; rest] = split(atom, '>')
-						if empty(rest)
-							" Normal add
-							if and(rret.sub, s:ubisrc_mask[s])
-								let s:err_str = "Conflict in fmt/clr transformer spec: attempt to both add and remove the same attribute: `" . s . "'"
-								return {}
-							endif
-							let rret.add = or(rret.add, s:ubisrc_mask[s])
-						else
-							" Transforming (replacement) add
-							let t = rest[0]
-							if and(rret.sub, s:ubisrc_mask[t])
-								" TODO: Asymmetry here in way f- conflict is reported (since we don't know here whether
-								" f- was used).
-								let s:err_str = "Conflict in fmt/clr transformer spec: attempt to both add and remove the same attribute: `" . t . "'"
-								return {}
-							endif
-							" Check for conflict.
-							" Decision: Silently ignore non-conflicting redundancy.
-							if has_key(rret.replace, s:ubisrc_mask[s]) && rret.replace[s:ubisrc_mask[s]] != s:ubisrc_mask[t]
-								let s:err_str = "Conflict in fmt/clr transformer spec: mutually-exclusive replacements specified for `"
-									\. s . "' attribute: `" . rret.replace[s:ubisrc_mask[s]] . "' and `" . t . "'"
-								return {}
-							endif
-							" Augment replacement dict.
-							let rret.replace[s:ubisrc_mask[s]] = s:ubisrc_mask[t]
-						endif
-					endfor
+					call add(masks, mask)
+					" Save for conflict testing on next iteration.
+					let mask_prev = mask
+				endfor
+				" Deconstruct the list into return list/scalar: in additive
+				" mode, we return a length-2 list of masks; otherwise, scalar.
+				if additive
+					let ret.fmt = masks
+				else
+					" Extract scalar 'set' mask
+					let ret.fmt = masks[0]
 				endif
 			endif
 		elseif tt == 'c' || tt == 'k'
-			" Valid Formats:
-			" c{namepat} c- c{namepat1}>[{namepat2}]
-			" Note: c{namepat}> is a degenerate case of the final form: it replaces color matching {namepat} with
-			" nothing (i.e., no color).
-			let atoms = spec[1:]
-			if empty(atoms)
-				" Discard empty f spec
-				continue
-			endif
-			if empty(rret)
-				" Constraint: set and replace fields are mutually-exclusive; thus, use set's value as a flag indicating
-				" which is used.
-				" If used, set is a color number between 0 (no color) and max active color.
-				let rret.set = -1
-				" If used, replace is a dict mapping old color numbers to new.
-				let rret.replace = {}
-			endif
-			" Break into atoms.
-			for atom in split(atoms, ';')
-				let clrs = []
-				let clr_names = split(atom, '>', 1)
-				" UNDER CONSTRUCTION!!!!!
-				if len(clr_names) > 2
-					let s:err_str = "Too many `>' in " . (tt == 'c' ? 'fg' : 'bg') . " color section of fmt/clr transformer spec: `" . atom . "'"
-					return {}
-				elseif len(clr_names) == 2
-					if has_key(rret, 'set')
-						let s:err_str = "Invalid fmt/clr transformer spec: set/replace are mutually-exclusive."
-						return {}
-					endif
-					let t = clr_names[0]
-					if empty(t) || t == '-'
-						let t = '-'
+			if spec == '-'
+				" Return to default.
+				let clr_num = 0
+			else
+				let clr_num = s:Lookup_clr_namepat(tt, spec)
+				if clr_num <= 0
+					if clr_num == 0
+						throw "Invalid color name pattern in fmt/clr transformer spec: `" . spec . "'"
 					else
-						let tgt_clr = s:Lookup_clr_namepat(tt, t)
-						if tgt_clr <= 0
-							if tgt_clr == 0
-								let s:err_str = "Invalid color name pattern in fmt/clr transformer spec: `" . s . "'"
-							else
-								let s:err_str = "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . s . "'"
-							endif
-							return {}
-						endif
-					endif
-				else
-					" Single set. Can't be any replacements or any other set
-					" of same type.
-					if has_key(rret, 'replace') || has_key(rret, 'set')
-						let s:err_str = "Invalid fmt/clr transformer spec: set/replace are mutually-exclusive."
-						return {}
+						throw "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . spec . "'"
 					endif
 				endif
-				" s (set/src) is mandatory and must be non-empty
-				let s = clr_names[0]
-				if empty(s)
-					let s:err_str = "Empty lhs of `>' replacement operator in "
-						\. (tt == 'c' ? 'fg' : 'bg')
-						\. " color section of fmt/clr transformer spec: `" . atom . "'"
-					return {}
-				elseif s == '-'
-					" Note: 0 means default here, not invalid (as it does when
-					" returned from Lookup_clr_namepat)
-					let src_clr = 0
-				else
-					let src_clr = s:Lookup_clr_namepat(tt, s)
-					if clr <= 0
-						if clr == 0
-							let s:err_str = "Invalid color name pattern in fmt/clr transformer spec: `" . s . "'"
-						else
-							let s:err_str = "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . s . "'"
-						endif
-						return {}
-					endif
-				endif
-				if len(clr_names) == 2
-					if has_key(rret.replace, src_clr) && rret.replace[src_clr] != tgt_clr
-						let s:err_str = "Conflict in fmt/clr transformer spec: mutually-exclusive "
-							\. (tt == 'c' ? "fg" : "bg") . " color replacements specified in `"
-							\.atom
-						return {}
-					endif
-					if !has_key(rret, 'replace')
-						let rret.replace = {}
-					endif
-					let rret.replace[src_clr] = tgt_clr
-				else
-					let rret.set = src_clr
-				endif
-			endfor
+			endif
+			let ret[tt == 'c' ? 'clr' : 'bgc'] = clr_num
 		else
-			let s:err_str = "Invalid type specifier in fmt/clr transformer spec: ".tt
-			return {}
+			throw "Invalid type specifier in fmt/clr transformer spec: " . tt
 		endif
 	endfor
 	return ret
