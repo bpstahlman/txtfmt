@@ -539,7 +539,8 @@ endfu
 " char.
 " Error: N/A
 " TESTING: Tested on both a self and bslash test page.
-fu! s:Is_esc_tok()
+" TODO: Remove this after 
+fu! s:Is_esc_tok_obsolete()
 	" Take care of the obvious cases first...
 	if !Is_cursor_on_char()
 		return 0
@@ -699,6 +700,9 @@ endfu
 " Return: Value returned by Vim's search() routine. If match occurs, cursor
 " will be positioned on matching char; otherwise, it will be left at starting
 " location.
+" Possible Bug: Discovered 26Dec2014 - In the event that the search ends up
+" being backwards, it doesn't appear that I do anything to ensure that the
+" first (of potentially multiple) within search region is selected.
 fu! Search_in_range(re, l1, c1, l2, c2)
 	" Save original position
 	let l_orig = line('.')
@@ -2654,6 +2658,13 @@ endfu
 " Binary progression: ubisrc
 let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
 
+" Function: s:????() <<<
+" >>>
+
+" Function: s:Get_cur_rgn_info() <<<
+" Purpose: Parse the synstack to determine active fmt/clr/bgc regions at
+" cursor, returning a struct that contains either a mask (fmt) or color number
+" (clr/bgc) for each region type.
 " Return:
 " {
 "   fmt: <fmt-mask>
@@ -2671,6 +2682,7 @@ fu! Get_cur_rgn_info()
 	let rgn_idx_max_bgc = b:txtfmt_num_colors - 1
 
 	let info = {'fmt': 0, 'clr': 0, 'bgc': 0}
+	" TODO: Make this static everywhere it's used.
 	if !Is_cursor_on_char()
 		" Nothing under cursor - we can't determine anything about current
 		" region type
@@ -2707,7 +2719,9 @@ fu! Get_cur_rgn_info()
 	endfor
 	return info
 endfu
+" >>>
 
+" Function: s:Parse_fmt_clr_transformer() <<<
 " Convert the input comma-separated f/c/k transformer spec to a struct.
 " Input Format: In lieu of full grammar, here are some illustrative examples:
 " fubi
@@ -2738,13 +2752,18 @@ endfu
 " }
 " Note: In masks, 0 means `-'; in color numbers, -1 means `-' (both by
 " convention, and naturally, since its 2's complement is an all 1's mask).
+" TODO: Rework the exception messages.
+" TODO: Perhaps move these strip methods into TxtfmtUtil_...
 fu! S_Parse_fmt_clr_transformer(specs)
-	fu! l:trim_ws(s)
-		return substitute(a:s, '^\s*\(.\{-}\)\s*$', '\1', '')
+	fu! l:strip(s)
+		return substitute(a:s, '^\s\+\|\s\+$', '', 'g')
+	endfu
+	fu! l:lstrip(s)
+		return substitute(a:s, '^\s\+', '', '')
 	endfu
 	" Initalize return object.
 	let ret = {}
-	let specs = l:trim_ws(a:specs)
+	let specs = l:strip(a:specs)
 	if empty(specs)
 		" Effectively empty spec.
 		return ret
@@ -2756,7 +2775,7 @@ fu! S_Parse_fmt_clr_transformer(specs)
 	endif
 	" Loop over the f/c/k components
 	for spec in fcks
-		let spec = l:trim_ws(spec)
+		let spec = l:strip(spec)
 		if empty(spec)
 			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
 		endif
@@ -2766,7 +2785,7 @@ fu! S_Parse_fmt_clr_transformer(specs)
 		if tt !~ '[fck]'
 			throw "Invalid type specifier in fmt/clr transformer spec: `" . tt . "'"
 		endif
-		let spec = l:trim_ws(spec)
+		let spec = l:lstrip(spec)
 		if empty(spec)
 			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc specs not permitted"
 		endif
@@ -2815,8 +2834,11 @@ fu! S_Parse_fmt_clr_transformer(specs)
 				for cmask in cmasks
 					" Note: Allow either to be empty. We've already verified
 					" at least 1 non-empty.
+					"call TxtfmtUtil_validate_fmt_char(cmask)
 					if cmask !~ '^\%(['.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']*\)$'
-						" TODO: Factor this validation logic out; it's used elsewhere...
+						" TODO: Factor this validation logic out; it's used elsewhere. TxtfmtUtil_<...>
+						" Problem: The other place it's used uses the old
+						" s:err_str mechanism.
 						if cmask !~ '[^ubisrc]'
 							if !b:txtfmt_cfg_longformats
 								throw "Parse_fmt_clr_transformer: Only 'u', 'b' and 'i' fmt attributes are permitted when one of the 'short' formats is in effect"
@@ -2829,6 +2851,8 @@ fu! S_Parse_fmt_clr_transformer(specs)
 					endif
 					" Process individual attr chars to build sub mask.
 					" Decision: Treat conflict but not redundancies as error.
+					" TODO: Factor this logic out into a TxtfmtUtil_<...>
+					" util.
 					let mask = 0
 					for atom in split(cmask, '\zs')
 						if and(mask_prev, s:ubisrc_mask[atom])
@@ -2870,6 +2894,7 @@ fu! S_Parse_fmt_clr_transformer(specs)
 	endfor
 	return ret
 endfu
+" >>>
 
 fu! Test(spec)
 	unlet! s:err_str
@@ -2879,32 +2904,82 @@ fu! Test(spec)
 	endif
 endfu
 
-fu! Highlight_selection2(spec)
+" Return:
+" {
+"   fmt: {
+"     intro: {
+"       rowcol: [row, col],
+"       hlable: 0|1
+"     },
+"     mask: {fmt-mask}
+"   },
+"   clr: {
+"     intro: {
+"       rowcol: [row, col],
+"       hlable: 0|1
+"     },
+"     clr_num: {color-number}
+"   },
+"   bgc: {
+"     intro: {
+"       rowcol: [row, col],
+"       hlable: 0|1
+"     },
+"     clr_num: {color-number}
+"   }
+" }
+" Explanation: If intro is non-empty, it contains information about the region
+" in which the start of visual selection lies: namely, the location of its
+" start token, and a boolean indicating whether or not the region prior to the
+" start of visual selection contains anything highlightable.
+fu! s:Get_beg_ctx(ss_line, ss_col)
+	let ret = {}
+	for typ in ['fmt', 'clr', 'bgc']
+		call cursor(ss_line, ss_col)
+
+	endfor
+endfu
+
+fu! s:Highlight_selection_impl()
+
+endfu
+
+" Description: Return true iff char under cursor represents an escaped token.
+" Tested: 27Dec2014
+fu! S_Is_escaped_tok()
+	if b:txtfmt_cfg_escape != 'none'
+		if b:txtfmt_cfg_escape == 'bslash'
+			if search('\%#=1\%#[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
+				" On tok char. If not a tok, must be escaped.
+				return !search('\%#' . b:txtfmt_re_any_tok, 'nc')
+			endif
+		else
+			" Differentiate between escape and escapee.
+			let re = '\%#=1\%#\([' . b:txtfmt_re_any_tok_atom . ']\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\%(\1\1\)*\1\)\)\@<='
+			let g:dbg = re
+			return search(re, 'nc')
+		endif
+	endif
+	" Can't be on an escaped tok if we're not even on a tok char.
+	return 0
+endfu
+fu! S_Highlight_selection2()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
-		echoerr "Highlight_selection(): blockwise-visual mode not supported"
-		return
+		throw "Highlight_selection(): blockwise-visual mode not supported"
 	endif
 	" Prompt user for desired highlighting
 	let tokstr = s:Prompt_fmt_clr_spec()
-	" Strip surrounding whitespace, which is ignored.
-	" Note: Only surrounding whitespace is ignored! Whitespace not
-	" permitted within fmt/clr spec list.
-	let tokstr = substitute(tokstr, '^\s*\(.\{-}\)\s*$', '\1', 'g')
+	" Parse and validate fmt/clr transformer spec
+	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
 	" Check for Cancel request
-	if tokstr == ''
+	if empty(tokinfo)
 		" Note that nothing about position or mode has changed at this point
 		" TODO: Probably want to restore selection here...
 		return
 	endif
-	" Translate and validate fmt/clr spec
-	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
-	if empty(tokinfo)
-		" Invalid fmt/clr sequence
-		" Note that nothing about position or mode has changed at this point
-		" TODO: Probably want to restore selection here...
-		throw "Highlight_selection(): Invalid fmt/clr sequence entered: ".s:err_str
-	endif
+
+	call s:Highlight_selection_impl(tokinfo)
 
 endfu
 
