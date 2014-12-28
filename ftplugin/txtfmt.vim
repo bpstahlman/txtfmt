@@ -531,7 +531,7 @@ fu! s:Restore_visual_mode(l1, c1, l2, c2)
 endfu
 " >>>
 " TODO: Header comments and convert to static
-" Function: s:Is_esc_tok() <<<
+" Function: s:Is_esc_tok_obsolete() <<<
 " Purpose: Determine whether the char under the cursor is a Txtfmt escape
 " token.
 " Inputs: 
@@ -792,6 +792,8 @@ endfu
 "    escaping char or a region start/end token
 " TESTING: Did 1st level of testing on 23Oct2009. Worked like a charm with no
 " need for debugging.
+" Update_28Dec2014: This one doesn't use synstack() (as does
+" Get_cur_rgn_info), and hence, may be incomplete.
 fu! s:Get_cur_tok_for_rgn(rgn)
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
@@ -2904,6 +2906,64 @@ fu! Test(spec)
 	endif
 endfu
 
+" Convert input string consisting of 1's and 0's to corresponding binary mask.
+" TODO: Not really using this now...
+fu! s:Convert_string_to_binary_mask(str)
+	let mask = 0
+	let bit = 1
+	let i = 1
+	while i <= len(a:str)
+		if a:str[-i : -i] == '1'
+			let mask = or(mask, bit)
+		endif
+		let bit = bit * 2
+		let i += 1
+	endwhile
+	return mask
+endfu
+
+" Assumes validation already complete (e.g., not escaped token)
+" Note: fg/bgcolormasks are strings of 1's and 0's, with string index
+" correlating with color index as follows:
+" color index = string idx + 1
+" i.e., 1st char in string corresponds to color 1
+" Tested: 28Dec2014
+fu! S_Get_cur_tok(skip_validation)
+	let ret = {}
+	if !a:skip_validation
+		" Make sure we're on a (non-escaped) tok.
+		if !search('\%#' . b:txtfmt_re_any_tok, 'nc')
+			return ret
+		endif
+	endif
+	let c = s:Get_cur_char()
+	let c_nr = char2nr(c)
+	" Start checking at final sub-region (clr < fmt < bgc)
+	if b:txtfmt_cfg_bgcolor && c_nr >= b:txtfmt_bgc_first_tok && c_nr < b:txtfmt_bgc_first_tok + b:txtfmt_num_colors
+		let ret.typ = 'bgc'
+		let idx = c_nr - b:txtfmt_bgc_first_tok
+		if idx == 0 || b:txtfmt_cfg_bgcolormask[idx - 1] == '1'
+			let ret.idx = idx
+		else
+			" Inactive color! Convention is to indicate with neg. index
+			let ret.idx = -idx
+		endif
+	elseif c_nr >= b:txtfmt_fmt_first_tok && c_nr < b:txtfmt_fmt_first_tok + b:txtfmt_num_formats
+		let ret.typ = 'fmt'
+		let ret.mask = c_nr - b:txtfmt_fmt_first_tok
+	elseif c_nr >= b:txtfmt_clr_first_tok && c_nr < b:txtfmt_clr_first_tok + b:txtfmt_num_colors
+		let ret.typ = 'clr'
+		let idx = c_nr - b:txtfmt_clr_first_tok
+		if idx == 0 || b:txtfmt_cfg_fgcolormask[idx - 1] == '1'
+			let ret.idx = idx
+		else
+			" Inactive color! Convention is to indicate with neg. index
+			let ret.idx = -idx
+		endif
+	endif
+	return ret
+endfu
+
 " Return:
 " {
 "   fmt: {
@@ -2932,19 +2992,28 @@ endfu
 " in which the start of visual selection lies: namely, the location of its
 " start token, and a boolean indicating whether or not the region prior to the
 " start of visual selection contains anything highlightable.
-fu! s:Get_beg_ctx(ss_line, ss_col)
+" Assumption: Visual mode boundaries will be correct (i.e., possibly
+" adjusted)
+fu! s:Get_beg_ctx()
 	let ret = {}
-	for typ in ['fmt', 'clr', 'bgc']
-		call cursor(ss_line, ss_col)
-
+	for rgn_type in a:rgn_types
+		normal! `<
+		if search('\%#' . b:{'txtfmt_re_' . rgn_type . '_tok'}, 'cn')
+			" UNDER CONSTRUCTION!!!!!!!!!!!!
+			let ret[rgn_type] = b:txtfmt_{rgn_type}_first_tok + ???})
+		endif
+				if !Is_active_color_index(rgns{num_idx}, num)
+		while !done
+			" Search backwards for nearest significant tok of current type.
+			let [lnum, col, submatch] = searchpos('\(' . b:txtfmt_re_any_tok . '\)\|\(' . re_hlable . '\)', '
+		endwhile
 	endfor
 endfu
 
-fu! s:Highlight_selection_impl()
 
-endfu
-
-" Description: Return true iff char under cursor represents an escaped token.
+" Description: Return true iff char under cursor represents an escaped (i.e.,
+" escapee, not escaping) token.
+" Note: Original Is_esc_tok didn't differentiate between escape and escapee.
 " Tested: 27Dec2014
 fu! S_Is_escaped_tok()
 	if b:txtfmt_cfg_escape != 'none'
@@ -2955,7 +3024,8 @@ fu! S_Is_escaped_tok()
 			endif
 		else
 			" Differentiate between escape and escapee.
-			let re = '\%#=1\%#\([' . b:txtfmt_re_any_tok_atom . ']\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\%(\1\1\)*\1\)\)\@<='
+			let re = '\%#=1\%#\([' . b:txtfmt_re_any_tok_atom
+				\. ']\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\%(\1\1\)*\1\)\)\@<='
 			let g:dbg = re
 			return search(re, 'nc')
 		endif
@@ -2963,6 +3033,32 @@ fu! S_Is_escaped_tok()
 	" Can't be on an escaped tok if we're not even on a tok char.
 	return 0
 endfu
+
+" Adjust visual selection to prevent splitting of escape/escapee pairs.
+fu! s:Adjust_vsel_to_protect_escapes()
+	let [ss_line, se_line] = [-1, -1]
+	" TODO: Will cursor always be at start here?
+	normal! `<
+	if S_Is_escaped_tok()
+		normal! h
+		let [ss_line, ss_col] = [line('.'), col('.')] 
+	endif
+	normal! '>
+	if S_Is_escaped_tok()
+		normal! l
+		let [se_line, se_col] = [line('.'), col('.')] 
+	endif
+	" Make sure `< and `> reflect the change.
+	if ss_line >= 0 || se_line >= 0
+		" TODO: Perhaps add arg to cancel selection immediately.
+		call s:Restore_visual_mode(ss_line, ss_col, se_line, se_col)
+	endif
+endfu
+
+fu! s:Highlight_selection_impl(tokinfo)
+	call s:Adjust_vsel_to_protect_escapes()
+endfu
+
 fu! S_Highlight_selection2()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
