@@ -3192,12 +3192,24 @@ endfu
 
 " Instantiate an object representing an ordered list of buffer modifications,
 " whose apply() method applies all actions in order.
+" Ordering: Modifications later in buffer always happen first (to avoid
+" invalidating [lnum, col] pairs). When distinct modifications are requested
+" for the same location, the order that makes sense is chosen:
+" -inserts occur after deletes and replaces (else the wrong char would be
+"  deleted / replaced)
+" -a replace overrides a previously-scheduled delete or replace (which was
+"  apparently a mistake)
+" -a delete overrides a previously-scheduled replace (which was apparently a
+"  mistake)
+" -multiple deletes collapse to a single delete
+" -inserts come before previously-scheduled inserts (so that inserts scheduled
+"  later end up being applied earlier, and hence, inserting their characters
+"  closer to the end of the buffer)
 " Actions:
 " {
 "   %% delete, insert or replace
 "   %% Design Decision: 'd' and 'i' would be equivalent to 'r', but allow
-"   %% caller to specify either way; 'r', however, shouldn't be used with
-"   %% anything else.
+"   %% caller to specify either way
 "   typ: 'd'|'i'|'r',
 "   pos: <from getpos()>,
 "   tok: <char to be added by 'i' or 'r'>
@@ -3213,6 +3225,7 @@ fu! Create_actions()
 	"   a=insert after existing
 	"   r=replace existing (overwrite)
 	"   d=discard new
+	" Note: See header comment for logic details.
 	let self._tt = {
 		\'d': {'d': 'd', 'i': 'a', 'r': 'r'},
 		\'i': {'d': 'b', 'i': 'b', 'r': 'b'},
@@ -3233,14 +3246,11 @@ fu! Create_actions()
 				let tt_val = self._tt[_typ][typ]
 				" Note: 'a' (after) case intentionally omitted so we'll fall
 				" through naturally to next iteration.
-				" UNDER CONSTRUCTION!!!!!!!!
 				if tt_val == 'b'
 					" Insert before
 					break
 				elseif tt_val == 'r'
-					" Replace old
-					" Whoa!!! TODO: Can't do it this way!!!!!
-					echo "Removing idx: " . idx
+					" Replace old (removal happens here / insert after loop)
 					call remove(self.actions, idx)
 					break
 				elseif tt_val == 'd'
@@ -3258,6 +3268,7 @@ fu! Create_actions()
 	" Apply all actions in ordered list.
 	fu! self.apply() dict
 		for action in self.actions
+			" TODO...
 			echo "Applying " . string(action)
 		endfor
 	endfu
