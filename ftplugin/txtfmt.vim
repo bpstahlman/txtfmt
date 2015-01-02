@@ -2662,7 +2662,6 @@ let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
 
 " Function: s:????() <<<
 " >>>
-
 " Function: s:Get_cur_rgn_info() <<<
 " Purpose: Parse the synstack to determine active fmt/clr/bgc regions at
 " cursor, returning a struct that contains either a mask (fmt) or color number
@@ -2673,7 +2672,7 @@ let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
 "   clr: <fg-color-number>
 "   bgc: <bg-color-number>
 " }
-fu! Get_cur_rgn_info()
+fu! s:Get_cur_rgn_info()
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
 	let rgn_idx_max_fmt = b:txtfmt_num_formats - 1
@@ -2722,7 +2721,6 @@ fu! Get_cur_rgn_info()
 	return info
 endfu
 " >>>
-
 " Function: s:Parse_fmt_clr_transformer() <<<
 " Convert the input comma-separated f/c/k transformer spec to a struct.
 " Input Format: In lieu of full grammar, here are some illustrative examples:
@@ -2756,7 +2754,7 @@ endfu
 " convention, and naturally, since its 2's complement is an all 1's mask).
 " TODO: Rework the exception messages.
 " TODO: Perhaps move these strip methods into TxtfmtUtil_...
-fu! S_Parse_fmt_clr_transformer(specs)
+fu! s:Parse_fmt_clr_transformer(specs)
 	fu! l:strip(s)
 		return substitute(a:s, '^\s\+\|\s\+$', '', 'g')
 	endfu
@@ -2897,7 +2895,6 @@ fu! S_Parse_fmt_clr_transformer(specs)
 	return ret
 endfu
 " >>>
-
 fu! Test(spec)
 	unlet! s:err_str
 	echo string(s:Parse_fmt_clr_transformer(a:spec))
@@ -2905,9 +2902,9 @@ fu! Test(spec)
 		echoerr s:err_str
 	endif
 endfu
-
 " Convert input string consisting of 1's and 0's to corresponding binary mask.
 " TODO: Not really using this now...
+" Function: s:Convert_string_to_binary_mask <<<
 fu! s:Convert_string_to_binary_mask(str)
 	let mask = 0
 	let bit = 1
@@ -2921,14 +2918,24 @@ fu! s:Convert_string_to_binary_mask(str)
 	endwhile
 	return mask
 endfu
-
-" Assumes validation already complete (e.g., not escaped token)
-" Note: fg/bgcolormasks are strings of 1's and 0's, with string index
-" correlating with color index as follows:
+" >>>
+" <<< Function: s:Get_cur_tok
+" Synopsis: Return an object representing the token under the cursor.
+" Inputs:
+" skip_validation - true means caller has already verified cursor is on an
+"   (unescaped) token.
+" Return: Empty object if no tok under cursor, else
+" {
+"   rgn: 'fmt'|'clr'|'bgc',
+"   %% Note that both color indices and fmt masks are actually indices.
+"   idx: <color-idx>|<fmt-mask>
+" }
+" Implementation Note: fg/bgcolormasks are strings of 1's and 0's, with string
+" index correlating with color index as follows:
 " color index = string idx + 1
-" i.e., 1st char in string corresponds to color 1
+" Example: 1st char in mask string corresponds to color 1
 " Tested: 28Dec2014
-fu! S_Get_cur_tok(skip_validation)
+fu! s:Get_cur_tok(skip_validation)
 	let ret = {}
 	if !a:skip_validation
 		" Make sure we're on a (non-escaped) tok.
@@ -2936,56 +2943,47 @@ fu! S_Get_cur_tok(skip_validation)
 			return ret
 		endif
 	endif
-	let c = s:Get_cur_char()
+	" Get char under cursor.
+	let c = s:Get_cur_char2()
 	let c_nr = char2nr(c)
+	" Determine tok type
 	" Start checking at final sub-region (clr < fmt < bgc)
 	if b:txtfmt_cfg_bgcolor && c_nr >= b:txtfmt_bgc_first_tok && c_nr < b:txtfmt_bgc_first_tok + b:txtfmt_num_colors
-		let ret.typ = 'bgc'
-		let idx = c_nr - b:txtfmt_bgc_first_tok
-		if idx == 0 || b:txtfmt_cfg_bgcolormask[idx - 1] == '1'
-			let ret.idx = idx
-		else
-			" Inactive color! Convention is to indicate with neg. index
-			let ret.idx = -idx
-		endif
+		let ret.rgn = 'bgc'
 	elseif c_nr >= b:txtfmt_fmt_first_tok && c_nr < b:txtfmt_fmt_first_tok + b:txtfmt_num_formats
-		let ret.typ = 'fmt'
-		let ret.mask = c_nr - b:txtfmt_fmt_first_tok
+		let ret.rgn = 'fmt'
 	elseif c_nr >= b:txtfmt_clr_first_tok && c_nr < b:txtfmt_clr_first_tok + b:txtfmt_num_colors
-		let ret.typ = 'clr'
-		let idx = c_nr - b:txtfmt_clr_first_tok
-		if idx == 0 || b:txtfmt_cfg_fgcolormask[idx - 1] == '1'
-			let ret.idx = idx
+		let ret.rgn = 'clr'
+	endif
+	if !empty(ret)
+		if ret.rgn == 'fmt'
+			let ret.idx = c_nr - b:txtfmt_fmt_first_tok
 		else
-			" Inactive color! Convention is to indicate with neg. index
-			let ret.idx = -idx
+			let idx = c_nr - b:txtfmt_{ret.rgn}_first_tok
+			if idx == 0 || b:txtfmt_cfg_{ret.rgn == 'clr' ? 'f' : 'b'}gcolormask[idx - 1] == '1'
+				let ret.idx = idx
+			else
+				" Inactive color! Convention is to indicate with neg. index
+				let ret.idx = -idx
+			endif
 		endif
 	endif
 	return ret
 endfu
-
+">>>
 " Return:
 " {
 "   fmt: {
-"     intro: {
-"       rowcol: [row, col],
-"       hlable: 0|1
-"     },
-"     mask: {fmt-mask}
+"     useless: []|[lnum, col],
+"     tok_val: {fmt-mask}
 "   },
 "   clr: {
-"     intro: {
-"       rowcol: [row, col],
-"       hlable: 0|1
-"     },
-"     clr_num: {color-number}
+"     useless: []|[lnum, col],
+"     tok_val: {color-number}
 "   },
 "   bgc: {
-"     intro: {
-"       rowcol: [row, col],
-"       hlable: 0|1
-"     },
-"     clr_num: {color-number}
+"     useless: []|[lnum, col],
+"     tok_val: {color-number}
 "   }
 " }
 " Explanation: If intro is non-empty, it contains information about the region
@@ -2994,28 +2992,58 @@ endfu
 " start of visual selection contains anything highlightable.
 " Assumption: Visual mode boundaries will be correct (i.e., possibly
 " adjusted)
-fu! s:Get_beg_ctx()
+" TODO: Probably remove this...
+fu! s:Get_beg_ctx(rgn_types)
 	let ret = {}
+	" Glean info from synstack to be used as fallback.
+	normal! `<
+	let rgn_info = s:Get_cur_rgn_info()
 	for rgn_type in a:rgn_types
-		normal! `<
-		if search('\%#' . b:{'txtfmt_re_' . rgn_type . '_tok'}, 'cn')
-			" UNDER CONSTRUCTION!!!!!!!!!!!!
-			let ret[rgn_type] = b:txtfmt_{rgn_type}_first_tok + ???})
-		endif
-				if !Is_active_color_index(rgns{num_idx}, num)
+		let re_hlable = b:txtfmt_re_any_ntok " TODO - bgc peculiarity
+		let tok_val = -1
+		let [hlable, done] = [0, 0]
+		let c_flag = 'c'
 		while !done
 			" Search backwards for nearest significant tok of current type.
-			let [lnum, col, submatch] = searchpos('\(' . b:txtfmt_re_any_tok . '\)\|\(' . re_hlable . '\)', '
+			if !hlable
+				let submatch =
+					\search('\(' . b:txtfmt_re_{rgn_type}_tok . '\)\|\(' . re_hlable . '\)', 'bp' . c_flag)
+				if submatch == 1
+					" Token
+					if line('.') != line("'<") || col('.') != col("'<")
+						" Moved from start of visual region.
+						let done = 1
+					endif
+					let c_flag = ''
+					" !!!!!!UNDER CONSTRUCTION - POSSIBLY ABANDONED!!!!!!
+					let ret[rgn_type] = s:Get_cur_tok(1)
+				elseif submatch == 2
+					" Something highlightable
+					let hlable = 1
+				endif
+			else
+				" Don't permit match at cursor position.
+				let lnum = search(b:txtfmt_re_{rgn_type}_tok, 'b')
+				if lnum
+					let done = 1
+				endif
+			endif
 		endwhile
+		if tok_val == -1
+			" Nothing found. Fallback to syntax.
+			let tok_val = rgn_info[rgn_type]
+		endif
+
+		" Restore position at head of visual region
+		normal! `<
 	endfor
 endfu
-
-
+" Function: s:Is_escaped_tok <<<
 " Description: Return true iff char under cursor represents an escaped (i.e.,
 " escapee, not escaping) token.
 " Note: Original Is_esc_tok didn't differentiate between escape and escapee.
 " Tested: 27Dec2014
-fu! S_Is_escaped_tok()
+fu! s:Is_escaped_tok()
 	if b:txtfmt_cfg_escape != 'none'
 		if b:txtfmt_cfg_escape == 'bslash'
 			if search('\%#=1\%#[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
@@ -3033,18 +3061,89 @@ fu! S_Is_escaped_tok()
 	" Can't be on an escaped tok if we're not even on a tok char.
 	return 0
 endfu
-
+" >>>
+" Function: s:Search_tok <<<
+" Inputs:
+" rgn    Desired region type: one of the following: 'clr', 'fmt', 'bgc', ''
+"        Note: Empty string means any rgn type.
+" flags  Pass-through for the following Vim search() flags:
+"        b - search backwards
+"        n - don't move cursor
+"        c - allow match (of token) at cursor pos
+"        Design Decision: Don't bother validating, as use of others would be
+"        internal error.
+" Return: On failure, an empty Dictionary, else...
+" {
+"   %% position of tok match
+"   pos: [lnum, col],
+"   %% indicates presence of hlable chars on way to found tok:
+"   %% 0=nothing hlable, 1=whitespace (bgc hlable), 2=hlable in all rgns
+"   hlable: 0|1|2,
+"   %% type of token found
+"   %% Note: Redundant with a:rgn if the latter is non-empty.
+"   rgn: 'fmt'|'clr'|'bgc'
+"   %% value representing the tok found
+"   idx: <color-idx>|<fmt-mask>
+" }
+" Post Condition: Unless 'n' flag supplied, will be positioned on any found
+" token.
+fu! s:Search_tok(rgn, flags)
+	let ret = {}
+	" Note: The following maybe patterns define subgroups, but will be cleared
+	" as soon as a match is confirmed.
+	" Note: The cursor position assertions are used to prevent hlable matches
+	" at the cursor position when the 'c' flag is set.
+	" Rationale: 'c' flag applies only to token matches.
+	" regex matching something hlable for *any* rgn type (excludes ws)
+	let re_not_at_cur = a:flags =~ 'c' ? '\%#\@!' : ''
+	let re_hlable_maybe = '\|\(' . re_not_at_cur . b:txtfmt_re_any_ntok . '\&\S\)'
+	let re_ws_maybe = '\|\(' . re_not_at_cur . '\s\)'
+	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
+	let hlable = 0
+	while 1
+		let [lnum, col, submatch] = searchpos('\(' . re_tok . '\)' . re_hlable_maybe . re_ws_maybe, a:flags . 'pW')
+		" CAVEAT!: submatch is 2-based, with 1 being reserved for the case in
+		" which no paren groups match but pattern does.
+		if submatch == 2 " Token
+			let tok_info = s:Get_cur_tok(1)
+			let ret = {'pos': [lnum, col], 'hlable': hlable, 'rgn': tok_info.rgn, 'idx': tok_info.idx}
+			break
+		elseif submatch == 3 " hlable in all rgns
+			let hlable = 2
+			let re_hlable_maybe = ''
+			let re_ws_maybe = ''
+		elseif submatch == 4 " ws hlable in bgc only
+			let hlable = 1
+			let re_ws_maybe = ''
+		else
+			break
+		endif
+	endwhile
+	return ret
+endfu
+" >>>
+" Function: s:Get_cur_char2 <<<
+" TODO: Decide whether to replace s:Get_cur_char with this.
+" Note: Advantage of this one is that it doesn't use any registers.
+" Disadvantage (if any) is that it's (at least conceptually) less efficient.
+fu! s:Get_cur_char2()
+	let line = getline(line('.'))[col('.') - 1 : ]
+	return line[0 : byteidx(line, 1) - 1]
+endfu
+" >>>
+" Function: s:Adjust_vsel_to_protect_escapes <<<
 " Adjust visual selection to prevent splitting of escape/escapee pairs.
+" Tested: Dec 2014
 fu! s:Adjust_vsel_to_protect_escapes()
 	let [ss_line, se_line] = [-1, -1]
 	" TODO: Will cursor always be at start here?
 	normal! `<
-	if S_Is_escaped_tok()
+	if s:Is_escaped_tok()
 		normal! h
 		let [ss_line, ss_col] = [line('.'), col('.')] 
 	endif
 	normal! '>
-	if S_Is_escaped_tok()
+	if s:Is_escaped_tok()
 		normal! l
 		let [se_line, se_col] = [line('.'), col('.')] 
 	endif
@@ -3054,9 +3153,199 @@ fu! s:Adjust_vsel_to_protect_escapes()
 		call s:Restore_visual_mode(ss_line, ss_col, se_line, se_col)
 	endif
 endfu
+" >>>
 
-fu! s:Highlight_selection_impl(tokinfo)
+" Move back 1 char and return pos list representing old position (empty list
+" if we're already at beginning of buffer).
+fu! s:Backward_char()
+	let save_pos = getpos('.')
+	if save_pos[2] == 1
+		" Beginning of line
+		if save_pos[1] == 1
+			" Already at beginning of buffer
+			return []
+		else
+			" To end of previous line
+			normal! k$
+		endif
+	else
+		" Back a char
+		normal! h
+	endif
+	return save_pos
+endfu
+fu! s:Forward_char()
+	let save_pos = getpos('.')
+	" Attempt to move forward 1 char
+	normal! l
+	if col('.') == save_pos[2]
+		" Couldn't move forward on current line.
+		if save_pos[1] < line('$')
+			normal! j0
+		else
+			" Already at end of buffer
+			return {}
+		endif
+	endif
+	return save_pos
+endfu
+
+" Instantiate an object representing an ordered list of buffer modifications,
+" whose apply() method applies all actions in order.
+" Actions:
+" {
+"   %% delete, insert or replace
+"   %% Design Decision: 'd' and 'i' would be equivalent to 'r', but allow
+"   %% caller to specify either way; 'r', however, shouldn't be used with
+"   %% anything else.
+"   typ: 'd'|'i'|'r',
+"   pos: <from getpos()>,
+"   tok: <char to be added by 'i' or 'r'>
+" }
+fu! Create_actions()
+	let self = {'actions': []}
+	" Define a truth-table used to break sort-order ties between an action to
+	" be inserted and one already in the list.
+	" Format: Each outer key represents the action type of an element already
+	" in the list. The inner keys are the action types of the action to be
+	" inserted. The values specify what to do with the action to be inserted:
+	"   b=insert before existing
+	"   a=insert after existing
+	"   r=replace existing (overwrite)
+	"   d=discard new
+	let self._tt = {
+		\'d': {'d': 'd', 'i': 'a', 'r': 'r'},
+		\'i': {'d': 'b', 'i': 'b', 'r': 'b'},
+		\'r': {'d': 'r', 'i': 'a', 'r': 'r'}
+	\}	
+	fu! self.add(action) dict
+		let idx = 0
+		let [lnum, col] = a:action.pos[1:2]
+		let typ = a:action.typ
+		for action in self.actions
+			let [_lnum, _col] = action.pos[1:2]
+			let _typ = action.typ
+			" Comparison Logic: Later in buffer comes earlier; to break tie,
+			" later added comes later, but a delete must always happen before
+			" a non-delete at same position.
+			if lnum == _lnum && col == _col
+				" Positional tie - use truth-table to break
+				let tt_val = self._tt[_typ][typ]
+				" Note: 'a' (after) case intentionally omitted so we'll fall
+				" through naturally to next iteration.
+				" UNDER CONSTRUCTION!!!!!!!!
+				if tt_val == 'b'
+					" Insert before
+					break
+				elseif tt_val == 'r'
+					" Replace old
+					" Whoa!!! TODO: Can't do it this way!!!!!
+					echo "Removing idx: " . idx
+					call remove(self.actions, idx)
+					break
+				elseif tt_val == 'd'
+					" Discard new
+					return
+				endif
+			elseif lnum > _lnum || (lnum == _lnum && col > _col)
+				" Insert before this item.
+				break
+			endif
+			let idx += 1
+		endfor
+		call insert(self.actions, a:action, idx)
+	endfu
+	" Apply all actions in ordered list.
+	fu! self.apply() dict
+		for action in self.actions
+			echo "Applying " . string(action)
+		endfor
+	endfu
+	return self
+endfu
+" Synopsis: Remove redundant/useless tokens (of specified rgn type) preceding
+" vsel, and return a value indicating the tok in effect (also for specified
+" rgn type) at head of vsel.
+" Note: If selection begins with a tok of rgn type, that will be the type
+" returned.
+" Post Conditions: Any redundant or useless toks preceding region have been
+" removed.
+" Return: fmt-mask or color-idx in effect at start of vsel
+fu! s:Clean_pre_vsel(rgn)
+	let ret_idx = -1
+	let prev_tok_info = {}
+	call cursor(line("'<"), col("'<"))
+	let cont = 1
+	while cont
+		let cont = 0
+		let tok_info = s:Search_tok(a:rgn, 'b')
+		if empty(tok_info)
+			" No more tokens (at least not within stopline range)
+			if ret_idx < 0
+				" Haven't determined tok in effect. Fallback to syntax.
+				let pos = s:Backward_char()
+				if empty(pos)
+					" At head of buffer
+					let ret_idx = 0
+				else
+					let ret_idx = s:Get_cur_rgn_info()[rgn]
+				endif
+			endif
+		else
+			" Found a token
+			if ret_idx < 0
+				let ret_idx = tok_info.idx
+			endif
+			" DECISION NEEDED: Continue down this path of treating rgn types
+			" separately, or combine?
+			" CAVEAT!: Must take care when deleting tokens, since the deletion
+			" of 1 type could combine 2 other types, creating an
+			" escape/escapee pair (can happen only when there are already
+			" redundant)!!!
+			" Idea: What if we cleaned everything up ahead of time to remove
+			" that possibility?
+			if tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc')
+				" Delete useless tok
+				normal! "_x
+			endif
+			if !empty(prev_tok_info) && tok_info.idx == prev_tok_info.idx
+				" Delete 2nd of 2 redundant toks.
+				let save_pos = getpos('.')
+				call cursor(prev_tok_info.pos)
+				normal! "_x
+				call setpos('.', save_pos)
+				let cont = 1
+			endif
+		endif
+		if cont
+			let prev_tok_info = tok_info
+		endif
+	endwhile
+	return ret_idx
+endfu
+
+fu! s:Highlight_selection_impl(pspecs)
 	call s:Adjust_vsel_to_protect_escapes()
+	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
+	" needed, its return is cached.
+	let rgn_info = {}
+	" Loop over rgn types.
+	for rgn in keys(a:pspecs)
+		" Unlet needed because rgn_info can be either num or list.
+		unlet! rgn_info
+		let pspec = a:pspecs[rgn]
+		if type(pspec) == 0
+			"let ???
+		else
+		endif
+		let beg_idx = s:Clean_pre_vsel(rgn)
+		echo "beg_idx: " . beg_idx
+
+		" Are we on a tok?
+		let cur_tok = s:Get_cur_tok(0)
+		if !empty(cur_tok)
+		endif
+	endfor
 endfu
 
 fu! S_Highlight_selection2()
