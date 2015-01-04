@@ -2971,73 +2971,6 @@ fu! s:Get_cur_tok(skip_validation)
 	return ret
 endfu
 ">>>
-" Return:
-" {
-"   fmt: {
-"     useless: []|[lnum, col],
-"     tok_val: {fmt-mask}
-"   },
-"   clr: {
-"     useless: []|[lnum, col],
-"     tok_val: {color-number}
-"   },
-"   bgc: {
-"     useless: []|[lnum, col],
-"     tok_val: {color-number}
-"   }
-" }
-" Explanation: If intro is non-empty, it contains information about the region
-" in which the start of visual selection lies: namely, the location of its
-" start token, and a boolean indicating whether or not the region prior to the
-" start of visual selection contains anything highlightable.
-" Assumption: Visual mode boundaries will be correct (i.e., possibly
-" adjusted)
-" TODO: Probably remove this...
-fu! s:Get_beg_ctx(rgn_types)
-	let ret = {}
-	" Glean info from synstack to be used as fallback.
-	normal! `<
-	let rgn_info = s:Get_cur_rgn_info()
-	for rgn_type in a:rgn_types
-		let re_hlable = b:txtfmt_re_any_ntok " TODO - bgc peculiarity
-		let tok_val = -1
-		let [hlable, done] = [0, 0]
-		let c_flag = 'c'
-		while !done
-			" Search backwards for nearest significant tok of current type.
-			if !hlable
-				let submatch =
-					\search('\(' . b:txtfmt_re_{rgn_type}_tok . '\)\|\(' . re_hlable . '\)', 'bp' . c_flag)
-				if submatch == 1
-					" Token
-					if line('.') != line("'<") || col('.') != col("'<")
-						" Moved from start of visual region.
-						let done = 1
-					endif
-					let c_flag = ''
-					" !!!!!!UNDER CONSTRUCTION - POSSIBLY ABANDONED!!!!!!
-					let ret[rgn_type] = s:Get_cur_tok(1)
-				elseif submatch == 2
-					" Something highlightable
-					let hlable = 1
-				endif
-			else
-				" Don't permit match at cursor position.
-				let lnum = search(b:txtfmt_re_{rgn_type}_tok, 'b')
-				if lnum
-					let done = 1
-				endif
-			endif
-		endwhile
-		if tok_val == -1
-			" Nothing found. Fallback to syntax.
-			let tok_val = rgn_info[rgn_type]
-		endif
-
-		" Restore position at head of visual region
-		normal! `<
-	endfor
-endfu
 " Function: s:Is_escaped_tok <<<
 " Description: Return true iff char under cursor represents an escaped (i.e.,
 " escapee, not escaping) token.
@@ -3064,14 +2997,20 @@ endfu
 " >>>
 " Function: s:Search_tok <<<
 " Inputs:
-" rgn    Desired region type: one of the following: 'clr', 'fmt', 'bgc', ''
-"        Note: Empty string means any rgn type.
-" flags  Pass-through for the following Vim search() flags:
-"        b - search backwards
-"        n - don't move cursor
-"        c - allow match (of token) at cursor pos
-"        Design Decision: Don't bother validating, as use of others would be
-"        internal error.
+" rgn
+"     Desired region type: one of the following: 'clr', 'fmt', 'bgc', ''
+"     Note: Empty string means any rgn type.
+" flags
+"     Pass-through for the following Vim search() flags:
+"     b - search backwards
+"     n - don't move cursor
+"     c - allow match (of token) at cursor pos
+"     Design Decision: Don't bother validating, as use of others would be
+"     internal error.
+" [ex_flags]
+"     Flags distinct from Vim search() flags.
+"     v - tok must be within visual region
+"     
 " Return: On failure, an empty Dictionary, else...
 " {
 "   %% position of tok match
@@ -3087,10 +3026,12 @@ endfu
 " }
 " Post Condition: Unless 'n' flag supplied, will be positioned on any found
 " token.
-fu! s:Search_tok(rgn, flags)
+fu! s:Search_tok(rgn, flags, ...)
 	let ret = {}
-	" Note: The following maybe patterns define subgroups, but will be cleared
-	" as soon as a match is confirmed.
+	" Process optional extra flags arg.
+	let ex_flags = a:0 > 2 ? a:3 : ''
+	" Note: The following 'maybe' patterns define subgroups, but will be
+	" cleared as soon as a match is confirmed.
 	" Note: The cursor position assertions are used to prevent hlable matches
 	" at the cursor position when the 'c' flag is set.
 	" Rationale: 'c' flag applies only to token matches.
@@ -3098,7 +3039,8 @@ fu! s:Search_tok(rgn, flags)
 	let re_not_at_cur = a:flags =~ 'c' ? '\%#\@!' : ''
 	let re_hlable_maybe = '\|\(' . re_not_at_cur . b:txtfmt_re_any_ntok . '\&\S\)'
 	let re_ws_maybe = '\|\(' . re_not_at_cur . '\s\)'
-	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
+	let re_tok = (ex_flags =~ 'v' ? '\%V' : '')
+		\. empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
 	let hlable = 0
 	while 1
 		let [lnum, col, submatch] = searchpos('\(' . re_tok . '\)' . re_hlable_maybe . re_ws_maybe, a:flags . 'pW')
@@ -3195,6 +3137,8 @@ endfu
 " Ordering: Modifications later in buffer always happen first (to avoid
 " invalidating [lnum, col] pairs). When distinct modifications are requested
 " for the same location, the order that makes sense is chosen:
+" TODO: Most of the following rules were written prior to addition of 'a'
+" operaton. Update...
 " -inserts occur after deletes and replaces (else the wrong char would be
 "  deleted / replaced)
 " -a replace overrides a previously-scheduled delete or replace (which was
@@ -3203,18 +3147,25 @@ endfu
 "  mistake)
 " -multiple deletes collapse to a single delete
 " -inserts come before previously-scheduled inserts (so that inserts scheduled
-"  later end up being applied earlier, and hence, inserting their characters
-"  closer to the end of the buffer)
+"  later end up being applied earlier, such that their characters end up
+"  closer to the end of the buffer.
+" -appends happen before anything else: conceptually, they're like inserts
+"  occurring later in the buffer, but can be more conveniently specified
+"  (e.g.) when the append position corresponds to the final char in buffer.
+" -appends come before previously-scheduled appends (so that appends scheduled
+"  later end up being applied earlier, such that their characters end up
+"  closer to the end of the buffer.
 " Actions:
 " {
-"   %% delete, insert or replace
+"   %% delete, insert, append or replace
 "   %% Design Decision: 'd' and 'i' would be equivalent to 'r', but allow
 "   %% caller to specify either way
-"   typ: 'd'|'i'|'r',
-"   pos: <from getpos()>,
-"   tok: <char to be added by 'i' or 'r'>
+"   typ: 'd'|'i'|'a'|'r',
+"   pos: buffer location as [lnum, col],
+"   tok: char to be added by 'i', 'a' or 'r'
 " }
-fu! Create_actions()
+" Tested: 02Jan2015 (before addition of append op)
+fu! s:Create_actions()
 	let self = {'actions': []}
 	" Define a truth-table used to break sort-order ties between an action to
 	" be inserted and one already in the list.
@@ -3227,16 +3178,17 @@ fu! Create_actions()
 	"   d=discard new
 	" Note: See header comment for logic details.
 	let self._tt = {
-		\'d': {'d': 'd', 'i': 'a', 'r': 'r'},
-		\'i': {'d': 'b', 'i': 'b', 'r': 'b'},
-		\'r': {'d': 'r', 'i': 'a', 'r': 'r'}
+		\'d': {'d': 'd', 'i': 'a', 'a': 'b', 'r': 'r'},
+		\'i': {'d': 'b', 'i': 'b', 'a': 'b', 'r': 'b'},
+		\'a': {'d': 'a', 'i': 'a', 'a': 'b', 'r': 'a'},
+		\'r': {'d': 'r', 'i': 'a', 'a': 'b', 'r': 'r'}
 	\}	
 	fu! self.add(action) dict
 		let idx = 0
-		let [lnum, col] = a:action.pos[1:2]
+		let [lnum, col] = a:action.pos
 		let typ = a:action.typ
 		for action in self.actions
-			let [_lnum, _col] = action.pos[1:2]
+			let [_lnum, _col] = action.pos
 			let _typ = action.typ
 			" Comparison Logic: Later in buffer comes earlier; to break tie,
 			" later added comes later, but a delete must always happen before
@@ -3274,57 +3226,70 @@ fu! Create_actions()
 	endfu
 	return self
 endfu
-" Synopsis: Remove redundant/useless tokens (of specified rgn type) preceding
-" vsel, and return a value indicating the tok in effect (also for specified
-" rgn type) at head of vsel.
-" Note: If selection begins with a tok of rgn type, that will be the type
-" returned.
+
+" TODO: Figure out where to put this, or whether it's even needed.
+" TODO: Consider combining rgn and idx into a simple datatype.
+fu! s:Idx_to_tok(rgn, idx)
+	return nr2char(b:txtfmt_{a:rgn}_first_tok + idx)
+endfu
+
+fu! s:Is_in_vsel()
+	return !!search('\%#\%V', 'nc')
+endfu
+
+" Synopsis: Remove (queued) any redundant/useless tokens (of specified rgn
+" type) preceding vsel, and return a value indicating the tok in effect (also
+" for specified rgn type) at head of vsel.
+" Note: A tok *within* the vsel (even at head) has no impact on return.
+" Inputs:
+" rgn
+"   type of region of interest ('fmt'|'clr'|'bgc')
+" act_q
+"   Queue of ordered actions, created by Create_actions(), used to queue tok
+"   removal
 " Post Conditions: Any redundant or useless toks preceding region have been
-" removed.
+" queued for removal.
 " Return: fmt-mask or color-idx in effect at start of vsel
-fu! s:Clean_pre_vsel(rgn)
-	let ret_idx = -1
+" TODO: Perhaps rename this...
+fu! s:Vmap_apply_pre_vsel(rgn, act_q)
+	let ret = {}
 	let prev_tok_info = {}
 	call cursor(line("'<"), col("'<"))
+	" Continue searching until stop conditions are met: i.e., till either we
+	" run out of tokens of desired type (searching backwards within sync
+	" region) or we stop finding useless/redundant tokens in need of removal.
 	let cont = 1
 	while cont
 		let cont = 0
 		let tok_info = s:Search_tok(a:rgn, 'b')
 		if empty(tok_info)
-			" No more tokens (at least not within stopline range)
-			if ret_idx < 0
-				" Haven't determined tok in effect. Fallback to syntax.
+			" No more tokens (at least not within stopline range - TODO)
+			if empty(ret)
+				" Haven't determined tok in effect. Move just prior to vsel
+				" and use syntax to determine.
 				let pos = s:Backward_char()
 				if empty(pos)
-					" At head of buffer
-					let ret_idx = 0
+					" Already at head of buffer
+					let ret.idx = 0
 				else
-					let ret_idx = s:Get_cur_rgn_info()[rgn]
+					let ret.idx = s:Get_cur_rgn_info()[rgn]
 				endif
 			endif
 		else
 			" Found a token
-			if ret_idx < 0
-				let ret_idx = tok_info.idx
+			if empty(ret_idx)
+				let ret.idx = tok_info.idx
+				let ret.pos = getpos('.')[1:2]
 			endif
-			" DECISION NEEDED: Continue down this path of treating rgn types
-			" separately, or combine?
-			" CAVEAT!: Must take care when deleting tokens, since the deletion
-			" of 1 type could combine 2 other types, creating an
-			" escape/escapee pair (can happen only when there are already
-			" redundant)!!!
-			" Idea: What if we cleaned everything up ahead of time to remove
-			" that possibility?
 			if tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc')
-				" Delete useless tok
-				normal! "_x
-			endif
-			if !empty(prev_tok_info) && tok_info.idx == prev_tok_info.idx
+				" Delete useless tok (2nd of 2 not separated by hlable)
+				" NO!!!! prev_tok_info may not even exist here!!!
+				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
+				" TODO: Decide whether this is appropriate. How much cleanup?
+				let cont = 1
+			elseif !empty(prev_tok_info) && tok_info.idx == prev_tok_info.idx
 				" Delete 2nd of 2 redundant toks.
-				let save_pos = getpos('.')
-				call cursor(prev_tok_info.pos)
-				normal! "_x
-				call setpos('.', save_pos)
+				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
 				let cont = 1
 			endif
 		endif
@@ -3332,7 +3297,77 @@ fu! s:Clean_pre_vsel(rgn)
 			let prev_tok_info = tok_info
 		endif
 	endwhile
-	return ret_idx
+	" Note: Call to s:Get_cur_rgn_info should preclude our getting here with
+	" empty ret, but just in case...
+	return empty(ret_idx) ? {'idx': 0} : ret
+endfu
+
+" UNDER CONSTRUCTION!!!!!!!!!!!!!!!
+" Look
+" Return: {
+"   %% old is before appending any tok's at vsel end
+"   %% new is what it should be after vmap application; if old and new differ,
+"   %% tok must be appended.
+"   end_idx: {'old': <>, 'new': <>}
+"
+fu! s:Vmap_apply_vsel(rgn, beg_ctx, pspec, act_q)
+	let ret = {}
+
+	call cursor(line("'<"), col("'<"))
+	let idx = {'old': beg_ctx.idx, 'new': beg_ctx.idx}
+	let prev_tok_info = beg_ctx.tok_info
+
+
+	" Apply pspec to beg_idx and if change required, insert tok.
+	let idx = s:Vmap_apply_tok(a:rgn, a:pspec, beg_idx)
+	if idx != beg_idx
+		" Insert tok at region head
+		call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, idx)})
+		let idx.new = idx
+	endif
+	
+	let prev_tok_info = {}
+	let cont = 1
+	while cont
+		let cont = 0
+		" Look for next tok within stopline range (not necessarily in vsel)
+		let tok_info = s:Search_tok(a:rgn, '')
+		if !empty(tok_info)
+			" Found tok. If in vsel, measure its impact
+			if s:Is_in_vsel()
+				let cont = 1
+				" Note: Effects of a tok within vsel should be determined
+				" without regard to whether it will ultimately be deleted,
+				" replaced, etc...
+				let idx.old = tok_info.idx
+				let idx.new = s:Vmap_apply_tok(a:rgn, a:pspec, tok_info.idx)
+				if idx.new != idx.old
+					" Replace old tok with new.
+					call a:act_q.add({'typ': 'r', 'pos': getpos('.')[1:2], 'tok': s:Idx_to_tok(a:rgn, idx.new)})
+				endif
+			endif
+
+			" Check for useless/redundant toks even if found tok outside vsel.
+			if tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc')
+				" Delete useless tok (2nd of 2 not separated by hlable)
+				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
+				" TODO: Decide on this... I'm thinking go till we don't delete
+				" anything...
+				let cont = 1
+			elseif !empty(prev_tok_info) && tok_info.idx == prev_tok_info.idx
+				" Delete 2nd of 2 redundant toks.
+				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
+				let cont = 1
+			endif
+		endif
+		if cont
+			let prev_tok_info = tok_info
+		elseif idx.new != idx.old
+			" Need to append tok to vsel
+			call a:act_q.add({'typ': 'a', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, idx.old)})
+		endif
+	endwhile
+	return ret
 endfu
 
 fu! s:Highlight_selection_impl(pspecs)
@@ -3345,12 +3380,18 @@ fu! s:Highlight_selection_impl(pspecs)
 		" Unlet needed because rgn_info can be either num or list.
 		unlet! rgn_info
 		let pspec = a:pspecs[rgn]
+		" Question: Should this be objectified? Have functions that can work
+		" with it as-is?
 		if type(pspec) == 0
-			"let ???
 		else
 		endif
-		let beg_idx = s:Clean_pre_vsel(rgn)
+
+		let act_q = s:Create_actions()
+		let beg_idx = s:Vmap_apply_pre_vsel(rgn, act_q)
 		echo "beg_idx: " . beg_idx
+		call act_q.apply()
+
+		let info = s:Vmap_apply_vsel(rgn, beg_idx, pspec, act_q)
 
 		" Are we on a tok?
 		let cur_tok = s:Get_cur_tok(0)
