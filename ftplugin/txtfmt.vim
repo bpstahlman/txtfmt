@@ -3230,11 +3230,24 @@ endfu
 " TODO: Figure out where to put this, or whether it's even needed.
 " TODO: Consider combining rgn and idx into a simple datatype.
 fu! s:Idx_to_tok(rgn, idx)
-	return nr2char(b:txtfmt_{a:rgn}_first_tok + idx)
+	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
 endfu
 
+fu! s:At_buf_end()
+	return !!search('\%#.\?\%$', 'nc')
+endfu
 fu! s:Is_in_vsel()
 	return !!search('\%#\%V', 'nc')
+endfu
+fu! s:Is_pre_vsel()
+	return !!search("\\%#\\%<'<", 'nc')
+endfu
+fu! s:Is_post_vsel()
+	return !!search("\\%#\\%>'>", 'nc')
+endfu
+" Assumption: vsel exists.
+fu! s:Cmp_vsel()
+	return s:Is_in_vsel() ? 0 : s:Is_pre_vsel() ? -1 : 1
 endfu
 
 " Synopsis: Remove (queued) any redundant/useless tokens (of specified rgn
@@ -3302,6 +3315,123 @@ fu! s:Vmap_apply_pre_vsel(rgn, act_q)
 	return empty(ret_idx) ? {'idx': 0} : ret
 endfu
 
+" EXPERIMENTAL!!!!!!!!!
+fu! s:Vmap_sync_vsel(rgn)
+	" STUB LOGIC
+	" Eventually, want to move to point from which to start token cleanup.
+	normal! gg
+	return {'idx': 0}
+endfu
+
+" TODO: Document...
+" Return the idx resulting from application of fmt pspec to fmt idx
+fu! s:Vmap_apply_fmt(pspec, idx)
+	if type(a:pspec) == 0
+		" Set
+		return a:pspec
+	else
+		" Add/sub
+		return and(or(a:idx, a:pspec[0]), invert(a:pspec[1]))
+	endif
+endfu
+
+fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
+	" TODO: Perhaps have syncing function return context?
+	call s:Vmap_sync_vsel(a:rgn)
+	" Don't assume we're on tok.
+	let flags = ''
+	if empty(s:Get_cur_tok(0))
+		" Not on tok
+		let tok_info_prev = {}
+		let rgn_info = s:Get_cur_rgn_info()
+		let old_idx = rgn_info[a:rgn]
+	else
+		" On tok
+		" Note: Invoke s:Search_tok with 'cn' flags for return value only.
+		let tok_info_prev = s:Search_tok(a:rgn, 'cn')
+		let old_idx = tok_info_prev.idx
+		if s:Is_in_vsel()
+			" Edge Case: Tok at buf head
+			" Note: This flag will be cleared after first iteration.
+			let flags = 'c'
+			let tok_info_prev = {}
+			let old_idx = 0
+		endif
+	endif
+	echo "At start, old_idx=" . old_idx
+	let new_idx = old_idx
+	let vsel_cmp_prev = -1
+	while 1
+		" Look for next tok within stopline range (not necessarily in vsel)
+		let tok_info = s:Search_tok(a:rgn, '' . flags)
+		if !empty(tok_info)
+			" Found tok.
+			let vsel_cmp = s:Cmp_vsel()
+			" Apply pspec to tok.
+			" TODO: Perhaps rename...
+	" !!!!!!!!!!!!! UNDER CONSTRUCTION !!!!!!!!!!!
+			if vsel_cmp == 0
+				" pspec applied to existing toks only within vsel
+				" TODO: Eventually, the vsel_cmp == 0 test may be unnecessary
+				" due to begin context.
+				let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
+				if new_idx_next != tok_info.idx && new_idx_next != new_idx
+					echo string(getpos('.')[1:2]) . ": Replacing: " . tok_info.idx . " with " . new_idx_next
+					" Replace existing tok with new.
+					call a:act_q.add({'typ': 'r', 'pos': tok_info.pos, 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
+				endif
+			else
+				" New and old can't diverge yet.
+				let new_idx_next = tok_info.idx
+			endif
+			let old_idx_next = tok_info.idx
+
+			" Check for useless/redundant toks even if found tok outside vsel.
+			" Note: Can delete a token queued for replacement above.
+			if (!empty(tok_info_prev) && (
+				\tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc'))) ||
+				\new_idx_next == old_idx
+				" Delete 2nd in useless or redundant tok pair.
+				call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
+			endif
+		else
+			" Effectively past end of vsel
+			let vsel_cmp = 1
+		endif
+		" Whether tok was found or not...
+		if vsel_cmp_prev < 0 && vsel_cmp >= 0
+			" Entered or skipped over vsel
+			" Is tok needed at head?
+			let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
+			if new_idx_next != old_idx
+				call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
+			endif
+		endif
+		if vsel_cmp_prev < 1 && vsel_cmp == 1
+			" Exited or skipped over vsel
+			" Is tok needed at tail?
+			if new_idx != old_idx
+				call a:act_q.add({'typ': 'a', 'pos': [line("'>"), col("'>")], 'tok': s:Idx_to_tok(a:rgn, old_idx)})
+			endif
+		endif
+		if !empty(tok_info) && vsel_cmp < 1 " before or in vsel
+			" Landed on tok not past vsel
+			" Note: new_idx may or may not be changing, but the fact that we
+			" landed on a token implies it was set above (possibly just synced
+			" with old_idx_next).
+			let old_idx = old_idx_next
+			let new_idx = new_idx_next
+		endif
+		" Break unless we found a tok that wasn't past vsel.
+		if empty(tok_info) || vsel_cmp == 1
+			break
+		endif
+		" Update for next iteration.
+		let tok_info_prev = tok_info
+		let vsel_cmp_prev = vsel_cmp
+		let flags = ''
+	endwhile
+endfu
 " UNDER CONSTRUCTION!!!!!!!!!!!!!!!
 " Look
 " Return: {
@@ -3310,7 +3440,7 @@ endfu
 "   %% tok must be appended.
 "   end_idx: {'old': <>, 'new': <>}
 "
-fu! s:Vmap_apply_vsel(rgn, beg_ctx, pspec, act_q)
+fu! s:Vmap_apply_vsel_old(rgn, beg_ctx, pspec, act_q)
 	let ret = {}
 
 	call cursor(line("'<"), col("'<"))
@@ -3387,16 +3517,10 @@ fu! s:Highlight_selection_impl(pspecs)
 		endif
 
 		let act_q = s:Create_actions()
-		let beg_idx = s:Vmap_apply_pre_vsel(rgn, act_q)
-		echo "beg_idx: " . beg_idx
+		let info = s:Vmap_apply_vsel(rgn, pspec, act_q)
 		call act_q.apply()
 
-		let info = s:Vmap_apply_vsel(rgn, beg_idx, pspec, act_q)
 
-		" Are we on a tok?
-		let cur_tok = s:Get_cur_tok(0)
-		if !empty(cur_tok)
-		endif
 	endfor
 endfu
 
