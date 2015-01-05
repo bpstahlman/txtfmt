@@ -3341,36 +3341,36 @@ endfu
 " cleanup is appropriate - i.e., how far back to go.)
 "-May need to handle colors a bit differently (more simply). Have been working
 " with the hard case (fmts) almost exclusively.
-"-Implement apply for queued actions object (currently just outputting actions)
+"-Implement apply for queued actions object (currently just printing actions)
 fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
-	" TODO: Perhaps have syncing function return context?
-	call s:Vmap_sync_vsel(a:rgn)
-	" Don't assume we're on tok.
-	let flags = ''
-	if empty(s:Get_cur_tok(0))
-		" Not on tok
-		let tok_info_prev = {}
-		let rgn_info = s:Get_cur_rgn_info()
-		let old_idx = rgn_info[a:rgn]
-	else
-		" On tok
-		" Note: Invoke s:Search_tok with 'cn' flags for return value only.
-		let tok_info_prev = s:Search_tok(a:rgn, 'cn')
-		let old_idx = tok_info_prev.idx
-		if s:Is_in_vsel()
-			" Edge Case: Tok at buf head
-			" Note: This flag will be cleared after first iteration.
-			let flags = 'c'
-			let tok_info_prev = {}
+	" Sync to tok or synstack() prior to vsel.
+	" TODO: Perhaps implement syncing function that returns context?
+	call cursor(line("'<"), col("'<"))
+	let tok_info_prev = s:Search_tok(a:rgn, 'b')
+	if empty(tok_info_prev)
+		" Couldn't find pre-vsel tok within stopline range.
+		if empty(s:Backward_char())
+			" Already at head of buffer
 			let old_idx = 0
+			" Permit match at cursor position (first iter only)
+			let flags = 'c'
+		else
+			let old_idx = s:Get_cur_rgn_info()[a:rgn]
 		endif
+	else
+		" Sync to found tok
+		let old_idx = tok_info_prev.idx
 	endif
-	echo "At start, old_idx=" . old_idx
 	let new_idx = old_idx
+	"""
+	echo "At start, old_idx=" . old_idx
 	let vsel_cmp_prev = -1
 	while 1
+		let new_idx_next = -1
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, '' . flags)
+		" Clear any temporary flag overrides assigned since prev invocation.
+		let flags = ''
 		if !empty(tok_info)
 			" Found tok.
 			let vsel_cmp = s:Cmp_vsel()
@@ -3395,29 +3395,40 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 
 			" Check for useless/redundant toks even if found tok outside vsel.
 			" Note: Can delete a token queued for replacement above.
-			if (!empty(tok_info_prev) && (
-				\tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc'))) ||
-				\new_idx_next == old_idx
-				" Delete 2nd in useless or redundant tok pair.
+			if !empty(tok_info_prev) && (
+				\tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc'))
+				" Delete 1st in useless tok pair.
+				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
+			elseif (vsel_cmp == 0 ? new_idx_next : tok_info.idx) == new_idx
+				" Delete 2nd in redundant tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
 			endif
 		else
 			" Effectively past end of vsel
 			let vsel_cmp = 1
 		endif
-		" Whether tok was found or not...
+		" Whether tok was found or not, do entry/exit logic...
+		" TODO: Considering handling this more explicitly: i.e., using the new
+		" 'v' extra flag to Search_tok for the body of the loop, and handling
+		" post vsel processing separately (as pre vsel is now).
 		if vsel_cmp_prev < 0 && vsel_cmp >= 0
 			" Entered or skipped over vsel
 			" Is tok needed at head?
-			let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
-			if new_idx_next != old_idx
-				call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
+			let idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
+			if idx != old_idx
+				call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, idx)})
+			endif
+			" Note: If we landed on a tok, the tok we just added at vsel head
+			" is earlier and hence, should not affect new_idx_next.
+			if new_idx_next == -1
+				let new_idx_next = idx
 			endif
 		endif
+		" TODO: Reexamine use of new_idx_next throughout...
 		if vsel_cmp_prev < 1 && vsel_cmp == 1
 			" Exited or skipped over vsel
 			" Is tok needed at tail?
-			if new_idx != old_idx
+			if (new_idx_next == -1 ? new_idx : new_idx_next) != old_idx
 				call a:act_q.add({'typ': 'a', 'pos': [line("'>"), col("'>")], 'tok': s:Idx_to_tok(a:rgn, old_idx)})
 			endif
 		endif
@@ -3436,7 +3447,6 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		" Update for next iteration.
 		let tok_info_prev = tok_info
 		let vsel_cmp_prev = vsel_cmp
-		let flags = ''
 	endwhile
 endfu
 " UNDER CONSTRUCTION!!!!!!!!!!!!!!!
