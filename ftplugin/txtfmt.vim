@@ -3335,6 +3335,13 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 	endif
 endfu
 
+" TODO: Remove this TODO list...
+"-Probably handle the sync at vsel head a bit differently. (I'm not using a
+" separate function now, and may not need to, but need to decide how much
+" cleanup is appropriate - i.e., how far back to go.)
+"-May need to handle colors a bit differently (more simply). Have been working
+" with the hard case (fmts) almost exclusively.
+"-Implement apply for queued actions object (currently just outputting actions)
 fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 	" TODO: Perhaps have syncing function return context?
 	call s:Vmap_sync_vsel(a:rgn)
