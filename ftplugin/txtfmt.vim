@@ -3336,6 +3336,25 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 	endif
 endfu
 
+" Experimental still - goes with Vmap_apply_vsel_exp
+" Return true iff the region between pos1 and pos2 (exclusive) contains
+" anything hlable, given the specified rgn type and tok idx.
+"
+fu! s:Contains_hlable(rgn, idx, pos1, pos2)
+	"let re_not_at_cur = a:flags =~ 'c' ? '\%#\@!' : ''
+	"let re_hlable_maybe = '\|\(' . re_not_at_cur . b:txtfmt_re_any_ntok . '\&\S\)'
+	"let re_ws_maybe = '\|\(' . re_not_at_cur . '\s\)'
+	"let re_tok = (ex_flags =~ 'v' ? '\%V' : '')
+	"	\. empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
+	"let hlable = 0
+	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!!
+	" TODO: Perhaps put the building of this mask somewhere where it will be
+	" always available, like b:txtfmt_re_any_ntok et al.
+	let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
+	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
+
+endfu
+
 " TODO: Remove this TODO list...
 "-Probably handle the sync at vsel head a bit differently. (I'm not using a
 " separate function now, and may not need to, but need to decide how much
@@ -3438,6 +3457,84 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		let tok_info_prev = tok_info
 		let vsel_cmp_prev = vsel_cmp
 	endwhile
+endfu
+" Experimental version of the above...
+" Difference: Treats the pre/in/post-vsel regions more explicitly (to simplify
+" some logic); also, does only bare minimum (1 tok) syncing pre/post vsel.
+fu! s:Vmap_apply_vsel_exp(rgn, pspec, act_q)
+	" Sync to tok or synstack() prior to vsel.
+	call cursor(line("'<"), col("'<"))
+	let tok_info_prev = s:Search_tok(a:rgn, 'b')
+	if empty(tok_info_prev)
+		" Couldn't find pre-vsel tok within stopline range.
+		if empty(s:Backward_char())
+			" Already at head of buffer
+			let old_idx = 0
+			" Permit match at cursor position on first iter only.
+			" Rationale: Could be sitting on tok.
+			let flags = 'c'
+		else
+			" Use synstack to sync
+			let old_idx = s:Get_cur_rgn_info()[a:rgn]
+		endif
+	else
+		" Sync to found tok
+		let old_idx = tok_info_prev.idx
+	endif
+	" Pre-vsel insertion
+	let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
+	if new_idx != old_idx
+		call a:act_q.add({'typ': 'i', 'pos': getpos("'<")[1:2], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
+		let tok_info_prev = {'idx': new_idx, 'pos': getpos("'<")[1:2]}
+	endif
+	
+	" Process all tokens within vsel...
+	while 1
+		" Look for next tok within vsel and within stopline range
+		let tok_info = s:Search_tok(a:rgn, 'v' . flags)
+		" Clear any temporary flag overrides assigned since prev invocation.
+		let flags = ''
+		if !empty(tok_info)
+			let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
+			" hlable_idx: -1=NA, 0=no hlable, 1=ws hlable, 2=hlable
+			let hlable_idx = !empty(tok_info_prev) ? s:Get_hlable(a:rgn, tok_info_prev.pos, tok_info.pos) : -1
+			" TODO: Take into account whether tok_info_prev.idx contains
+			" underline (ws hlable like bgc)
+			if hlable_idx >= 0 && hlable_idx < (a:rgn == 'bgc' ? 1 : 2)
+				" useless - delete 1st in pair
+				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
+			elseif new_idx == old_idx
+				" redundant - delete 2nd in pair
+				call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
+			elseif new_idx != tok_info.idx
+				" replace
+				call a:act_q.add({'typ': 'r', 'pos': tok_info.pos, 'tok': s:Idx_to_tok(a:rgn, new_idx)})
+			endif
+			let old_idx = tok_info.idx
+			let tok_info_prev = tok_info
+		endif
+	endwhile
+
+	" Append tok to vsel if necessary
+	if new_idx != old_idx
+		call a:act_q.add({'typ': 'a', 'pos': getpos("'>")[1:2], 'tok': s:Idx_to_tok(a:rgn, old_idx)})
+		" Update for post-vsel useless/redundant check.
+		let tok_info_prev = {'idx': old_idx, 'pos': getpos("'>")[1:2]}
+	endif
+
+	" Do useless/redundant check on 1st tok past vsel (if applicable).
+	call cursor(line("'>"), col("'>"))
+	let tok_info = s:Search_tok(a:rgn, '')
+	if !empty(tok_info)
+		let hlable_idx = !empty(tok_info_prev) ? s:Get_hlable(a:rgn, tok_info_prev.pos, tok_info.pos) : -1
+		if hlable_idx >= 0 && hlable_idx < (a:rgn == 'bgc' ? 1 : 2)
+			" useless
+			call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
+		elseif tok_info.pos == old_idx
+			" redundant
+			call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
+		endif
+	endif
 endfu
 
 fu! s:Highlight_selection_impl(pspecs)
