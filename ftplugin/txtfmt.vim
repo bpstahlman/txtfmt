@@ -3337,22 +3337,22 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 endfu
 
 " Experimental still - goes with Vmap_apply_vsel_exp
-" Return true iff the region between pos1 and pos2 (exclusive) contains
-" anything hlable, given the specified rgn type and tok idx.
-"
-fu! s:Contains_hlable(rgn, idx, pos1, pos2)
-	"let re_not_at_cur = a:flags =~ 'c' ? '\%#\@!' : ''
-	"let re_hlable_maybe = '\|\(' . re_not_at_cur . b:txtfmt_re_any_ntok . '\&\S\)'
-	"let re_ws_maybe = '\|\(' . re_not_at_cur . '\s\)'
-	"let re_tok = (ex_flags =~ 'v' ? '\%V' : '')
-	"	\. empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
-	"let hlable = 0
-	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!!
-	" TODO: Perhaps put the building of this mask somewhere where it will be
-	" always available, like b:txtfmt_re_any_ntok et al.
+" Return true iff the region between pos1 and pos2 (both ends exclusive)
+" contains anything hlable, given the specified rgn type and tok idx.
+" Tested: 08Jan2015
+fu! S_Contains_hlable(rgn, idx, pos1, pos2)
+	" TODO: Put the building of this mask somewhere where it will be always
+	" available, like b:txtfmt_re_any_ntok et al.
 	let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
 	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
-
+	let hlable = b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
+	" Assumption: pos1 < pos2
+	" Note: \%>123l refers to the *start* byte index of a multi-byte char.
+	" Template: (l1 & >c1 | >l1) & (l2 & <c2 | <l2)
+	let [l1, c1] = a:pos1
+	let [l2, c2] = a:pos2
+	let re = '\%(\%(\%' . l1 . 'l\&\%>' . c1 . 'c\|\%>' . l1 . 'l\)\&\%(\%' . l2 . 'l\&\%<' . c2 . 'c\|\%<' . l2 . 'l\)\)'
+	return !!search(re . hlable, 'nc')
 endfu
 
 " TODO: Remove this TODO list...
