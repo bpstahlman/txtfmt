@@ -3381,7 +3381,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		" Sync to found tok
 		let old_idx = tok_info_prev.idx
 	endif
-	let new_idx = old_idx
+	let [new_idx, new_idx_prev] = [-1, -1]
 	let vsel_cmp_prev = -1
 	while 1
 		let new_idx_next = -1
@@ -3389,14 +3389,25 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		let tok_info = s:Search_tok(a:rgn, '' . flags)
 		" Clear any temporary flag overrides assigned since prev invocation.
 		let flags = ''
+		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
+		if vsel_cmp_prev < 0 && vsel_cmp >= 0
+			" Entered or skipped over vsel
+			" Is tok needed at head?
+			let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
+			if new_idx != old_idx
+				call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
+			endif
+		endif
 		if !empty(tok_info)
 			" Found tok.
-			let vsel_cmp = s:Cmp_vsel()
 			if vsel_cmp == 0 " within vsel
 				" Apply pspec to tok
-				" TODO: Eventually, the vsel_cmp == 0 test may be unnecessary
-				" due to begin context.
+				" Assumption: new_idx has been set.
 				let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
+				" TODO: Consider combining this with useless/redundant as
+				" follows: Just calculate the next value, but don't replace
+				" until we've determined we should (would need to check
+				" vsel_cmp == 0, which indicates replacement maybe in order)
 				if new_idx_next != tok_info.idx && new_idx_next != new_idx
 					" Replace existing tok with new.
 					" TODO: This should never need to be done for non-fmts, as
@@ -3404,37 +3415,18 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 					call a:act_q.add({'typ': 'r', 'pos': tok_info.pos, 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
 				endif
 			endif
+			" TODO: Is this correct?
 			let old_idx_next = tok_info.idx
-		else
-			" Effectively past end of vsel
-			let vsel_cmp = 1
-		endif
-		" Whether tok was found or not, do entry/exit logic...
-		" TODO: Considering handling this more explicitly: i.e., using the new
-		" 'v' extra flag to Search_tok for the body of the loop, and handling
-		" post vsel processing separately (as pre vsel is now).
-		if vsel_cmp_prev < 0 && vsel_cmp >= 0
-			" Entered or skipped over vsel
-			" Is tok needed at head?
-			let idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
-			if idx != old_idx
-				call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, idx)})
-			endif
-			" Note: If we landed on a tok that updated new_idx_next, the tok
-			" just added at vsel head is earlier and has no effect.
-			if new_idx_next == -1
-				let new_idx_next = idx
-			endif
 		endif
 		if vsel_cmp_prev < 1 && vsel_cmp == 1
 			" Exited or skipped over vsel
 			" Is tok needed at tail?
-			if (new_idx_next == -1 ? new_idx : new_idx_next) != old_idx
+			if new_idx != old_idx
 				call a:act_q.add({'typ': 'a', 'pos': [line("'>"), col("'>")], 'tok': s:Idx_to_tok(a:rgn, old_idx)})
 			endif
-			" Whether tok appended to vsel or not, new/old have re-converged.
-			let new_idx_next = -1
 		endif
+		" TODO: Can this be moved up to where we do the apply (and combined
+		" with it)?
 		if !empty(tok_info)
 			" Check for useless/redundant toks even if found tok outside vsel.
 			" Note: Can delete a token queued for replacement above.
@@ -3442,7 +3434,9 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 				\tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc'))
 				" Delete 1st in useless tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
-			elseif (vsel_cmp == 0 ? new_idx_next : tok_info.idx) == new_idx
+		" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			elseif vsel_cmp == 0 && new_idx_next == new_idx
+				\|| vsel_cmp != 0 && tok_info.idx == old_idx
 				" Delete 2nd in redundant tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
 			endif
@@ -3453,7 +3447,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		endif
 		" Update for next iteration.
 		let old_idx = old_idx_next
-		let new_idx = new_idx_next != -1 ? new_idx_next : old_idx
+		let new_idx = new_idx_next
 		let tok_info_prev = tok_info
 		let vsel_cmp_prev = vsel_cmp
 	endwhile
