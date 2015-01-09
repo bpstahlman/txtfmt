@@ -3340,6 +3340,9 @@ endfu
 " Return true iff the region between pos1 and pos2 (both ends exclusive)
 " contains anything hlable, given the specified rgn type and tok idx.
 " Tested: 08Jan2015
+" TODO: Probably make inclusive, or even provide option (though inclusive
+" should always work, since when we're sitting on tok, we conceptually would
+" want exclusive, but will get it naturally since toks are never hlable).
 fu! S_Contains_hlable(rgn, idx, pos1, pos2)
 	" TODO: Put the building of this mask somewhere where it will be always
 	" available, like b:txtfmt_re_any_ntok et al.
@@ -3381,7 +3384,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		" Sync to found tok
 		let old_idx = tok_info_prev.idx
 	endif
-	let [new_idx, new_idx_prev] = [-1, -1]
+	let [new_idx, new_idx_next] = [-1, -1]
 	let vsel_cmp_prev = -1
 	while 1
 		let new_idx_next = -1
@@ -3393,30 +3396,32 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		if vsel_cmp_prev < 0 && vsel_cmp >= 0
 			" Entered or skipped over vsel
 			" Is tok needed at head?
+			" PROBLEM!!!! useless test isn't currently being performed for tok
+			" inserted at head.
+			" TODO: Useless test with prev tok (if applicable)
+			if !empty(tok_info_prev) && useless_tok_with_prev
+				" Delete useless tok prior to vsel
+				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
+			endif
+
 			let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
 			if new_idx != old_idx
-				call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
-			endif
-		endif
-		if !empty(tok_info)
-			" Found tok.
-			if vsel_cmp == 0 " within vsel
-				" Apply pspec to tok
-				" Assumption: new_idx has been set.
-				let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
-				" TODO: Consider combining this with useless/redundant as
-				" follows: Just calculate the next value, but don't replace
-				" until we've determined we should (would need to check
-				" vsel_cmp == 0, which indicates replacement maybe in order)
-				if new_idx_next != tok_info.idx && new_idx_next != new_idx
-					" Replace existing tok with new.
-					" TODO: This should never need to be done for non-fmts, as
-					" it will just be deleted below.
-					call a:act_q.add({'typ': 'r', 'pos': tok_info.pos, 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
+				" TODO: Useless test with cur (found) tok (if applicable)
+				" CAVEAT: Ensure cur tok is not current (think first iter 'c' flag)
+				if !empty(tok_info) && tok_info.pos != getpos('.')[1:2] && not_useless_tok_with_next
+					call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
+					let tok_info_prev = {}
+					" Note that if this is useless, we don't add, in which
+					" case we *should* perform normal useless check with
+					" unmodified tok_info_prev.
+					let skip_useless_check = 1 " TODO: Init approprately each iter
 				endif
 			endif
-			" TODO: Is this correct?
-			let old_idx_next = tok_info.idx
+		endif
+		if !empty(tok_info) && vsel_cmp == 0
+			" Found tok within vsel
+			" Just calculate for now: defer replacement.
+			let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
 		endif
 		if vsel_cmp_prev < 1 && vsel_cmp == 1
 			" Exited or skipped over vsel
@@ -3425,20 +3430,21 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 				call a:act_q.add({'typ': 'a', 'pos': [line("'>"), col("'>")], 'tok': s:Idx_to_tok(a:rgn, old_idx)})
 			endif
 		endif
-		" TODO: Can this be moved up to where we do the apply (and combined
-		" with it)?
 		if !empty(tok_info)
+			" TODO: New hlable logic, which uses Get_hlable()...
+			let hlable = ???
 			" Check for useless/redundant toks even if found tok outside vsel.
-			" Note: Can delete a token queued for replacement above.
-			if !empty(tok_info_prev) && (
+			if !skip_useless_check && !empty(tok_info_prev) && (
 				\tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc'))
 				" Delete 1st in useless tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
-		" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 			elseif vsel_cmp == 0 && new_idx_next == new_idx
 				\|| vsel_cmp != 0 && tok_info.idx == old_idx
 				" Delete 2nd in redundant tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
+			elseif vsel_cmp == 0 && new_idx_next != tok_info.idx && new_idx_next != new_idx
+				" Replace existing tok with new.
+				call a:act_q.add({'typ': 'r', 'pos': tok_info.pos, 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
 			endif
 		endif
 		" Break unless we found a tok that wasn't past vsel.
@@ -3446,7 +3452,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			break
 		endif
 		" Update for next iteration.
-		let old_idx = old_idx_next
+		let old_idx = tok_info.idx
 		let new_idx = new_idx_next
 		let tok_info_prev = tok_info
 		let vsel_cmp_prev = vsel_cmp
