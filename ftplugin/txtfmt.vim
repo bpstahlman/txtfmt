@@ -3367,6 +3367,7 @@ endfu
 "-Implement apply for queued actions object (currently just printing actions)
 fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 	" Sync to tok or synstack() prior to vsel.
+	" TODO: Need to go back further for cleanup...
 	" TODO: Perhaps implement syncing function that returns context?
 	call cursor(line("'<"), col("'<"))
 	let tok_info_prev = s:Search_tok(a:rgn, 'b')
@@ -3384,37 +3385,45 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		" Sync to found tok
 		let old_idx = tok_info_prev.idx
 	endif
+	" new_<...> vars set only when vsel_cmp == 0
 	let [new_idx, new_idx_next] = [-1, -1]
 	let vsel_cmp_prev = -1
 	while 1
 		let new_idx_next = -1
+		let skip_useless_check = 0
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, '' . flags)
 		" Clear any temporary flag overrides assigned since prev invocation.
 		let flags = ''
 		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
-		if vsel_cmp_prev < 0 && vsel_cmp >= 0
+		" CAVEAT: Ensure cur tok is not first within vsel (think first
+		" iter 'c' flag); if so, normal vsel_cmp == 0 handling will take care
+		" of it.
+		if vsel_cmp_prev < 0 && vsel_cmp >= 0 && tok_info.pos != getpos("'<")[1:2]
 			" Entered or skipped over vsel
 			" Is tok needed at head?
-			" PROBLEM!!!! useless test isn't currently being performed for tok
-			" inserted at head.
-			" TODO: Useless test with prev tok (if applicable)
-			if !empty(tok_info_prev) && useless_tok_with_prev
-				" Delete useless tok prior to vsel
+			" Test for useless tok prior to vsel head.
+			if !empty(tok_info_prev) && !s:Get_hlable(a:rgn, tok_info_prev.pos, getpos("'<")[1:2])
+				" Delete useless tok prior to vsel.
+				" Design Decision: If its effect is needed, we'll insert it
+				" later at vsel head.
 				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
 			endif
-
+			" Determine idx needed at vsel head.
 			let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
 			if new_idx != old_idx
-				" TODO: Useless test with cur (found) tok (if applicable)
-				" CAVEAT: Ensure cur tok is not current (think first iter 'c' flag)
-				if !empty(tok_info) && tok_info.pos != getpos('.')[1:2] && not_useless_tok_with_next
+				" Make sure tok we're considering inserting at vsel head will
+				" not be useless with tok landed on. (If it would, don't add,
+				" and leave tok_info_prev alone, as it may be needed for
+				" subsequent useless check.)
+				if !empty(tok_info) && s:Get_hlable(a:rgn, getpos("'<")[1:2], tok_info.pos)
 					call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
-					let tok_info_prev = {}
+					" Skip useless check this iteration.
 					" Note that if this is useless, we don't add, in which
 					" case we *should* perform normal useless check with
 					" unmodified tok_info_prev.
 					let skip_useless_check = 1 " TODO: Init approprately each iter
+					let tok_info_prev = {}
 				endif
 			endif
 		endif
@@ -3431,11 +3440,9 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			endif
 		endif
 		if !empty(tok_info)
-			" TODO: New hlable logic, which uses Get_hlable()...
-			let hlable = ???
 			" Check for useless/redundant toks even if found tok outside vsel.
-			if !skip_useless_check && !empty(tok_info_prev) && (
-				\tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc'))
+			if !skip_useless_check && !empty(tok_info_prev)
+				\&& !s:Get_hlable(a:rgn, tok_info_prev.pos, tok_info.pos)
 				" Delete 1st in useless tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
 			elseif vsel_cmp == 0 && new_idx_next == new_idx
@@ -3448,12 +3455,15 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			endif
 		endif
 		" Break unless we found a tok that wasn't past vsel.
+		" TODO: Keep going number of bytes past vsel.
 		if empty(tok_info) || vsel_cmp == 1
 			break
 		endif
 		" Update for next iteration.
+		" TODO: old_idx currently needed only because tok_info may not be set
+		" on first iter. Change that? Could set idx and leave pos empty...
 		let old_idx = tok_info.idx
-		let new_idx = new_idx_next
+		let new_idx = vsel_cmp == 0 ? new_idx_next : -1
 		let tok_info_prev = tok_info
 		let vsel_cmp_prev = vsel_cmp
 	endwhile
