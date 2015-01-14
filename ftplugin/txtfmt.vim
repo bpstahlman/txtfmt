@@ -3360,21 +3360,52 @@ endfu
 
 " Return:
 " {beg: [lnum, col], end: [lnum, col]}
+" TODO: Generalize! I.e., a function that returns [lnum,col] given the
+" following:
+" startpos, direction, bytedist
 fu! S_Get_vsel_sync_extents()
 	let ret = {}
-	" UNDER CONSTRUCTION!!!!!!
 	" TODO: Make this configurable? Or at least define elsewhere...
-	let BYTE_SYNC_DIST = 500
+	let BYTE_SYNC_DIST = 50
 	let cfg = {
-		\'beg': {'loc': "'<", 'sgn': -1, 'minmax': function('max')},
-		\'end': {'loc': "'>", 'sgn':  1, 'minmax': function('min')}}
+		\'beg': {'loc': "'<", 'sgn': -1, 'minmax_val': 1,                        'minmax': function('max')},
+		\'end': {'loc': "'>", 'sgn':  1, 'minmax_val': line2byte(line('$') + 1), 'minmax': function('min')}}
 	for be in ['beg', 'end']
 		let lnum = line(cfg[be].loc)
 		let bi = line2byte(lnum) + col(cfg[be].loc) - 1
-		let bi_stop = cfg[be].minmax([1, bi + cfg[be].sgn * BYTE_SYNC_DIST])
-		let ret[be] = [byte2line(bi_stop), bi_stop - line2byte(lnum_stop) + 1]
+		let bi_stop = cfg[be].minmax([cfg[be].minmax_val, bi + cfg[be].sgn * BYTE_SYNC_DIST])
+		let lnum_stop = byte2line(bi_stop)
+		let bi_stop_bol = line2byte(lnum_stop)
+		let ret[be] = [lnum_stop, bi_stop - bi_stop_bol + 1]
 	endfor
 	return ret
+endfu
+
+" Inputs:
+" beg - [lnum, col] denoting beginning of region
+" end - [lnum, col] denoting end of region
+" ei  - 2 char string of i's and x's indicating inclusive/exclusive nature of
+"       region beg/end, respectively.
+fu! S_Make_pos_zwa(beg, end, ei)
+	" Assumption: beg < end
+	" Note: \%>123l refers to the *start* byte index of a multi-byte char.
+	" Exclusive Template: (l1 & >c1 | >l1) & (l2 & <c2 | <l2)
+	" Note: To make the exclusive template inclusive, make the following
+	" substitutions:
+	" >c1 => (c1 | >c1)
+	" <c2 => (c2 | <c2)
+	let lcs = [a:beg, a:end]
+	let res = []
+	for i in [0, 1]
+		let [l, c] = lcs[i]
+		let gtlt = i == 0 ? '>' : '<'
+		let re_col = '\%' . gtlt . c . 'c'
+		if a:ei[i] == 'i' " inclusive
+			let re_col = '\%(\%' . c . 'c\|' . re_col . '\)'
+		endif
+		call add(res, '\%(\%' . l . 'l\&' . re_col . '\|\%' . gtlt . l . 'l\)')
+	endfor
+	return join(res, '\&')
 endfu
 
 " TODO: Remove this TODO list...
@@ -3488,7 +3519,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		let in_vsel_prev = in_vsel
 	endwhile
 endfu
-fu! s:Vmap_apply_vsel_prev(rgn, pspec, act_q)
+fu! s:Vmap_apply_vsel_usesVselCmp(rgn, pspec, act_q)
 	"let sync_bounds = {'beg': 
 	" Sync to tok or synstack() prior to vsel.
 	" TODO: Need to go back further for cleanup...
@@ -3595,7 +3626,8 @@ endfu
 " Experimental version of the above...
 " Difference: Treats the pre/in/post-vsel regions more explicitly (to simplify
 " some logic); also, does only bare minimum (1 tok) syncing pre/post vsel.
-fu! s:Vmap_apply_vsel_exp(rgn, pspec, act_q)
+" Variation: Does NO cleanup.
+fu! s:Vmap_apply_vsel_noCleanup(rgn, pspec, act_q)
 	" Sync to tok or synstack() prior to vsel.
 	call cursor(line("'<"), col("'<"))
 	let tok_info_prev = s:Search_tok(a:rgn, 'b')
