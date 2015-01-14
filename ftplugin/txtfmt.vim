@@ -3374,20 +3374,6 @@ fu! S_Get_vsel_sync_extents()
 		let bi_stop = cfg[be].minmax([1, bi + cfg[be].sgn * BYTE_SYNC_DIST])
 		let ret[be] = [byte2line(bi_stop), bi_stop - line2byte(lnum_stop) + 1]
 	endfor
-	" Vsel beg
-	let lnum = line("'<")
-	let bi = line2byte(lnum) + col("'<") - 1
-	let bi_stop = max([1, bi - BYTE_SYNC_DIST])
-	let lnum_stop = byte2line(bi_stop)
-	let col_stop = bi_stop - line2byte(lnum_stop) + 1
-
-	" vsel end
-	let lnum = line("'>")
-	let bi = line2byte(lnum) + col("'>") - 1
-	let bi_stop = min([line('$'), bi + BYTE_SYNC_DIST])
-	let lnum_stop = byte2line(bi_stop)
-	let col_stop = bi_stop - line2byte(lnum_stop) + 1
-
 	return ret
 endfu
 
@@ -3399,6 +3385,110 @@ endfu
 " with the hard case (fmts) almost exclusively.
 "-Implement apply for queued actions object (currently just printing actions)
 fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
+	" Sync to tok or synstack() prior to vsel.
+	call cursor(line("'<"), col("'<"))
+	" TODO: byte-distance constraint.
+	let tok_info_prev = s:Search_tok(a:rgn, 'b')
+	if empty(tok_info_prev)
+		" Couldn't find pre-vsel tok within stopline range.
+		if empty(s:Backward_char())
+			" Already at head of buffer
+			let old_idx = 0
+			" Permit match at cursor position (first iter only)
+			let flags = 'c'
+		else
+			let old_idx = s:Get_cur_rgn_info()[a:rgn]
+		endif
+	else
+		" Sync to found tok
+		let old_idx = tok_info_prev.idx
+	endif
+	" new_<...> vars set only when in_vsel
+	let new_idx = -1
+	let in_vsel = 0
+	" TODO: Refactor, pulling entered logic out of loop and forgoing loop if
+	" no toks in vsel. Naturally, exit processing would occur outside loop.
+	while 1
+		let new_idx_next = -1
+		let skip_useless_check = 0
+		" Look for next tok within stopline range (not necessarily in vsel)
+		let tok_info = s:Search_tok(a:rgn, '' . flags)
+		" Clear any temporary flag overrides assigned since prev search.
+		let flags = ''
+		let in_vsel = empty(tok_info) ? 0 : s:Cmp_vsel() == 0
+		" CAVEAT: Ensure cur tok is not first within vsel (think first
+		" iter 'c' flag); if so, normal in_vsel handling will take care of it.
+		" TODO: Consider pulling these outside loop (and doing first search
+		" prior to loop and not entering if no toks in vsel).
+		if !in_vsel_prev && in_vsel && tok_info.pos != getpos("'<")[1:2]
+			" Entered or skipped over vsel
+			" Is tok needed at head?
+			" Test for useless tok prior to vsel head.
+			if !empty(tok_info_prev) && !s:Get_hlable(a:rgn, tok_info_prev.pos, getpos("'<")[1:2])
+				" Delete useless tok prior to vsel.
+				" Design Decision: If its effect is needed, we'll insert it
+				" later at vsel head.
+				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
+			endif
+			" Determine idx needed at vsel head.
+			let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
+			if new_idx != old_idx
+				" Make sure tok we're considering inserting at vsel head will
+				" not be useless with tok landed on. (If it would, don't add,
+				" and leave tok_info_prev alone, as it may be needed for
+				" subsequent useless check.)
+				if !empty(tok_info) && s:Get_hlable(a:rgn, getpos("'<")[1:2], tok_info.pos)
+					call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
+					" Skip useless check this iteration.
+					" Note that if this is useless, we don't add, in which
+					" case we *should* perform normal useless check with
+					" unmodified tok_info_prev.
+					let skip_useless_check = 1 " TODO: Init approprately each iter
+					let tok_info_prev = {}
+				endif
+			endif
+		endif
+		if !empty(tok_info) && in_vsel
+			" Found tok within vsel
+			" Just calculate for now: defer replacement.
+			let new_idx_next = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
+		endif
+		if !in_vsel
+			" Exited or skipped over vsel
+			" Is tok needed at tail?
+			if new_idx != old_idx
+				call a:act_q.add({'typ': 'a', 'pos': [line("'>"), col("'>")], 'tok': s:Idx_to_tok(a:rgn, old_idx)})
+			endif
+		endif
+		if !empty(tok_info)
+			" Check for useless/redundant toks even if found tok is past vsel.
+			if !skip_useless_check && !empty(tok_info_prev)
+				\&& !s:Get_hlable(a:rgn, tok_info_prev.pos, tok_info.pos)
+				" Delete 1st in useless tok pair.
+				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
+			elseif in_vsel && new_idx_next == new_idx
+				\|| !in_vsel && tok_info.idx == old_idx
+				" Delete 2nd in redundant tok pair.
+				call a:act_q.add({'typ': 'd', 'pos': tok_info.pos})
+			elseif in_vsel && new_idx_next != tok_info.idx && new_idx_next != new_idx
+				" Replace existing tok with new.
+				call a:act_q.add({'typ': 'r', 'pos': tok_info.pos, 'tok': s:Idx_to_tok(a:rgn, new_idx_next)})
+			endif
+		endif
+		" Break unless we found a tok that wasn't past vsel.
+		if empty(tok_info) || !in_vsel
+			break
+		endif
+		" Update for next iteration.
+		" TODO: old_idx currently needed only because tok_info may not be set
+		" on first iter. Change that? Could set idx and leave pos empty...
+		let old_idx = tok_info.idx
+		let new_idx = new_idx_next
+		let tok_info_prev = tok_info
+		let in_vsel_prev = in_vsel
+	endwhile
+endfu
+fu! s:Vmap_apply_vsel_prev(rgn, pspec, act_q)
 	"let sync_bounds = {'beg': 
 	" Sync to tok or synstack() prior to vsel.
 	" TODO: Need to go back further for cleanup...
@@ -3489,6 +3579,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			endif
 		endif
 		" Break unless we found a tok that wasn't past vsel.
+		" TODO: Keep going number of bytes past vsel.
 		if empty(tok_info) || vsel_cmp == 1
 			break
 		endif
