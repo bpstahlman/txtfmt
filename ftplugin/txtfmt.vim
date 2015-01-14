@@ -3358,6 +3358,39 @@ fu! S_Contains_hlable(rgn, idx, pos1, pos2)
 	return !!search(re . hlable, 'nc')
 endfu
 
+" Return:
+" {beg: [lnum, col], end: [lnum, col]}
+fu! S_Get_vsel_sync_extents()
+	let ret = {}
+	" UNDER CONSTRUCTION!!!!!!
+	" TODO: Make this configurable? Or at least define elsewhere...
+	let BYTE_SYNC_DIST = 500
+	let cfg = {
+		\'beg': {'loc': "'<", 'sgn': -1, 'minmax': function('max')},
+		\'end': {'loc': "'>", 'sgn':  1, 'minmax': function('min')}}
+	for be in ['beg', 'end']
+		let lnum = line(cfg[be].loc)
+		let bi = line2byte(lnum) + col(cfg[be].loc) - 1
+		let bi_stop = cfg[be].minmax([1, bi + cfg[be].sgn * BYTE_SYNC_DIST])
+		let ret[be] = [byte2line(bi_stop), bi_stop - line2byte(lnum_stop) + 1]
+	endfor
+	" Vsel beg
+	let lnum = line("'<")
+	let bi = line2byte(lnum) + col("'<") - 1
+	let bi_stop = max([1, bi - BYTE_SYNC_DIST])
+	let lnum_stop = byte2line(bi_stop)
+	let col_stop = bi_stop - line2byte(lnum_stop) + 1
+
+	" vsel end
+	let lnum = line("'>")
+	let bi = line2byte(lnum) + col("'>") - 1
+	let bi_stop = min([line('$'), bi + BYTE_SYNC_DIST])
+	let lnum_stop = byte2line(bi_stop)
+	let col_stop = bi_stop - line2byte(lnum_stop) + 1
+
+	return ret
+endfu
+
 " TODO: Remove this TODO list...
 "-Probably handle the sync at vsel head a bit differently. (I'm not using a
 " separate function now, and may not need to, but need to decide how much
@@ -3366,6 +3399,7 @@ endfu
 " with the hard case (fmts) almost exclusively.
 "-Implement apply for queued actions object (currently just printing actions)
 fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
+	"let sync_bounds = {'beg': 
 	" Sync to tok or synstack() prior to vsel.
 	" TODO: Need to go back further for cleanup...
 	" TODO: Perhaps implement syncing function that returns context?
@@ -3455,7 +3489,6 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			endif
 		endif
 		" Break unless we found a tok that wasn't past vsel.
-		" TODO: Keep going number of bytes past vsel.
 		if empty(tok_info) || vsel_cmp == 1
 			break
 		endif
@@ -3494,6 +3527,7 @@ fu! s:Vmap_apply_vsel_exp(rgn, pspec, act_q)
 	" Pre-vsel insertion
 	let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
 	if new_idx != old_idx
+		" TODO: Process 1st tok within vsel (if any).
 		call a:act_q.add({'typ': 'i', 'pos': getpos("'<")[1:2], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
 		let tok_info_prev = {'idx': new_idx, 'pos': getpos("'<")[1:2]}
 	endif
