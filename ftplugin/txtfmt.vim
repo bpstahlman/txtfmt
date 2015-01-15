@@ -3381,12 +3381,28 @@ fu! S_Get_vsel_sync_extents()
 	return ret
 endfu
 
+fu! S_Add_byte_offset(pos, off)
+	let [lnum, col] = a:pos
+	let bi = line2byte(lnum) + col - 1
+	let bi_tgt = bi + off
+	let bi_tgt = a:off < 0
+		\? max([1, bi_tgt])
+		\: min([bi_tgt, line2byte(line('$') + 1)])
+	let lnum_tgt = byte2line(bi_tgt)
+
+	let bi_tgt_bol = line2byte(lnum_tgt)
+	let ret[be] = [lnum_tgt, bi_tgt - bi_tgt_bol + 1]
+endfu
+
+" Generate and return a zero-width assertion based on the input beg/end
+" positions.
 " Inputs:
-" beg - [lnum, col] denoting beginning of region
-" end - [lnum, col] denoting end of region
-" ei  - 2 char string of i's and x's indicating inclusive/exclusive nature of
-"       region beg/end, respectively.
-fu! S_Make_pos_zwa(beg, end, ei)
+" cfg: {
+"   [beg|end]: {
+"     pos: [lnum, col], %% position of region endpt
+"     [inc]: 0|1        %% 1 if region endpt inclusive (default 0)
+"   },
+fu! S_Make_pos_zwa(cfg)
 	" Assumption: beg < end
 	" Note: \%>123l refers to the *start* byte index of a multi-byte char.
 	" Exclusive Template: (l1 & >c1 | >l1) & (l2 & <c2 | <l2)
@@ -3394,16 +3410,17 @@ fu! S_Make_pos_zwa(beg, end, ei)
 	" substitutions:
 	" >c1 => (c1 | >c1)
 	" <c2 => (c2 | <c2)
-	let lcs = [a:beg, a:end]
 	let res = []
-	for i in [0, 1]
-		let [l, c] = lcs[i]
-		let gtlt = i == 0 ? '>' : '<'
-		let re_col = '\%' . gtlt . c . 'c'
-		if a:ei[i] == 'i' " inclusive
-			let re_col = '\%(\%' . c . 'c\|' . re_col . '\)'
+	for [side, cfg] in items(a:cfg)
+		if side =~ 'beg\|end'
+			let [l, c] = cfg.pos
+			let gtlt = side == 'beg' ? '>' : '<'
+			let re_col = '\%' . gtlt . c . 'c'
+			if has_key(cfg, 'inc') && cfg.inc
+				let re_col = '\%(\%' . c . 'c\|' . re_col . '\)'
+			endif
+			call add(res, '\%(\%' . l . 'l\&' . re_col . '\|\%' . gtlt . l . 'l\)')
 		endif
-		call add(res, '\%(\%' . l . 'l\&' . re_col . '\|\%' . gtlt . l . 'l\)')
 	endfor
 	return join(res, '\&')
 endfu
