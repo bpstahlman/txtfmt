@@ -2919,12 +2919,11 @@ fu! s:Convert_string_to_binary_mask(str)
 	return mask
 endfu
 " >>>
-" <<< Function: s:Get_cur_tok
-" Synopsis: Return an object representing the token under the cursor.
+" <<< Function: s:Get_tok_info
+" Synopsis: Return an object representing the input token.
 " Inputs:
-" skip_validation - true means caller has already verified cursor is on an
-"   (unescaped) token.
-" Return: Empty object if no tok under cursor, else
+" c - token character
+" Return: Empty object if input char not a token, else
 " {
 "   rgn: 'fmt'|'clr'|'bgc',
 "   %% Note that both color indices and fmt masks are actually indices.
@@ -2934,18 +2933,11 @@ endfu
 " index correlating with color index as follows:
 " color index = string idx + 1
 " Example: 1st char in mask string corresponds to color 1
-" Tested: 28Dec2014
-fu! s:Get_cur_tok(skip_validation)
+" Tested: 28Dec2014 (but modified since)
+fu! s:Get_tok_info(c)
 	let ret = {}
-	if !a:skip_validation
-		" Make sure we're on a (non-escaped) tok.
-		if !search('\%#' . b:txtfmt_re_any_tok, 'nc')
-			return ret
-		endif
-	endif
-	" Get char under cursor.
-	let c = s:Get_char()
-	let c_nr = char2nr(c)
+	" Get char code.
+	let c_nr = char2nr(a:c)
 	" Determine tok type
 	" Start checking at final sub-region (clr < fmt < bgc)
 	if b:txtfmt_cfg_bgcolor && c_nr >= b:txtfmt_bgc_first_tok && c_nr < b:txtfmt_bgc_first_tok + b:txtfmt_num_colors
@@ -3008,7 +3000,7 @@ endfu
 "     Design Decision: Don't bother validating, as use of others would be
 "     internal error.
 " [zwa]
-"     String created with s_Make_pos_zwa(), represents one or more
+"     String created with s:Make_pos_zwa(), represents one or more
 "     zero-width-assertions to be used in search.
 "     
 " Return: On failure, an empty Dictionary, else...
@@ -3027,90 +3019,15 @@ fu! s:Search_tok(rgn, flags, ...)
 	let ret = {}
 	" Process optional zero-width-assertion.
 	let zwa = a:0 > 2 ? a:3 : ''
-	" Note: The following 'maybe' patterns define subgroups, but will be
-	" cleared as soon as a match is confirmed.
-	" Note: The cursor position assertions are used to prevent hlable matches
-	" at the cursor position when the 'c' flag is set.
-	" Rationale: 'c' flag applies only to token matches.
-	" regex matching something hlable for *any* rgn type (excludes ws)
 	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
-	let [lnum, col, submatch] = searchpos(re_tok, a:flags . 'pW')
-	" TODO: UNDER CONSTRUCTION!!!!! Probably change Get_cur_tok to Get_tok
-	" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-	" (analogous to recent change to Get_cur_char).
-	" Rationale: Will let me handle the 'n' flag without doing a pos
-	" save/restore.
-	let tok_info = s:Get_cur_tok(1)
-	let ret = {'pos': [lnum, col], 'hlable': hlable, 'rgn': tok_info.rgn, 'idx': tok_info.idx}
-	return ret
-endfu
-" >>>
-" Function: s:Search_tok_orig <<<
-" Inputs:
-" rgn
-"     Desired region type: one of the following: 'clr', 'fmt', 'bgc', ''
-"     Note: Empty string means any rgn type.
-" flags
-"     Pass-through for the following Vim search() flags:
-"     b - search backwards
-"     n - don't move cursor
-"     c - allow match (of token) at cursor pos
-"     Design Decision: Don't bother validating, as use of others would be
-"     internal error.
-" [ex_flags]
-"     Flags distinct from Vim search() flags.
-"     v - tok must be within visual region
-"     
-" Return: On failure, an empty Dictionary, else...
-" {
-"   %% position of tok match
-"   pos: [lnum, col],
-"   %% indicates presence of hlable chars on way to found tok:
-"   %% 0=nothing hlable, 1=whitespace (bgc hlable), 2=hlable in all rgns
-"   hlable: 0|1|2,
-"   %% type of token found
-"   %% Note: Redundant with a:rgn if the latter is non-empty.
-"   rgn: 'fmt'|'clr'|'bgc'
-"   %% value representing the tok found
-"   idx: <color-idx>|<fmt-mask>
-" }
-" Post Condition: Unless 'n' flag supplied, will be positioned on any found
-" token.
-fu! s:Search_tok_orig(rgn, flags, ...)
-	let ret = {}
-	" Process optional extra flags arg.
-	let ex_flags = a:0 > 2 ? a:3 : ''
-	" Note: The following 'maybe' patterns define subgroups, but will be
-	" cleared as soon as a match is confirmed.
-	" Note: The cursor position assertions are used to prevent hlable matches
-	" at the cursor position when the 'c' flag is set.
-	" Rationale: 'c' flag applies only to token matches.
-	" regex matching something hlable for *any* rgn type (excludes ws)
-	let re_not_at_cur = a:flags =~ 'c' ? '\%#\@!' : ''
-	let re_hlable_maybe = '\|\(' . re_not_at_cur . b:txtfmt_re_any_ntok . '\&\S\)'
-	let re_ws_maybe = '\|\(' . re_not_at_cur . '\s\)'
-	let re_tok = (ex_flags =~ 'v' ? '\%V' : '')
-		\. empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
-	let hlable = 0
-	while 1
-		let [lnum, col, submatch] = searchpos('\(' . re_tok . '\)' . re_hlable_maybe . re_ws_maybe, a:flags . 'pW')
-		" CAVEAT!: submatch is 2-based, with 1 being reserved for the case in
-		" which no paren groups match but pattern does.
-		if submatch == 2 " Token
-			let tok_info = s:Get_cur_tok(1)
-			let ret = {'pos': [lnum, col], 'hlable': hlable, 'rgn': tok_info.rgn, 'idx': tok_info.idx}
-			break
-		elseif submatch == 3 " hlable in all rgns
-			let hlable = 2
-			let re_hlable_maybe = ''
-			let re_ws_maybe = ''
-		elseif submatch == 4 " ws hlable in bgc only
-			let hlable = 1
-			let re_ws_maybe = ''
-		else
-			break
-		endif
-	endwhile
+	" Note: Apply_zwa can handle empty zwa.
+	let [lnum, col] = searchpos(s:Apply_zwa(zwa, re_tok), a:flags . 'W')
+	if lnum
+		" Found a tok.
+		" TODO: Any advantage to omitting pos list when it's cursor?
+		let tok_info = s:Get_tok_info(s:Get_char([lnum, col]))
+		let ret = {'pos': [lnum, col], 'rgn': tok_info.rgn, 'idx': tok_info.idx}
+	endif
 	return ret
 endfu
 " >>>
@@ -3302,79 +3219,6 @@ fu! s:Cmp_vsel()
 	return s:Is_in_vsel() ? 0 : s:Is_pre_vsel() ? -1 : 1
 endfu
 
-" Synopsis: Remove (queued) any redundant/useless tokens (of specified rgn
-" type) preceding vsel, and return a value indicating the tok in effect (also
-" for specified rgn type) at head of vsel.
-" Note: A tok *within* the vsel (even at head) has no impact on return.
-" Inputs:
-" rgn
-"   type of region of interest ('fmt'|'clr'|'bgc')
-" act_q
-"   Queue of ordered actions, created by Create_actions(), used to queue tok
-"   removal
-" Post Conditions: Any redundant or useless toks preceding region have been
-" queued for removal.
-" Return: fmt-mask or color-idx in effect at start of vsel
-" TODO: Perhaps rename this...
-fu! s:Vmap_apply_pre_vsel(rgn, act_q)
-	let ret = {}
-	let prev_tok_info = {}
-	call cursor(line("'<"), col("'<"))
-	" Continue searching until stop conditions are met: i.e., till either we
-	" run out of tokens of desired type (searching backwards within sync
-	" region) or we stop finding useless/redundant tokens in need of removal.
-	let cont = 1
-	while cont
-		let cont = 0
-		let tok_info = s:Search_tok(a:rgn, 'b')
-		if empty(tok_info)
-			" No more tokens (at least not within stopline range - TODO)
-			if empty(ret)
-				" Haven't determined tok in effect. Move just prior to vsel
-				" and use syntax to determine.
-				let pos = s:Backward_char()
-				if empty(pos)
-					" Already at head of buffer
-					let ret.idx = 0
-				else
-					let ret.idx = s:Get_cur_rgn_info()[rgn]
-				endif
-			endif
-		else
-			" Found a token
-			if empty(ret_idx)
-				let ret.idx = tok_info.idx
-				let ret.pos = getpos('.')[1:2]
-			endif
-			if tok_info.hlable == 0 || (tok_info.hlable == 1 && a:rgn != 'bgc')
-				" Delete useless tok (2nd of 2 not separated by hlable)
-				" NO!!!! prev_tok_info may not even exist here!!!
-				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
-				" TODO: Decide whether this is appropriate. How much cleanup?
-				let cont = 1
-			elseif !empty(prev_tok_info) && tok_info.idx == prev_tok_info.idx
-				" Delete 2nd of 2 redundant toks.
-				call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
-				let cont = 1
-			endif
-		endif
-		if cont
-			let prev_tok_info = tok_info
-		endif
-	endwhile
-	" Note: Call to s:Get_cur_rgn_info should preclude our getting here with
-	" empty ret, but just in case...
-	return empty(ret_idx) ? {'idx': 0} : ret
-endfu
-
-" EXPERIMENTAL!!!!!!!!!
-fu! s:Vmap_sync_vsel(rgn)
-	" STUB LOGIC
-	" Eventually, want to move to point from which to start token cleanup.
-	normal! gg
-	return {'idx': 0}
-endfu
-
 " TODO: Document...
 " Return the idx resulting from application of fmt pspec to fmt idx
 " TODO: Perhaps rename...
@@ -3388,26 +3232,32 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 	endif
 endfu
 
-" Experimental still - goes with Vmap_apply_vsel_exp
-" Return true iff the region between pos1 and pos2 (both ends exclusive)
-" contains anything hlable, given the specified rgn type and tok idx.
+" Return true iff the region between pos1 and pos2 (inclusivity/exclusivity
+" specified by the inc arg) contains anything hlable, given the specified rgn
+" type and tok idx.
+" Inputs:
+" rgn:  'fmt'|'clr'|'bgc',
+" idx:  <color-idx>|<fmt-mask>
+" pos1: <start of region>
+" pos2: <end of region>
+" inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
 " Tested: 08Jan2015
-" TODO: Probably make inclusive, or even provide option (though inclusive
-" should always work, since when we're sitting on tok, we conceptually would
-" want exclusive, but will get it naturally since toks are never hlable).
-fu! S_Contains_hlable(rgn, idx, pos1, pos2)
+fu! s:Contains_hlable(rgn, idx, pos1, pos2, inc)
 	" TODO: Put the building of this mask somewhere where it will be always
 	" available, like b:txtfmt_re_any_ntok et al.
 	let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
 	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
 	let hlable = b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
-	" Assumption: pos1 < pos2
-	" Note: \%>123l refers to the *start* byte index of a multi-byte char.
-	" Template: (l1 & >c1 | >l1) & (l2 & <c2 | <l2)
-	let [l1, c1] = a:pos1
-	let [l2, c2] = a:pos2
-	let re = '\%(\%(\%' . l1 . 'l\&\%>' . c1 . 'c\|\%>' . l1 . 'l\)\&\%(\%' . l2 . 'l\&\%<' . c2 . 'c\|\%<' . l2 . 'l\)\)'
-	return !!search(re . hlable, 'nc')
+	" Process inclusivity arg.
+	if type(inc) == 3
+		let ie = a:inc
+	else
+		" Single bool specified for both ends.
+		let ie = [a:inc, a:inc]
+	endif
+	" Generate the region constraints.
+	let zwa = s:Make_pos_zwa({'beg': {'pos': pos1, 'inc': ie[0]}, 'end': {'pos': pos2, 'inc': ie[1]}})
+	return !!search(s:Apply_zwa(zwa, hlable), 'nc')
 endfu
 
 " Add specified byte offset to the input pos and return the adjusted pos.
@@ -3420,7 +3270,7 @@ endfu
 " problem (since cursor() can handle such positions). However, if we needed to
 " guarantee valid char position, could use a save/restore around cursor() to
 " find it.
-fu! S_Add_byte_offset(pos, offset)
+fu! s:Add_byte_offset(pos, offset)
 	" Handle trivial special case.
 	if !a:offset | return pos | endif
 	let [lnum, col] = a:pos
@@ -3434,15 +3284,16 @@ fu! S_Add_byte_offset(pos, offset)
 	return [lnum_tgt, bi_tgt - bi_bol_tgt + 1]
 endfu
 
-" Generate and return a zero-width assertion based on the input beg/end
-" positions.
+" Generate and return a zero-width assertion (in plain string form) based on
+" the input beg/end positions.
+" Note: Apply_zwa is provided as a convenience for wrapping it onto a regex.
 " Inputs:
 " cfg: {
 "   [beg|end]: {
 "     pos: [lnum, col], %% position of region endpt
 "     [inc]: 0|1        %% 1 if region endpt inclusive (default 0)
 "   },
-fu! S_Make_pos_zwa(cfg)
+fu! s:Make_pos_zwa(cfg)
 	" Assumption: beg < end
 	" Note: \%>123l refers to the *start* byte index of a multi-byte char.
 	" Exclusive Template: (l1 & >c1 | >l1) & (l2 & <c2 | <l2)
@@ -3463,6 +3314,10 @@ fu! S_Make_pos_zwa(cfg)
 		endif
 	endfor
 	return join(res, '\&')
+endfu
+
+fu! s:Apply_zwa(zwa, patt)
+	return !empty(a:zwa) ? a:zwa . '\&\%(' . a:patt . '\)' : a:patt
 endfu
 
 " TODO: Remove this TODO list...
@@ -3511,7 +3366,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			" Entered or skipped over vsel
 			" Is tok needed at head?
 			" Test for useless tok prior to vsel head.
-			if !empty(tok_info_prev) && !s:Get_hlable(a:rgn, tok_info_prev.pos, getpos("'<")[1:2])
+			if !empty(tok_info_prev) && !s:Contains_hlable(a:rgn, tok_info_prev.pos, getpos("'<")[1:2])
 				" Delete useless tok prior to vsel.
 				" Design Decision: If its effect is needed, we'll insert it
 				" later at vsel head.
@@ -3524,7 +3379,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 				" not be useless with tok landed on. (If it would, don't add,
 				" and leave tok_info_prev alone, as it may be needed for
 				" subsequent useless check.)
-				if !empty(tok_info) && s:Get_hlable(a:rgn, getpos("'<")[1:2], tok_info.pos)
+				if !empty(tok_info) && s:Contains_hlable(a:rgn, getpos("'<")[1:2], tok_info.pos)
 					call a:act_q.add({'typ': 'i', 'pos': [line("'<"), col("'<")], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
 					" Skip useless check this iteration.
 					" Note that if this is useless, we don't add, in which
@@ -3550,7 +3405,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		if !empty(tok_info)
 			" Check for useless/redundant toks even if found tok outside vsel.
 			if !skip_useless_check && !empty(tok_info_prev)
-				\&& !s:Get_hlable(a:rgn, tok_info_prev.pos, tok_info.pos)
+				\&& !s:Contains_hlable(a:rgn, tok_info_prev.pos, tok_info.pos)
 				" Delete 1st in useless tok pair.
 				call a:act_q.add({'typ': 'd', 'pos': tok_info_prev.pos})
 			elseif vsel_cmp == 0 && new_idx_next == new_idx
