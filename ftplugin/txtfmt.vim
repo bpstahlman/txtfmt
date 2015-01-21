@@ -3320,6 +3320,10 @@ fu! s:Apply_zwa(zwa, patt)
 	return !empty(a:zwa) ? a:zwa . '\&\%(' . a:patt . '\)' : a:patt
 endfu
 
+" TODO: Determine where to define these constants.
+let s:SYNC_DIST_BYTES = 250
+let s:SYNC_DIST_BYTES_EXTRA = 250
+
 " TODO: Remove this TODO list...
 "-Probably handle the sync at vsel head a bit differently. (I'm not using a
 " separate function now, and may not need to, but need to decide how much
@@ -3328,21 +3332,36 @@ endfu
 " with the hard case (fmts) almost exclusively.
 "-Implement apply for queued actions object (currently just printing actions)
 fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
-	"let sync_bounds = {'beg': 
+	let vsel_beg_pos = getpos("'<")[1:2],
+	let vsel_end_pos = getpos("'>")[1:2],
+	let sync_beg_min_pos = s:Add_byte_offset(vsel_beg, -s:SYNC_DIST_BYTES),
+	let sync_end_pos = s:Add_byte_offset(vsel_end, s:SYNC_DIST_BYTES)
+	let sync_beg_max_pos = s:Add_byte_offset(sync_beg, -s:SYNC_DIST_BYTES_EXTRA)
+	" Define zero-width assertions.
+	let pre_vsel_zwa = s:Make_pos_zwa({'end': {'pos': vsel_beg_pos}})
+	let post_sync_beg_max_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_max_pos}})
+	let pre_sync_end_pos_zwa = s:Make_pos_zwa({'end': {'pos': sync_end_pos}})
 	" Sync to tok or synstack() prior to vsel.
-	" TODO: Need to go back further for cleanup...
-	" TODO: Perhaps implement syncing function that returns context?
-	call cursor(line("'<"), col("'<"))
-	let tok_info_prev = s:Search_tok(a:rgn, 'b')
+	call cursor(vsel_beg_pos)
+	" Look forward for tok prior to start of region.
+	let tok_info_prev = s:Search_tok(a:rgn, '', pre_vsel_zwa)
 	if empty(tok_info_prev)
-		" Couldn't find pre-vsel tok within stopline range.
-		if empty(s:Backward_char())
-			" Already at head of buffer
-			let old_idx = 0
-			" Permit match at cursor position (first iter only)
-			let flags = 'c'
+		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
+		let tok_info_prev = s:Search_tok(a:rgn, 'b', post_sync_beg_max_zwa)
+		if empty(tok_info_prev)
+			" We aren't going to be able to sync on a tok.
+			if empty(s:Backward_char())
+				" Already at head of buffer
+				let old_idx = 0
+				" Permit match at cursor position (first iter only)
+				let flags = 'c'
+			else
+				" Sync on synstack.
+				let old_idx = s:Get_cur_rgn_info()[a:rgn]
+			endif
 		else
-			let old_idx = s:Get_cur_rgn_info()[a:rgn]
+			" Sync to found tok
+			let old_idx = tok_info_prev.idx
 		endif
 	else
 		" Sync to found tok
@@ -3355,7 +3374,7 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 		let new_idx_next = -1
 		let skip_useless_check = 0
 		" Look for next tok within stopline range (not necessarily in vsel)
-		let tok_info = s:Search_tok(a:rgn, '' . flags)
+		let tok_info = s:Search_tok(a:rgn, '' . flags, pre_sync_end_pos_zwa)
 		" Clear any temporary flag overrides assigned since prev invocation.
 		let flags = ''
 		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
@@ -3366,6 +3385,9 @@ fu! s:Vmap_apply_vsel(rgn, pspec, act_q)
 			" Entered or skipped over vsel
 			" Is tok needed at head?
 			" Test for useless tok prior to vsel head.
+			" TODO: Consider differentiating between simply useless and
+			" "useless and redundant" (might want to delete the 2nd tok in
+			" latter case).
 			if !empty(tok_info_prev) && !s:Contains_hlable(a:rgn, tok_info_prev.pos, getpos("'<")[1:2])
 				" Delete useless tok prior to vsel.
 				" Design Decision: If its effect is needed, we'll insert it
