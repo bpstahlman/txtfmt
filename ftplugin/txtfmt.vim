@@ -3018,7 +3018,7 @@ endfu
 fu! s:Search_tok(rgn, flags, ...)
 	let ret = {}
 	" Process optional zero-width-assertion.
-	let zwa = a:0 > 2 ? a:3 : ''
+	let zwa = a:0 > 0 ? a:1 : ''
 	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
 	" Note: Apply_zwa can handle empty zwa.
 	let [lnum, col] = searchpos(s:Apply_zwa(zwa, re_tok), a:flags . 'W')
@@ -3214,6 +3214,12 @@ endfu
 fu! s:Is_post_vsel()
 	return !!search("\\%#\\%>'>", 'nc')
 endfu
+fu! s:Is_at_vsel_head()
+	return !!search("\\%#\\%'<", 'nc')
+endfu
+fu! s:Is_at_vsel_tail()
+	return !!search("\\%#\\%'>", 'nc')
+endfu
 " Assumption: vsel exists.
 fu! s:Cmp_vsel()
 	return s:Is_in_vsel() ? 0 : s:Is_pre_vsel() ? -1 : 1
@@ -3249,14 +3255,14 @@ fu! s:Contains_hlable(rgn, idx, pos1, pos2, inc)
 	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
 	let hlable = b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
 	" Process inclusivity arg.
-	if type(inc) == 3
+	if type(a:inc) == 3
 		let ie = a:inc
 	else
 		" Single bool specified for both ends.
 		let ie = [a:inc, a:inc]
 	endif
 	" Generate the region constraints.
-	let zwa = s:Make_pos_zwa({'beg': {'pos': pos1, 'inc': ie[0]}, 'end': {'pos': pos2, 'inc': ie[1]}})
+	let zwa = s:Make_pos_zwa({'beg': {'pos': a:pos1, 'inc': ie[0]}, 'end': {'pos': a:pos2, 'inc': ie[1]}})
 	return !!search(s:Apply_zwa(zwa, hlable), 'nc')
 endfu
 
@@ -3282,6 +3288,11 @@ fu! s:Add_byte_offset(pos, offset)
 	let lnum_tgt = byte2line(bi_tgt)
 	let bi_bol_tgt = line2byte(lnum_tgt)
 	return [lnum_tgt, bi_tgt - bi_bol_tgt + 1]
+endfu
+
+" Workaround for Vim Bug with getpos()
+fu! s:Getpos(m)
+	return [line(a:m), col(a:m)]
 endfu
 
 " Generate and return a zero-width assertion (in plain string form) based on
@@ -3323,6 +3334,158 @@ endfu
 " TODO: Determine where to define these constants.
 let s:SYNC_DIST_BYTES = 250
 let s:SYNC_DIST_BYTES_EXTRA = 250
+
+" Return:
+" {
+"   idx: *,
+"   %% Decide whether just pos, zwa or both...
+"   stoppos: *
+"   stoppos_zwa: *
+" } 
+fu! s:Vmap_sync_start(rgn)
+	let vsel_beg_pos = s:Getpos("'<")
+	let vsel_end_pos = s:Getpos("'>")
+	let sync_beg_pos = s:Add_byte_offset(vsel_beg_pos, -s:SYNC_DIST_BYTES)
+	let sync_beg_limit_pos = s:Add_byte_offset(sync_beg_pos, -s:SYNC_DIST_BYTES_EXTRA)
+	let stoppos = s:Add_byte_offset(vsel_end_pos, s:SYNC_DIST_BYTES)
+	" Define zero-width assertions.
+	let pre_vsel_zwa = s:Make_pos_zwa({'end': {'pos': vsel_beg_pos}})
+	let post_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
+	let stoppos_zwa = s:Make_pos_zwa({'end': {'pos': stoppos}})
+	" Sync to tok or synstack() prior to vsel.
+	call cursor(vsel_beg_pos)
+	" Look forward for tok prior to start of region.
+	let tok_info_prev = s:Search_tok(a:rgn, '', pre_vsel_zwa)
+	if empty(tok_info_prev)
+		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
+		let tok_info_prev = s:Search_tok(a:rgn, 'b', post_sync_limit_zwa)
+		if empty(tok_info_prev)
+			" We aren't going to be able to sync on a tok.
+			call cursor(line("'<"), col("'<"))
+			if empty(s:Backward_char())
+				" Already at head of buffer
+				let old_idx = 0
+			else
+				" Sync on synstack.
+				let old_idx = s:Get_cur_rgn_info()[a:rgn]
+			endif
+		else
+			" Sync to found tok
+			let old_idx = tok_info_prev.idx
+		endif
+	else
+		" Sync to found tok
+		let old_idx = tok_info_prev.idx
+	endif
+	
+	" TODO: Decide on stoppos vs stoppos_zwa vs both.
+	" TODO: Also decide on tok_info. Useful to later stages?
+	" TODO: Perhaps let existence of tok_info imply hard_sync - then client
+	" could simply use tok_info rather than fooling with 'c' flag, etc...
+	return {'sync_idx': old_idx, 'stoppos': stoppos, 'stoppos_zwa': stoppos_zwa, 'hard_sync': !empty(tok_info_prev),
+		\'tok_info': !empty(tok_info_prev) ? tok_info_prev : {'pos': [], 'rgn': a:rgn, 'idx': old_idx}}
+endfu
+fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
+	let toks = []
+	" Assumption: Positioned at sync location.
+	let hard_sync = a:sync_info.hard_sync
+	let first_iter = 1
+	let vsel_cmp_prev = -1
+	let [vsel_beg_idx, vsel_end_idx] = [-1, -1]
+	while 1
+		" Look for next tok within stopline range (not necessarily in vsel)
+		let tok_info = s:Search_tok(a:rgn, hard_sync && first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
+		" Clear any temporary flag overrides assigned since prev invocation.
+		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
+		if a:mark_vsel && vsel_cmp_prev < vsel_cmp
+			if vsel_beg_idx < 0
+				" Note: We're about to add 'head' one way or another.
+				let vsel_beg_idx = len(toks)
+				if empty(tok_info) || !s:Is_at_vsel_head()
+					" Add empty for vsel beg
+					call add(toks, {
+						\'tok_info': {
+							\'rgn': a:rgn, 'pos': s:Getpos("'<"), 'idx': -1
+						\},
+						\'action': 'i',
+						\'flags': 'h'
+					\})
+				endif
+			endif
+			if vsel_end_idx < 0 && vsel_cmp == 1
+				" Note: We're about to add 'tail' one way or another.
+				let vsel_end_idx = len(toks)
+				if empty(tok_info) || !s:Is_at_vsel_tail()
+					" Add empty for vsel end
+					" TODO: Extra flags to denote head/tail?
+					call add(toks, {
+						\'tok_info': {
+							\'rgn': a:rgn, 'pos': s:Getpos("'>"), 'idx': -1
+						\},
+						\'action': 'a',
+						\'flags': 't'
+					\})
+				endif
+			endif
+		endif
+		if !empty(tok_info)
+			call add(toks, {
+				\'tok_info': tok_info,
+				\'action': '',
+				\'flags': ''
+			\})
+		else
+			" No more tokens in range.
+			break
+		endif
+		let vsel_cmp_prev = vsel_cmp
+		let first_iter = 0
+	endwhile
+	let ret = {
+		\'sync_info': a:sync_info,
+		\'toks': toks
+	\}
+	if a:mark_vsel
+		let ret.vsel_beg_idx = vsel_beg_idx
+		let ret.vsel_end_idx = vsel_end_idx
+	endif
+	return ret
+endfu
+" ISSUE!!!!!!!!!!!!! This won't work - can't determine hlable on basis of old
+" chars - needs to take new into account.
+fu! s:Vmap_determine_hlable(rgn, toks_info)
+	let toks = a:toks_info.toks
+	let num_toks = len(toks)
+	if num_toks == 0
+		return a:toks_info
+	endif
+	" At least 1
+	" Design Decision: We've already looked back a ways to sync. We've got to
+	" stop somewhere. Thus, assume first always preceded by hlable (noting
+	" that if first is head of buffer, it doesn't matter anyway, since there
+	" couldn't be a prior useless).
+	let prev_tok_info = toks[0].tok_info
+	let prev_tok_info.hlable = 1
+	let tidx = 1
+	while tidx < num_toks
+		let tok_info = toks[tidx].tok_info
+		let tok_info.hlable = s:Contains_hlable(a:rgn, tok_info.idx, prev_tok_info.pos, tok_info.pos, 0)
+		let prev_tok_info = tok_info
+		let tidx += 1
+	endwhile
+	return a:toks_info
+endfu
+
+" TODO: Perhaps rename...
+fu! S_Vmap_do(rgn, pspec)
+	let sync_info = s:Vmap_sync_start(a:rgn)
+	"echo string(sync_info)
+	let toks_info = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
+	echo "After Vmap_collect..."
+	echo string(toks_info)
+	"let toks_info = s:Vmap_determine_hlable(a:rgn, toks_info)
+	"echo string(toks_info)
+endfu
 
 " TODO: Remove this TODO list...
 "-Probably handle the sync at vsel head a bit differently. (I'm not using a
@@ -3561,15 +3724,18 @@ endfu
 " Experimental version of the above...
 " Difference: Treats the pre/in/post-vsel regions more explicitly (to simplify
 " some logic); also, does only bare minimum (1 tok) syncing pre/post vsel.
-" Variation: Does NO cleanup.
 fu! s:Vmap_apply_vsel_noCleanup(rgn, pspec, act_q)
 	" Sync to tok or synstack() prior to vsel.
 	call cursor(line("'<"), col("'<"))
-	let tok_info_prev = s:Search_tok(a:rgn, 'b')
+	let tok_info_prev = s:Search_tok(a:rgn, 'b', sync_lim_zwa) "TODO
 	if empty(tok_info_prev)
 		" Couldn't find pre-vsel tok within stopline range.
 		if empty(s:Backward_char())
 			" Already at head of buffer
+			" TODO: Get_tok_info(Get_cur_char) test to check for special case
+			" (sitting on tok at vsel head, which should be deleted or
+			" replaced)? Or should we just handle naturally by inserting then
+			" deleting the old as necessary?
 			let old_idx = 0
 			" Permit match at cursor position on first iter only.
 			" Rationale: Could be sitting on tok.
@@ -3585,9 +3751,28 @@ fu! s:Vmap_apply_vsel_noCleanup(rgn, pspec, act_q)
 	" Pre-vsel insertion
 	let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
 	if new_idx != old_idx
-		" TODO: Process 1st tok within vsel (if any).
-		call a:act_q.add({'typ': 'i', 'pos': getpos("'<")[1:2], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
-		let tok_info_prev = {'idx': new_idx, 'pos': getpos("'<")[1:2]}
+		" TODO: Can't just insert blindly here, or if we do, need a way to
+		" cancel it if we later determine that this vsel head insertion was
+		" useless.
+		" Idea: Add a 'typ' that can serve either to cancel a preceding
+		" insert/replace or add a delete.
+		" How: An extra force arg to add for 'd', which means there shouldn't
+		" be anything remaining for this rgn type at this location (would need
+		" to start passing rgn type too)
+		" Alternative: Just do the useless redundant test here, or defer the
+		" following call to add till we know it's needed.
+		" Actually, we need to go ahead and do useless test here...
+		if !empty(tok_info_prev) && !empty(tok_info_prev.pos)
+			\&& !s:Contains_hlable(a:rgn, tok_info_prev.pos, getpos("'<")[1:2])
+			" Delete useless tok prior to vsel.
+			" Design Decision: If its effect is needed, we'll insert it
+			" later at vsel head.
+			call a:act_q.add({'typ': 'd', 'pos': prev_tok_info.pos})
+		endif
+		let vsel_head_idx = new_idx
+		"let q_ins = {'typ': 'i', 'pos': getpos("'<")[1:2], 'tok': s:Idx_to_tok(a:rgn, new_idx)}
+		"call a:act_q.add({'typ': 'i', 'pos': getpos("'<")[1:2], 'tok': s:Idx_to_tok(a:rgn, new_idx)})
+		"let tok_info_prev = {'idx': new_idx, 'pos': getpos("'<")[1:2]}
 	endif
 	
 	" Process all tokens within vsel...
@@ -3597,6 +3782,10 @@ fu! s:Vmap_apply_vsel_noCleanup(rgn, pspec, act_q)
 		" Clear any temporary flag overrides assigned since prev invocation.
 		let flags = ''
 		if !empty(tok_info)
+			if vsel_head_idx >= 0
+				" TODO: Disposition vsel head insertion
+				" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!
+			endif
 			let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, tok_info.idx) : a:pspec
 			" hlable_idx: -1=NA, 0=no hlable, 1=ws hlable, 2=hlable
 			let hlable_idx = !empty(tok_info_prev) ? s:Get_hlable(a:rgn, tok_info_prev.pos, tok_info.pos) : -1
