@@ -3355,11 +3355,11 @@ fu! s:Vmap_sync_start(rgn)
 	" Sync to tok or synstack() prior to vsel.
 	call cursor(vsel_beg_pos)
 	" Look forward for tok prior to start of region.
-	let tok_info_prev = s:Search_tok(a:rgn, '', pre_vsel_zwa)
-	if empty(tok_info_prev)
+	let tok_info = s:Search_tok(a:rgn, '', pre_vsel_zwa)
+	if empty(tok_info)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
-		let tok_info_prev = s:Search_tok(a:rgn, 'b', post_sync_limit_zwa)
-		if empty(tok_info_prev)
+		let tok_info = s:Search_tok(a:rgn, 'b', post_sync_limit_zwa)
+		if empty(tok_info)
 			" We aren't going to be able to sync on a tok.
 			call cursor(line("'<"), col("'<"))
 			if empty(s:Backward_char())
@@ -3371,31 +3371,34 @@ fu! s:Vmap_sync_start(rgn)
 			endif
 		else
 			" Sync to found tok
-			let old_idx = tok_info_prev.idx
+			let old_idx = tok_info.idx
 		endif
 	else
 		" Sync to found tok
-		let old_idx = tok_info_prev.idx
+		let old_idx = tok_info.idx
 	endif
 	
 	" TODO: Decide on stoppos vs stoppos_zwa vs both.
 	" TODO: Also decide on tok_info. Useful to later stages?
-	" TODO: Perhaps let existence of tok_info imply hard_sync - then client
+	" TODO: sync_idx redundant with tok_info as it stands now. Decide...
 	" could simply use tok_info rather than fooling with 'c' flag, etc...
-	return {'sync_idx': old_idx, 'stoppos': stoppos, 'stoppos_zwa': stoppos_zwa, 'hard_sync': !empty(tok_info_prev),
-		\'tok_info': !empty(tok_info_prev) ? tok_info_prev : {'pos': [], 'rgn': a:rgn, 'idx': old_idx}}
+	" ...or could go back to hard_sync flag and omit tok_info.
+	return {
+		\'sync_idx': old_idx,
+		\'stoppos': stoppos,
+		\'stoppos_zwa': stoppos_zwa,
+		\'tok_info': !empty(tok_info) ? tok_info : {'pos': [], 'rgn': a:rgn, 'idx': old_idx}
+	\}
 endfu
 fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 	let toks = []
 	" Assumption: Positioned at sync location.
-	let hard_sync = a:sync_info.hard_sync
 	let first_iter = 1
 	let vsel_cmp_prev = -1
 	let [vsel_beg_idx, vsel_end_idx] = [-1, -1]
 	while 1
 		" Look for next tok within stopline range (not necessarily in vsel)
-		let tok_info = s:Search_tok(a:rgn, hard_sync && first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
-		" Clear any temporary flag overrides assigned since prev invocation.
+		let tok_info = s:Search_tok(a:rgn, first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
 		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
 		if a:mark_vsel && vsel_cmp_prev < vsel_cmp
 			if vsel_beg_idx < 0
@@ -3408,7 +3411,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 							\'rgn': a:rgn, 'pos': s:Getpos("'<"), 'idx': -1
 						\},
 						\'action': 'i',
-						\'flags': 'h'
+						\'flags': '^'
 					\})
 				endif
 			endif
@@ -3423,7 +3426,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 							\'rgn': a:rgn, 'pos': s:Getpos("'>"), 'idx': -1
 						\},
 						\'action': 'a',
-						\'flags': 't'
+						\'flags': '$'
 					\})
 				endif
 			endif
@@ -3432,7 +3435,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 			call add(toks, {
 				\'tok_info': tok_info,
 				\'action': '',
-				\'flags': ''
+				\'flags': (s:Is_at_vsel_head() ? '^' : '') . (s:Is_at_vsel_tail() ? '$' : '')
 			\})
 		else
 			" No more tokens in range.
@@ -3441,6 +3444,9 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 		let vsel_cmp_prev = vsel_cmp
 		let first_iter = 0
 	endwhile
+	" TODO: Maybe don't return a:sync_info since caller should have it. In
+	" fact, might be able to return just the list, now that flags are
+	" contained.
 	let ret = {
 		\'sync_info': a:sync_info,
 		\'toks': toks
@@ -3476,6 +3482,36 @@ fu! s:Vmap_determine_hlable(rgn, toks_info)
 	return a:toks_info
 endfu
 
+fu! s:Vmap_apply(rgn, pspec, sync_info, toks_info)
+	let [vsel_beg_idx, vsel_end_idx, toks] =
+		\[a:toks_info.vsel_beg_idx, a:toks_info.vsel_end_idx, a:toks_info.toks]
+	let i = vsel_beg_idx
+	let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, sync_info.tok_info.idx) : a:pspec
+
+	"let vsel_cmp = -1
+	"for tok in toks
+	"	if stridx(tok.flags, '^') != -1
+	"		let vsel_cmp = 0
+
+	"	endif
+	"endfor
+
+	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
+	while 1
+		let tok = toks[i]
+		let old_idx = tok.idx
+		" Determine idx needed at vsel head.
+		let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
+		if new_idx != old_idx
+			"
+		endif
+		if stridx(tok.flags, '$') != -1
+			break
+		endif
+		let i += 1
+	endwhile
+endfu
+
 " TODO: Perhaps rename...
 fu! S_Vmap_do(rgn, pspec)
 	let sync_info = s:Vmap_sync_start(a:rgn)
@@ -3483,6 +3519,10 @@ fu! S_Vmap_do(rgn, pspec)
 	let toks_info = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
 	echo "After Vmap_collect..."
 	echo string(toks_info)
+	if !empty(a:pspec)
+		" Apply pspec without worrying about whether toks will be kept.
+		call Vmap_apply(a:rgn, a:pspec, toks_info)
+	endif
 	"let toks_info = s:Vmap_determine_hlable(a:rgn, toks_info)
 	"echo string(toks_info)
 endfu
