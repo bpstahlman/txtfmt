@@ -2894,6 +2894,10 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	endfor
 	return ret
 endfu
+" TODO: TEMP DEBUG
+fu! Parse(specs)
+	return s:Parse_fmt_clr_transformer(a:specs)
+endfu
 " >>>
 fu! Test(spec)
 	unlet! s:err_str
@@ -3404,21 +3408,25 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 			if vsel_beg_idx < 0
 				" Note: We're about to add 'head' one way or another.
 				let vsel_beg_idx = len(toks)
-				if empty(tok_info) || !s:Is_at_vsel_head()
+				" TODO: Validate this approach: add unconditionally, even if
+				" tok already at head. (Simplifies subsequent logic by
+				" ensuring that all head/tails are phantoms.)
+				"if empty(tok_info) || !s:Is_at_vsel_head()
 					" Add empty for vsel beg
 					call add(toks, {
 						\'tok_info': {
 							\'rgn': a:rgn, 'pos': s:Getpos("'<"), 'idx': -1
 						\},
 						\'action': 'i',
+						\'is_head': 1,
 						\'flags': '^'
 					\})
-				endif
+				"endif
 			endif
 			if vsel_end_idx < 0 && vsel_cmp == 1
 				" Note: We're about to add 'tail' one way or another.
 				let vsel_end_idx = len(toks)
-				if empty(tok_info) || !s:Is_at_vsel_tail()
+				"if empty(tok_info) || !s:Is_at_vsel_tail()
 					" Add empty for vsel end
 					" TODO: Extra flags to denote head/tail?
 					call add(toks, {
@@ -3426,9 +3434,10 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 							\'rgn': a:rgn, 'pos': s:Getpos("'>"), 'idx': -1
 						\},
 						\'action': 'a',
+						\'is_tail': 1,
 						\'flags': '$'
 					\})
-				endif
+				"endif
 			endif
 		endif
 		if !empty(tok_info)
@@ -3482,30 +3491,32 @@ fu! s:Vmap_determine_hlable(rgn, toks_info)
 	return a:toks_info
 endfu
 
+" TODO: Consider some sort of location flags: e.g., ^ $ and < = > (before, in,
+" after vsel) - but only if useful.
 fu! s:Vmap_apply(rgn, pspec, sync_info, toks_info)
+	" TODO: Decide on this... Pass just rgn portion?
+	let pspec = a:pspec[a:rgn]
 	let [vsel_beg_idx, vsel_end_idx, toks] =
 		\[a:toks_info.vsel_beg_idx, a:toks_info.vsel_end_idx, a:toks_info.toks]
 	let i = vsel_beg_idx
-	let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, sync_info.tok_info.idx) : a:pspec
-
-	"let vsel_cmp = -1
-	"for tok in toks
-	"	if stridx(tok.flags, '^') != -1
-	"		let vsel_cmp = 0
-
-	"	endif
-	"endfor
+	let old_idx = a:sync_info.tok_info.idx
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
 	while 1
 		let tok = toks[i]
-		let old_idx = tok.idx
-		" Determine idx needed at vsel head.
-		let new_idx = a:rgn == 'fmt' ? s:Vmap_apply_fmt(a:pspec, old_idx) : a:pspec
-		if new_idx != old_idx
-			"
+		let [is_head, is_tail] = [i == vsel_beg_idx, i == vsel_end_idx]
+		" Process phantom (not in buffer) toks specially.
+		if !is_head && !is_tail
+			let old_idx = tok.tok_info.idx
 		endif
-		if stridx(tok.flags, '$') != -1
+		" Ensure region beyond tail remains the same.
+		let new_idx = is_tail ? old_idx :
+			\a:rgn == 'fmt' ? s:Vmap_apply_fmt(pspec, old_idx) : pspec
+		let tok.tok_info.idx = new_idx
+		if !is_head && !is_tail && new_idx != old_idx
+			let tok.action = 'r'
+		endif
+		if i >= vsel_end_idx
 			break
 		endif
 		let i += 1
@@ -3517,14 +3528,14 @@ fu! S_Vmap_do(rgn, pspec)
 	let sync_info = s:Vmap_sync_start(a:rgn)
 	"echo string(sync_info)
 	let toks_info = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
-	echo "After Vmap_collect..."
+	"echo "After Vmap_collect..."
 	echo string(toks_info)
 	if !empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
-		call Vmap_apply(a:rgn, a:pspec, toks_info)
+		call s:Vmap_apply(a:rgn, a:pspec, sync_info, toks_info)
 	endif
 	"let toks_info = s:Vmap_determine_hlable(a:rgn, toks_info)
-	"echo string(toks_info)
+	echo string(toks_info)
 endfu
 
 " TODO: Remove this TODO list...
