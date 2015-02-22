@@ -3419,7 +3419,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 						\},
 						\'action': 'i',
 						\'is_head': 1,
-						\'flags': '^'
+						\'is_tail': 0
 					\})
 				"endif
 			endif
@@ -3434,8 +3434,8 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 							\'rgn': a:rgn, 'pos': s:Getpos("'>"), 'idx': -1
 						\},
 						\'action': 'a',
-						\'is_tail': 1,
-						\'flags': '$'
+						\'is_head': 0,
+						\'is_tail': 1
 					\})
 				"endif
 			endif
@@ -3444,7 +3444,8 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 			call add(toks, {
 				\'tok_info': tok_info,
 				\'action': '',
-				\'flags': (s:Is_at_vsel_head() ? '^' : '') . (s:Is_at_vsel_tail() ? '$' : '')
+				\'is_head': s:Is_at_vsel_head(),
+				\'is_tail': s:Is_at_vsel_tail()
 			\})
 		else
 			" No more tokens in range.
@@ -3456,6 +3457,9 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 	" TODO: Maybe don't return a:sync_info since caller should have it. In
 	" fact, might be able to return just the list, now that flags are
 	" contained.
+	" TODO: Not sure sync_info needs to be in this anymore... In fact, may
+	" just have list returned by ref and indices (if applicable) returned
+	" explicitly.
 	let ret = {
 		\'sync_info': a:sync_info,
 		\'toks': toks
@@ -3524,18 +3528,90 @@ fu! s:Vmap_apply(rgn, pspec, sync_info, toks_info)
 endfu
 
 " TODO: Perhaps rename...
-fu! S_Vmap_do(rgn, pspec)
+fu! s:Vmap_do(rgn, pspec)
 	let sync_info = s:Vmap_sync_start(a:rgn)
 	"echo string(sync_info)
+	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
+	" start/end indices returned explicitly.
 	let toks_info = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
 	"echo "After Vmap_collect..."
-	echo string(toks_info)
+	"echo string(toks_info)
 	if !empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
 		call s:Vmap_apply(a:rgn, a:pspec, sync_info, toks_info)
 	endif
-	"let toks_info = s:Vmap_determine_hlable(a:rgn, toks_info)
-	echo string(toks_info)
+	let g:dbg = string(toks_info)
+	return toks_info
+endfu
+
+fu! s:Vmap_cleanup(rgn, toks_info)
+	" {
+	"   vsel_beg_idx:
+	"   vsel_end_idx:
+	"   sync_info: {
+	"     sync_idx: old_idx
+	"     stoppos: stoppos
+	"     stoppos_zwa: stoppos_zwa
+	"     tok_info: <explicit_tok_info> | {'pos': [], 'rgn': a:rgn, 'idx': old_idx}
+	"   }
+	"   toks: [{
+	"       tok_info: {rgn: fmt, idx: 2, pos: [3,1]}
+	"       action: '[iard]*'
+	"       is_head: 0|1
+	"       is_tail: 0|1
+	"   }]
+	"
+	" TODO: Consider creating an unconditional head out of sync_info.
+	let sync_idx = a:toks_info.sync_info.sync_idx
+	let toks = a:toks_info.toks
+	let hard_sync = !empty(a:toks_info.sync_info.toks_info.pos)
+	if hard_sync
+		let tip = toks[0]
+		let idx = 1
+	else
+		let tip = a:toks_info.sync_info.tok_info
+		let idx = 0
+	endif
+	while idx < len(toks)
+		let ti = toks[idx]
+		let useful = 1
+		if !empty(tip)
+			let useful = s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
+		endif
+
+		" Design Decision: Calculate redundant and useful independently,
+		" considering sync_idx *only* for redundancy determination.
+		" Rationale: sync_idx validity can be safely used to determine
+		" redundancy, but not uselessness (which relies on knowledge of
+		" existence of hlable chars in unknown region of buffer).
+		let redundant = (empty(tip) ? sync_idx : tip.tok_info.idx) == ti.tok_info.idx
+
+		let tdel = {}
+		if !useful || redundant
+			let tdel = redundant ? ti : tip
+			if !empty(tip)
+		endif
+		if !useful
+			" If phantom, cause tok to be ignored/discarded; else deleted.
+			let tip.action = tip.is_head || tip.is_tail ? '' : 'd'
+		elseif redundant
+			let ti.action = ti.is_head || ti.is_tail ? '' : 'd'
+		endif
+		if ti.action
+		endif
+		" TODO: UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!
+		"
+		if ti.action != 'd'
+			let tip = ti
+			let idx += 1
+		endif
+	endwhile
+endfu
+
+fu! s:dbg_display_toks(toks)
+	for ti in a:toks
+		echo printf('(%3d, %3d): %s(%d): => %s', ti.tok_info.pos[0], ti.tok_info.pos[1], ti.tok_info.rgn, ti.tok_info.idx, ti.action)
+	endfor
 endfu
 
 " TODO: Remove this TODO list...
@@ -3884,23 +3960,26 @@ fu! s:Highlight_selection_impl(pspecs)
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
 	let rgn_info = {}
+	let toks_infos = []
 	" Loop over rgn types.
 	for rgn in keys(a:pspecs)
 		" Unlet needed because rgn_info can be either num or list.
 		unlet! rgn_info
 		let pspec = a:pspecs[rgn]
-		" Question: Should this be objectified? Have functions that can work
-		" with it as-is?
-		if type(pspec) == 0
-		else
-		endif
 
-		let act_q = s:Create_actions()
-		let info = s:Vmap_apply_vsel(rgn, pspec, act_q)
-		call act_q.apply()
-
+		" TODO: May change name to calculate or something?
+		let toks_info = s:Vmap_do(rgn, pspec)
+		call s:Vmap_cleanup(rgn, toks_info)
+		echo "Post cleanup:"
+		call s:dbg_display_toks(toks_info.toks)
+		"echo string(toks_info.toks)
+		" TODO: Perhaps make this a merge operation instead of simple list
+		" append. Would simplify work of Vmap_apply_changes.
+		call add(toks_infos, toks_info)
 
 	endfor
+	" Execute, merging the individual token lists together as we go.
+	"call s:Vmap_apply_changes(toks_info)
 endfu
 
 fu! S_Highlight_selection2()
