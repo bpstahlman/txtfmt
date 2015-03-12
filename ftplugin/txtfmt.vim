@@ -3341,10 +3341,12 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 
 " Return:
 " {
-"   idx: *,
+"   sync_idx: *,
 "   %% Decide whether just pos, zwa or both...
 "   stoppos: *
 "   stoppos_zwa: *
+"   %% May not have a position (e.g., pos=[])
+"   tok_info
 " } 
 fu! s:Vmap_sync_start(rgn)
 	let vsel_beg_pos = s:Getpos("'<")
@@ -3395,7 +3397,12 @@ fu! s:Vmap_sync_start(rgn)
 	\}
 endfu
 fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
-	let toks = []
+	let toks = [{
+		\'tok_info': a:sync_info.tok_info
+		\'action': '',
+		\'is_head': s:Is_at_vsel_head(),
+		\'is_tail': 0
+	\}]
 	" Assumption: Positioned at sync location.
 	let first_iter = 1
 	let vsel_cmp_prev = -1
@@ -3440,6 +3447,13 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 				"endif
 			endif
 		endif
+		" Issue!!!! is_head/tail make sense only when a:mark_vsel is true
+		" (i.e., we're not simply doing this for cleanup).
+		" TODO Fix: Need to transition away from is_head/tail (or at least, be
+		" sure they're not set when mark_vsel is false). I'm thinking perhaps
+		" just let action convey the necessary information: e.g., i means head
+		" if we care, and a means tail. Keep in mind that both indicators mean
+		" the char is still phantom.
 		if !empty(tok_info)
 			call add(toks, {
 				\'tok_info': tok_info,
@@ -3506,18 +3520,23 @@ fu! s:Vmap_apply(rgn, pspec, sync_info, toks_info)
 	let old_idx = a:sync_info.tok_info.idx
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
+	" TODO: Although it's ok to use vsel knowledge in this Vmap_apply
+	" function, vsel_beg/end_idx shouldn't be in toks_info, so we'd need to
+	" get it another way. Actually, I'm thinking we could get the 'phantom'
+	" information a different way: e.g., from 'action' on individual toks.
 	while 1
 		let tok = toks[i]
 		let [is_head, is_tail] = [i == vsel_beg_idx, i == vsel_end_idx]
-		" Process phantom (not in buffer) toks specially.
-		if !is_head && !is_tail
+		let is_phantom = is_head || is_tail
+		if !is_phantom
+			" Non-phantom (in buffer) tok.
 			let old_idx = tok.tok_info.idx
 		endif
 		" Ensure region beyond tail remains the same.
 		let new_idx = is_tail ? old_idx :
 			\a:rgn == 'fmt' ? s:Vmap_apply_fmt(pspec, old_idx) : pspec
 		let tok.tok_info.idx = new_idx
-		if !is_head && !is_tail && new_idx != old_idx
+		if !is_phantom && new_idx != old_idx
 			let tok.action = 'r'
 		endif
 		if i >= vsel_end_idx
