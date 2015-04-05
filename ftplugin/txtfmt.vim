@@ -3398,7 +3398,7 @@ fu! s:Vmap_sync_start(rgn)
 endfu
 fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 	let toks = [{
-		\'tok_info': a:sync_info.tok_info
+		\'tok_info': a:sync_info.tok_info,
 		\'action': '',
 		\'is_head': s:Is_at_vsel_head(),
 		\'is_tail': 0
@@ -3581,20 +3581,18 @@ fu! s:Vmap_cleanup(rgn, toks_info)
 	"   }]
 	"
 	" TODO: Consider creating an unconditional head out of sync_info.
+	echomsg "toks_info: " . string(a:toks_info)
 	let sync_idx = a:toks_info.sync_info.sync_idx
 	let toks = a:toks_info.toks
-	let hard_sync = !empty(a:toks_info.sync_info.toks_info.pos)
-	if hard_sync
-		let tip = toks[0]
-		let idx = 1
-	else
-		let tip = a:toks_info.sync_info.tok_info
-		let idx = 0
-	endif
+	let hard_sync = !empty(a:toks_info.sync_info.tok_info.pos)
+	let tip = a:toks_info.sync_info.tok_info
+	" If hard_sync, sync tok is already in toks.
+	let idx = hard_sync ? 1 : 0
 	while idx < len(toks)
 		let ti = toks[idx]
 		let useful = 1
-		if !empty(tip)
+		" Note: Never consider a non-explicit token to be useless.
+		if !empty(tip.pos)
 			let useful = s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
 		endif
 
@@ -3603,7 +3601,7 @@ fu! s:Vmap_cleanup(rgn, toks_info)
 		" Rationale: sync_idx validity can be safely used to determine
 		" redundancy, but not uselessness (which relies on knowledge of
 		" existence of hlable chars in unknown region of buffer).
-		let redundant = (empty(tip) ? sync_idx : tip.tok_info.idx) == ti.tok_info.idx
+		let redundant = tip.tok_info.idx == ti.tok_info.idx
 
 		let tdel = {}
 		if !useful || redundant
@@ -3615,8 +3613,6 @@ fu! s:Vmap_cleanup(rgn, toks_info)
 			let tip.action = tip.is_head || tip.is_tail ? '' : 'd'
 		elseif redundant
 			let ti.action = ti.is_head || ti.is_tail ? '' : 'd'
-		endif
-		if ti.action
 		endif
 		" TODO: UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!
 		"
