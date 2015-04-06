@@ -3346,7 +3346,13 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 "   stoppos: *
 "   stoppos_zwa: *
 "   %% May not have a position (e.g., pos=[])
-"   tok_info
+"   %% Augment basic tok_info with loc?
+"   tok_info: {
+"     pos: []
+"     rgn: fgc|fmt|bgc
+"     idx: *
+"     loc: pre_v|v_head|in_v|v_tail|post_v
+"   }
 " } 
 fu! s:Vmap_sync_start(rgn)
 	let vsel_beg_pos = s:Getpos("'<")
@@ -3366,48 +3372,57 @@ fu! s:Vmap_sync_start(rgn)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
 		let tok_info = s:Search_tok(a:rgn, 'b', post_sync_limit_zwa)
 		if empty(tok_info)
-			" We aren't going to be able to sync on a tok.
+			" We aren't going to be able to (hard) sync on a tok.
+			let tok_info = {'pos': [], 'rgn': a:rgn}
 			call cursor(line("'<"), col("'<"))
 			if empty(s:Backward_char())
 				" Already at head of buffer
-				let old_idx = 0
+				let tok_info.idx = 0
+				tok_info.loc = 'head_v'
 			else
+				" Sitting 1 char prior to vsel.
 				" Sync on synstack.
-				let old_idx = s:Get_cur_rgn_info()[a:rgn]
+				let tok_info.idx = s:Get_cur_rgn_info()[a:rgn]
+				" Can't be head, in, tail or post...
+				tok_info.loc = 'pre_v'
 			endif
 		else
 			" Sync to found tok
-			let old_idx = tok_info.idx
+			tok_info.loc = 'pre_v'
 		endif
 	else
 		" Sync to found tok
-		let old_idx = tok_info.idx
+		tok_info.loc = 'pre_v'
 	endif
 	
 	" TODO: Decide on stoppos vs stoppos_zwa vs both.
-	" TODO: Also decide on tok_info. Useful to later stages?
-	" TODO: sync_idx redundant with tok_info as it stands now. Decide...
-	" could simply use tok_info rather than fooling with 'c' flag, etc...
-	" ...or could go back to hard_sync flag and omit tok_info.
 	return {
-		\'sync_idx': old_idx,
 		\'stoppos': stoppos,
 		\'stoppos_zwa': stoppos_zwa,
-		\'tok_info': !empty(tok_info) ? tok_info : {'pos': [], 'rgn': a:rgn, 'idx': old_idx}
+		\'tok_info': tok_info
 	\}
 endfu
+" TODO: This function also should augment tok_info with loc and action: i.e.,
+" resulting tok_info should have...
+"   rgn
+"   pos
+"   idx
+"   loc
+"   action
 fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
-	let toks = [{
-		\'tok_info': a:sync_info.tok_info,
-		\'action': '',
-		\'is_head': s:Is_at_vsel_head(),
-		\'is_tail': 0
-	\}]
+	let tok_info = a:sync_info.tok_info
+	let tok_info.action = 'i'
+	" Bootstrap with the sync token.
+	let toks = [tok_info]
 	" Assumption: Positioned at sync location.
 	let first_iter = 1
 	let vsel_cmp_prev = -1
 	let [vsel_beg_idx, vsel_end_idx] = [-1, -1]
 	while 1
+		" TODO: Set this appropriately...
+		" IN FLUX!!!!!!!!!!!!!!!!!!!!! TODO
+		let cont = 1
+		let tok_added = 0
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
 		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
@@ -3418,33 +3433,37 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 				" TODO: Validate this approach: add unconditionally, even if
 				" tok already at head. (Simplifies subsequent logic by
 				" ensuring that all head/tails are phantoms.)
-				"if empty(tok_info) || !s:Is_at_vsel_head()
+				if empty(tok_info)
 					" Add empty for vsel beg
+					" TODO: May not be appropriate to add 'action' at this
+					" stage. Consolidate loc/phantom/action...
 					call add(toks, {
-						\'tok_info': {
-							\'rgn': a:rgn, 'pos': s:Getpos("'<"), 'idx': -1
-						\},
-						\'action': 'i',
-						\'is_head': 1,
-						\'is_tail': 0
+						\'rgn': a:rgn,
+						\'pos': s:Getpos("'<"),
+						\'idx': -1,
+						\'loc': 'head_v',
+						\'phantom': 1,
+						\'action': 'i'
 					\})
-				"endif
+				elseif !s:Is_at_vsel_head()
+
+				endif
 			endif
 			if vsel_end_idx < 0 && vsel_cmp == 1
 				" Note: We're about to add 'tail' one way or another.
 				let vsel_end_idx = len(toks)
-				"if empty(tok_info) || !s:Is_at_vsel_tail()
+				if empty(tok_info) || !s:Is_at_vsel_tail()
 					" Add empty for vsel end
 					" TODO: Extra flags to denote head/tail?
 					call add(toks, {
-						\'tok_info': {
-							\'rgn': a:rgn, 'pos': s:Getpos("'>"), 'idx': -1
-						\},
-						\'action': 'a',
-						\'is_head': 0,
-						\'is_tail': 1
+						\'rgn': a:rgn,
+						\'pos': s:Getpos("'>"),
+						\'idx': -1,
+						\'loc': 'tail_v',
+						\'phantom': 1,
+						\'action': 'a'
 					\})
-				"endif
+				endif
 			endif
 		endif
 		" Issue!!!! is_head/tail make sense only when a:mark_vsel is true
@@ -3455,11 +3474,10 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 		" if we care, and a means tail. Keep in mind that both indicators mean
 		" the char is still phantom.
 		if !empty(tok_info)
+			let tok_info.loc
 			call add(toks, {
 				\'tok_info': tok_info,
-				\'action': '',
-				\'is_head': s:Is_at_vsel_head(),
-				\'is_tail': s:Is_at_vsel_tail()
+				\'action': ''
 			\})
 		else
 			" No more tokens in range.
@@ -3478,6 +3496,8 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 		\'sync_info': a:sync_info,
 		\'toks': toks
 	\}
+	" TODO: I'm thinking we can just return the list of toks, as the beg/end
+	" info is inherent.
 	if a:mark_vsel
 		let ret.vsel_beg_idx = vsel_beg_idx
 		let ret.vsel_end_idx = vsel_end_idx
@@ -3511,13 +3531,12 @@ endfu
 
 " TODO: Consider some sort of location flags: e.g., ^ $ and < = > (before, in,
 " after vsel) - but only if useful.
-fu! s:Vmap_apply(rgn, pspec, sync_info, toks_info)
+fu! s:Vmap_apply(rgn, pspec, toks_info)
 	" TODO: Decide on this... Pass just rgn portion?
 	let pspec = a:pspec[a:rgn]
 	let [vsel_beg_idx, vsel_end_idx, toks] =
 		\[a:toks_info.vsel_beg_idx, a:toks_info.vsel_end_idx, a:toks_info.toks]
-	let i = vsel_beg_idx
-	let old_idx = a:sync_info.tok_info.idx
+	let old_idx = toks_info[0].idx
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
 	" TODO: Although it's ok to use vsel knowledge in this Vmap_apply
@@ -3526,11 +3545,10 @@ fu! s:Vmap_apply(rgn, pspec, sync_info, toks_info)
 	" information a different way: e.g., from 'action' on individual toks.
 	while 1
 		let tok = toks[i]
-		let [is_head, is_tail] = [i == vsel_beg_idx, i == vsel_end_idx]
-		let is_phantom = is_head || is_tail
+		let is_phantom = has_key(tok, 'phantom') && tok.phantom
 		if !is_phantom
 			" Non-phantom (in buffer) tok.
-			let old_idx = tok.tok_info.idx
+			let old_idx = tok.idx
 		endif
 		" Ensure region beyond tail remains the same.
 		let new_idx = is_tail ? old_idx :
@@ -3557,69 +3575,55 @@ fu! s:Vmap_do(rgn, pspec)
 	"echo string(toks_info)
 	if !empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
-		call s:Vmap_apply(a:rgn, a:pspec, sync_info, toks_info)
+		call s:Vmap_apply(a:rgn, a:pspec, toks_info)
 	endif
 	let g:dbg = string(toks_info)
 	return toks_info
 endfu
 
-fu! s:Vmap_cleanup(rgn, toks_info)
-	" {
-	"   vsel_beg_idx:
-	"   vsel_end_idx:
-	"   sync_info: {
-	"     sync_idx: old_idx
-	"     stoppos: stoppos
-	"     stoppos_zwa: stoppos_zwa
-	"     tok_info: <explicit_tok_info> | {'pos': [], 'rgn': a:rgn, 'idx': old_idx}
-	"   }
-	"   toks: [{
-	"       tok_info: {rgn: fmt, idx: 2, pos: [3,1]}
-	"       action: '[iard]*'
-	"       is_head: 0|1
-	"       is_tail: 0|1
-	"   }]
+fu! s:Vmap_cleanup(rgn, toks)
+	" toks: [{
+	"     rgn: fmt,
+	"     idx: 1,
+	"     pos: [1,2],
+	"     action: '[iard]*'
+	"     loc: pre_v|v_head|in_v|v_tail|post_v
+	"     Note: May be able to get rid of phantom since action can tell the story.
+	"     phantom: 0|1
+	" }]
 	"
-	" TODO: Consider creating an unconditional head out of sync_info.
-	echomsg "toks_info: " . string(a:toks_info)
-	let sync_idx = a:toks_info.sync_info.sync_idx
-	let toks = a:toks_info.toks
-	let hard_sync = !empty(a:toks_info.sync_info.tok_info.pos)
-	let tip = a:toks_info.sync_info.tok_info
-	" If hard_sync, sync tok is already in toks.
-	let idx = hard_sync ? 1 : 0
+	let toks = a:toks
+	" Keep up with tok and prev tok within loop.
+	let tip = toks[0]
+	" Start with tok *after* (implied or explicit) sync tok
+	let idx = 1
 	while idx < len(toks)
 		let ti = toks[idx]
 		let useful = 1
+		" Calculate redundant and useful independently,
 		" Note: Never consider a non-explicit token to be useless.
-		if !empty(tip.pos)
-			let useful = s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
-		endif
-
-		" Design Decision: Calculate redundant and useful independently,
-		" considering sync_idx *only* for redundancy determination.
 		" Rationale: sync_idx validity can be safely used to determine
 		" redundancy, but not uselessness (which relies on knowledge of
 		" existence of hlable chars in unknown region of buffer).
+		if !empty(tip.pos)
+			let useful = s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
+		endif
 		let redundant = tip.tok_info.idx == ti.tok_info.idx
 
-		let tdel = {}
-		if !useful || redundant
-			let tdel = redundant ? ti : tip
-			if !empty(tip)
+		" Ensure that useless or redundant toks are either discarded (phantom)
+		" or deleted from buffer.
+		" Note: No need to remove anything from list at this point: setting a
+		" phantom's action to null accomplishes the same thing.
+		" TODO: Perhaps an tok_is_phantom() predicate?
+		let tdel = !useful ? tip : redundant ? ti : {}
+		if !empty(tdel)
+			let tdel.action = tdel.action == 'i' || tdel.action =='a' ? '' : 'd'
 		endif
-		if !useful
-			" If phantom, cause tok to be ignored/discarded; else deleted.
-			let tip.action = tip.is_head || tip.is_tail ? '' : 'd'
-		elseif redundant
-			let ti.action = ti.is_head || ti.is_tail ? '' : 'd'
-		endif
-		" TODO: UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!!
-		"
-		if ti.action != 'd'
+		" If ti is being deleted, tip is still previous.
+		if !redundant
 			let tip = ti
-			let idx += 1
 		endif
+		let idx += 1
 	endwhile
 endfu
 
