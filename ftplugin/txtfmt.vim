@@ -3410,48 +3410,44 @@ endfu
 "   loc
 "   action
 fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
-	let tok_info = a:sync_info.tok_info
-	let tok_info.action = 'i'
 	" Bootstrap with the sync token.
-	let toks = [tok_info]
+	let toks = [a:sync_info.tok_info]
 	" Assumption: Positioned at sync location.
 	let first_iter = 1
 	let vsel_cmp_prev = -1
-	let [vsel_beg_idx, vsel_end_idx] = [-1, -1]
+	let [vsel_beg_found, vsel_end_found] = [0, 0]
 	while 1
 		" TODO: Set this appropriately...
 		" IN FLUX!!!!!!!!!!!!!!!!!!!!! TODO
+		" Note: loc now defined as '<|=|>', with action 'i' or 'a' indicating phantom.
 		let cont = 1
 		let tok_added = 0
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
 		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
 		if a:mark_vsel && vsel_cmp_prev < vsel_cmp
-			if vsel_beg_idx < 0
-				" Note: We're about to add 'head' one way or another.
-				let vsel_beg_idx = len(toks)
-				" TODO: Validate this approach: add unconditionally, even if
-				" tok already at head. (Simplifies subsequent logic by
-				" ensuring that all head/tails are phantoms.)
-				if empty(tok_info)
+			" We've advanced w.r.t. vsel.
+			if !vsel_beg_found
+				" Need to add something for head: either a phantom (here) or
+				" augmented tok (end of loop).
+				let vsel_beg_found = 1
+				if empty(tok_info) || !s:Is_at_vsel_head()
 					" Add empty for vsel beg
 					" TODO: May not be appropriate to add 'action' at this
-					" stage. Consolidate loc/phantom/action...
+					" stage. Consolidate loc/phantom/action somehow...
 					call add(toks, {
 						\'rgn': a:rgn,
 						\'pos': s:Getpos("'<"),
 						\'idx': -1,
-						\'loc': 'head_v',
-						\'phantom': 1,
+						\'loc': '=',
 						\'action': 'i'
 					\})
-				elseif !s:Is_at_vsel_head()
-
 				endif
 			endif
-			if vsel_end_idx < 0 && vsel_cmp == 1
-				" Note: We're about to add 'tail' one way or another.
-				let vsel_end_idx = len(toks)
+			if !vsel_end_found && vsel_cmp == 1
+				" Need to add something for tail: either a phantom (here) or
+				" augmented tok (end of loop).
+				let vsel_end_found = 1
 				if empty(tok_info) || !s:Is_at_vsel_tail()
 					" Add empty for vsel end
 					" TODO: Extra flags to denote head/tail?
@@ -3459,26 +3455,23 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 						\'rgn': a:rgn,
 						\'pos': s:Getpos("'>"),
 						\'idx': -1,
-						\'loc': 'tail_v',
-						\'phantom': 1,
+						\'loc': '=',
 						\'action': 'a'
 					\})
 				endif
 			endif
 		endif
-		" Issue!!!! is_head/tail make sense only when a:mark_vsel is true
-		" (i.e., we're not simply doing this for cleanup).
-		" TODO Fix: Need to transition away from is_head/tail (or at least, be
-		" sure they're not set when mark_vsel is false). I'm thinking perhaps
-		" just let action convey the necessary information: e.g., i means head
-		" if we care, and a means tail. Keep in mind that both indicators mean
-		" the char is still phantom.
 		if !empty(tok_info)
-			let tok_info.loc
-			call add(toks, {
-				\'tok_info': tok_info,
-				\'action': ''
-			\})
+			" Assumption: A real tok is always processed here, never above.
+			" (Though we may consider the tok above, it's never added there.)
+			if a:mark_vsel
+				" TODO: Perhaps have Cmp_vsel return symbols directly.
+				let tok_info.loc = !vsel_cmp ? '=' : vsel_cmp < 0 ? '<' : '>'
+				" Note: Could be actual (non-phantom) head or tail (no special
+				" distinction required).
+				let tok_info.action = ''
+			endif
+			call add(toks, tok_info)
 		else
 			" No more tokens in range.
 			break
@@ -3486,23 +3479,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 		let vsel_cmp_prev = vsel_cmp
 		let first_iter = 0
 	endwhile
-	" TODO: Maybe don't return a:sync_info since caller should have it. In
-	" fact, might be able to return just the list, now that flags are
-	" contained.
-	" TODO: Not sure sync_info needs to be in this anymore... In fact, may
-	" just have list returned by ref and indices (if applicable) returned
-	" explicitly.
-	let ret = {
-		\'sync_info': a:sync_info,
-		\'toks': toks
-	\}
-	" TODO: I'm thinking we can just return the list of toks, as the beg/end
-	" info is inherent.
-	if a:mark_vsel
-		let ret.vsel_beg_idx = vsel_beg_idx
-		let ret.vsel_end_idx = vsel_end_idx
-	endif
-	return ret
+	return toks
 endfu
 " ISSUE!!!!!!!!!!!!! This won't work - can't determine hlable on basis of old
 " chars - needs to take new into account.
@@ -3530,19 +3507,15 @@ fu! s:Vmap_determine_hlable(rgn, toks_info)
 endfu
 
 " TODO: Consider some sort of location flags: e.g., ^ $ and < = > (before, in,
-" after vsel) - but only if useful.
-fu! s:Vmap_apply(rgn, pspec, toks_info)
+" after vsel) - but only if useful. Consider having these replace pre_v,
+" head_v, etc...
+fu! s:Vmap_apply(rgn, pspec, toks)
 	" TODO: Decide on this... Pass just rgn portion?
 	let pspec = a:pspec[a:rgn]
-	let [vsel_beg_idx, vsel_end_idx, toks] =
-		\[a:toks_info.vsel_beg_idx, a:toks_info.vsel_end_idx, a:toks_info.toks]
-	let old_idx = toks_info[0].idx
+	let toks = a:toks
+	let old_idx = toks[0].idx
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
-	" TODO: Although it's ok to use vsel knowledge in this Vmap_apply
-	" function, vsel_beg/end_idx shouldn't be in toks_info, so we'd need to
-	" get it another way. Actually, I'm thinking we could get the 'phantom'
-	" information a different way: e.g., from 'action' on individual toks.
 	while 1
 		let tok = toks[i]
 		let is_phantom = has_key(tok, 'phantom') && tok.phantom
@@ -3570,15 +3543,15 @@ fu! s:Vmap_do(rgn, pspec)
 	"echo string(sync_info)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 	" start/end indices returned explicitly.
-	let toks_info = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
+	let toks = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
 	"echo "After Vmap_collect..."
-	"echo string(toks_info)
+	"echo string(toks)
 	if !empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
-		call s:Vmap_apply(a:rgn, a:pspec, toks_info)
+		call s:Vmap_apply(a:rgn, a:pspec, toks)
 	endif
-	let g:dbg = string(toks_info)
-	return toks_info
+	let g:dbg = string(toks)
+	return toks
 endfu
 
 fu! s:Vmap_cleanup(rgn, toks)
