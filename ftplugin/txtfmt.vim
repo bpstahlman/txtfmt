@@ -3368,6 +3368,7 @@ fu! s:Vmap_sync_start(rgn)
 	call cursor(vsel_beg_pos)
 	" Look forward for tok prior to start of region.
 	let tok_info = s:Search_tok(a:rgn, '', pre_vsel_zwa)
+	let curpos_checked = 1
 	if empty(tok_info)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
 		let tok_info = s:Search_tok(a:rgn, 'b', post_sync_limit_zwa)
@@ -3378,111 +3379,106 @@ fu! s:Vmap_sync_start(rgn)
 			if empty(s:Backward_char())
 				" Already at head of buffer
 				let tok_info.idx = 0
-				tok_info.loc = 'head_v'
+				let curpos_checked = 0
 			else
 				" Sitting 1 char prior to vsel.
 				" Sync on synstack.
 				let tok_info.idx = s:Get_cur_rgn_info()[a:rgn]
-				" Can't be head, in, tail or post...
-				tok_info.loc = 'pre_v'
 			endif
-		else
-			" Sync to found tok
-			tok_info.loc = 'pre_v'
 		endif
-	else
-		" Sync to found tok
-		tok_info.loc = 'pre_v'
 	endif
 	
 	" TODO: Decide on stoppos vs stoppos_zwa vs both.
 	return {
 		\'stoppos': stoppos,
 		\'stoppos_zwa': stoppos_zwa,
+		\'curpos_checked': curpos_checked,
 		\'tok_info': tok_info
 	\}
 endfu
-" TODO: This function also should augment tok_info with loc and action: i.e.,
-" resulting tok_info should have...
-"   rgn
-"   pos
-"   idx
-"   loc
-"   action
+" Note: This function also should augment tok_info with loc and action: i.e.,
+" in addition to the basic tok returned by Search_tok, the toks in the
+" returned list will have the following:
+"   loc    ('<|=|>')
+"   action ('i', 'a', '')
+"   Note: action may be assigned other values in Vmap_apply, but for now,
+"   phantom head/tail will be set to i/a respectively, with all others null.
 fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
-	" Bootstrap with the sync token.
+	let sync_tok = a:sync_info.tok_info
+	if a:mark_vsel
+		let sync_tok.loc = '<'
+		let sync_tok.action = ''
+	endif
+	" Bootstrap with the sync tok (possibly implied).
 	let toks = [a:sync_info.tok_info]
-	" Assumption: Positioned at sync location.
-	let first_iter = 1
+	" Assumption: Cursor on sync tok if one was found; otherwise, it's where
+	" we need to begin our forward search, with match at cursor allowed only
+	" if sync_info says it should be (e.g., if marking vsel and vsel coincides
+	" with start of buffer).
+	let allow_cmatch = !sync_info.curpos_checked
 	let vsel_cmp_prev = -1
 	let [vsel_beg_found, vsel_end_found] = [0, 0]
 	while 1
-		" TODO: Set this appropriately...
 		" IN FLUX!!!!!!!!!!!!!!!!!!!!! TODO
-		" Note: loc now defined as '<|=|>', with action 'i' or 'a' indicating phantom.
-		let cont = 1
-		let tok_added = 0
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
-		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
-		if a:mark_vsel && vsel_cmp_prev < vsel_cmp
-			" We've advanced w.r.t. vsel.
-			if !vsel_beg_found
-				" Need to add something for head: either a phantom (here) or
-				" augmented tok (end of loop).
-				let vsel_beg_found = 1
-				if empty(tok_info) || !s:Is_at_vsel_head()
-					" Add empty for vsel beg
-					" TODO: May not be appropriate to add 'action' at this
-					" stage. Consolidate loc/phantom/action somehow...
-					call add(toks, {
-						\'rgn': a:rgn,
-						\'pos': s:Getpos("'<"),
-						\'idx': -1,
-						\'loc': '=',
-						\'action': 'i'
-					\})
+		let allow_cmatch = 0
+		if a:mark_vsel
+			let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
+			if vsel_cmp_prev < vsel_cmp
+				" We've advanced w.r.t. vsel.
+				if !vsel_beg_found
+					" Need to add something for head: either a phantom (here) or
+					" augmented tok (end of loop).
+					let vsel_beg_found = 1
+					if empty(tok_info) || !s:Is_at_vsel_head()
+						" Add empty for vsel beg
+						call add(toks, {
+							\'rgn': a:rgn,
+							\'pos': s:Getpos("'<"),
+							\'idx': -1,
+							\'loc': '=',
+							\'action': 'i'
+						\})
+					endif
 				endif
-			endif
-			if !vsel_end_found && vsel_cmp == 1
-				" Need to add something for tail: either a phantom (here) or
-				" augmented tok (end of loop).
-				let vsel_end_found = 1
-				if empty(tok_info) || !s:Is_at_vsel_tail()
-					" Add empty for vsel end
-					" TODO: Extra flags to denote head/tail?
-					call add(toks, {
-						\'rgn': a:rgn,
-						\'pos': s:Getpos("'>"),
-						\'idx': -1,
-						\'loc': '=',
-						\'action': 'a'
-					\})
+				if !vsel_end_found && vsel_cmp == 1
+					" Need to add something for tail: either a phantom (here) or
+					" augmented tok (end of loop).
+					let vsel_end_found = 1
+					if empty(tok_info) || !s:Is_at_vsel_tail()
+						" Add empty for vsel end
+						" TODO: Extra flags to denote head/tail?
+						call add(toks, {
+							\'rgn': a:rgn,
+							\'pos': s:Getpos("'>"),
+							\'idx': -1,
+							\'loc': '=',
+							\'action': 'a'
+						\})
+					endif
 				endif
 			endif
 		endif
 		if !empty(tok_info)
-			" Assumption: A real tok is always processed here, never above.
-			" (Though we may consider the tok above, it's never added there.)
+			" Assumption: A real tok is always added here, never above.
 			if a:mark_vsel
 				" TODO: Perhaps have Cmp_vsel return symbols directly.
 				let tok_info.loc = !vsel_cmp ? '=' : vsel_cmp < 0 ? '<' : '>'
 				" Note: Could be actual (non-phantom) head or tail (no special
 				" distinction required).
 				let tok_info.action = ''
+				" Update for next iteration...
+				let vsel_cmp_prev = vsel_cmp
 			endif
 			call add(toks, tok_info)
 		else
 			" No more tokens in range.
 			break
 		endif
-		let vsel_cmp_prev = vsel_cmp
-		let first_iter = 0
 	endwhile
 	return toks
 endfu
-" ISSUE!!!!!!!!!!!!! This won't work - can't determine hlable on basis of old
-" chars - needs to take new into account.
 fu! s:Vmap_determine_hlable(rgn, toks_info)
 	let toks = a:toks_info.toks
 	let num_toks = len(toks)
@@ -3572,6 +3568,7 @@ fu! s:Vmap_cleanup(rgn, toks)
 	let idx = 1
 	while idx < len(toks)
 		let ti = toks[idx]
+		" Note: useful refers to prev tok, not current.
 		let useful = 1
 		" Calculate redundant and useful independently,
 		" Note: Never consider a non-explicit token to be useless.
