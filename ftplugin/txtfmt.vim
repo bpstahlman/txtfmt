@@ -3351,7 +3351,6 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 "     pos: []
 "     rgn: fgc|fmt|bgc
 "     idx: *
-"     loc: pre_v|v_head|in_v|v_tail|post_v
 "   }
 " } 
 fu! s:Vmap_sync_start(rgn)
@@ -3399,7 +3398,7 @@ endfu
 " Note: This function also should augment tok_info with loc and action: i.e.,
 " in addition to the basic tok returned by Search_tok, the toks in the
 " returned list will have the following:
-"   loc    ('<|=|>')
+"   loc    ('<|{|=|}|>')
 "   action ('i', 'a', '')
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
@@ -3437,7 +3436,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 							\'rgn': a:rgn,
 							\'pos': s:Getpos("'<"),
 							\'idx': -1,
-							\'loc': '=',
+							\'loc': '{',
 							\'action': 'i'
 						\})
 					endif
@@ -3453,7 +3452,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 							\'rgn': a:rgn,
 							\'pos': s:Getpos("'>"),
 							\'idx': -1,
-							\'loc': '=',
+							\'loc': '}',
 							\'action': 'a'
 						\})
 					endif
@@ -3464,7 +3463,9 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 			" Assumption: A real tok is always added here, never above.
 			if a:mark_vsel
 				" TODO: Perhaps have Cmp_vsel return symbols directly.
-				let tok_info.loc = !vsel_cmp ? '=' : vsel_cmp < 0 ? '<' : '>'
+				let tok_info.loc = vsel_cmp < 0 ? '<' : vsel_cmp > 0 ? '>'
+					\: s:Getpos("'<") == tok_info.pos ? '{'
+					\: s:Getpos("'>") == tok_info.pos ? '}' : '='
 				" Note: Could be actual (non-phantom) head or tail (no special
 				" distinction required).
 				let tok_info.action = ''
@@ -3502,32 +3503,55 @@ fu! s:Vmap_determine_hlable(rgn, toks_info)
 	return a:toks_info
 endfu
 
-" TODO: Consider some sort of location flags: e.g., ^ $ and < = > (before, in,
-" after vsel) - but only if useful. Consider having these replace pre_v,
-" head_v, etc...
 fu! s:Vmap_apply(rgn, pspec, toks)
 	" TODO: Decide on this... Pass just rgn portion?
 	let pspec = a:pspec[a:rgn]
 	let toks = a:toks
-	let old_idx = toks[0].idx
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
+	" TODO: Handle the easy cases: colors.
+	let old_idx = toks[0].idx
+	let i = 1
 	while 1
 		let tok = toks[i]
-		let is_phantom = has_key(tok, 'phantom') && tok.phantom
-		if !is_phantom
-			" Non-phantom (in buffer) tok.
+		if tok.loc == '<'
+			" Change nothing prior to region, but do stay in sync.
 			let old_idx = tok.idx
-		endif
-		" Ensure region beyond tail remains the same.
-		let new_idx = is_tail ? old_idx :
-			\a:rgn == 'fmt' ? s:Vmap_apply_fmt(pspec, old_idx) : pspec
-		let tok.tok_info.idx = new_idx
-		if !is_phantom && new_idx != old_idx
-			let tok.action = 'r'
-		endif
-		if i >= vsel_end_idx
+			let new_idx = old_idx
+		elseif tok.loc == '{'
+			if a:rgn == 'fmt'
+				if tok.action != 'i'
+					" Real tok - not phantom
+					let old_idx = tok.idx
+				endif
+				let new_idx = s:Vmap_apply_fmt(old_idx)
+			endif
+		elseif tok.loc == '='
+			if a:rgn == 'fmt'
+				let old_idx = tok.idx
+				let new_idx = s:Vmap_apply_fmt(old_idx)
+			else
+				" TODO: Delete all interiors... Change ends only.
+			endif
+		elseif tok.loc == '}'
+			if a:rgn == 'fmt'
+				if tok.action != 'a'
+					" Real tok - not phantom
+					let old_idx = tok.idx
+				endif
+				let new_idx = old_idx
+			endif
+		else " past vsel
 			break
+		endif
+		" Handle any required tok update.
+		if new_idx != old_idx
+			let tok.idx = new_idx
+			" Phantom toks have correct action already; mark the others for
+			" replacement iff they need to change.
+			if empty(tok.action)
+				let tok.action = 'r'
+			endif
 		endif
 		let i += 1
 	endwhile
@@ -3556,9 +3580,7 @@ fu! s:Vmap_cleanup(rgn, toks)
 	"     idx: 1,
 	"     pos: [1,2],
 	"     action: '[iard]*'
-	"     loc: pre_v|v_head|in_v|v_tail|post_v
-	"     Note: May be able to get rid of phantom since action can tell the story.
-	"     phantom: 0|1
+	"     loc: <|{|=|}|>
 	" }]
 	"
 	let toks = a:toks
@@ -3568,16 +3590,13 @@ fu! s:Vmap_cleanup(rgn, toks)
 	let idx = 1
 	while idx < len(toks)
 		let ti = toks[idx]
-		" Note: useful refers to prev tok, not current.
-		let useful = 1
 		" Calculate redundant and useful independently,
 		" Note: Never consider a non-explicit token to be useless.
 		" Rationale: sync_idx validity can be safely used to determine
 		" redundancy, but not uselessness (which relies on knowledge of
 		" existence of hlable chars in unknown region of buffer).
-		if !empty(tip.pos)
-			let useful = s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
-		endif
+		" Note: useful refers to prev tok, not current.
+		let useful = empty(tip.pos) ? 1 : s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
 		let redundant = tip.tok_info.idx == ti.tok_info.idx
 
 		" Ensure that useless or redundant toks are either discarded (phantom)
@@ -3585,6 +3604,9 @@ fu! s:Vmap_cleanup(rgn, toks)
 		" Note: No need to remove anything from list at this point: setting a
 		" phantom's action to null accomplishes the same thing.
 		" TODO: Perhaps an tok_is_phantom() predicate?
+		" TODO: Consider whether useless/redundant removal logic needs to
+		" consider loc { and }: e.g., if there's a choice about which to
+		" remove, keep head or tail.
 		let tdel = !useful ? tip : redundant ? ti : {}
 		if !empty(tdel)
 			let tdel.action = tdel.action == 'i' || tdel.action =='a' ? '' : 'd'
