@@ -3414,13 +3414,13 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 	" we need to begin our forward search, with match at cursor allowed only
 	" if sync_info says it should be (e.g., if marking vsel and vsel coincides
 	" with start of buffer).
-	let allow_cmatch = !sync_info.curpos_checked
+	let allow_cmatch = !a:sync_info.curpos_checked
 	let vsel_cmp_prev = -1
 	let [vsel_beg_found, vsel_end_found] = [0, 0]
 	while 1
 		" IN FLUX!!!!!!!!!!!!!!!!!!!!! TODO
 		" Look for next tok within stopline range (not necessarily in vsel)
-		let tok_info = s:Search_tok(a:rgn, first_iter ? 'c' : '', a:sync_info.stoppos_zwa)
+		let tok_info = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stoppos_zwa)
 		let allow_cmatch = 0
 		if a:mark_vsel
 			let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
@@ -3514,6 +3514,8 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 	let i = 1
 	while 1
 		let tok = toks[i]
+		" TODO: If we guarantee new_idx is set within if/else, remove this...
+		let new_idx = -1
 		if tok.loc == '<'
 			" Change nothing prior to region, but do stay in sync.
 			let old_idx = tok.idx
@@ -3524,12 +3526,12 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 					" Real tok - not phantom
 					let old_idx = tok.idx
 				endif
-				let new_idx = s:Vmap_apply_fmt(old_idx)
+				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
 			endif
 		elseif tok.loc == '='
 			if a:rgn == 'fmt'
 				let old_idx = tok.idx
-				let new_idx = s:Vmap_apply_fmt(old_idx)
+				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
 			else
 				" TODO: Delete all interiors... Change ends only.
 			endif
@@ -3544,8 +3546,11 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 		else " past vsel
 			break
 		endif
+		if !exists('l:new_idx')
+			echoerr 'rgn: ' . string(rgn)
+		endif
 		" Handle any required tok update.
-		if new_idx != old_idx
+		if new_idx >= 0 && new_idx != old_idx
 			let tok.idx = new_idx
 			" Phantom toks have correct action already; mark the others for
 			" replacement iff they need to change.
@@ -3564,13 +3569,12 @@ fu! s:Vmap_do(rgn, pspec)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 	" start/end indices returned explicitly.
 	let toks = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
-	"echo "After Vmap_collect..."
-	"echo string(toks)
+	call s:dbg_display_toks("Vmap_collect", toks)
 	if !empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
 		call s:Vmap_apply(a:rgn, a:pspec, toks)
 	endif
-	let g:dbg = string(toks)
+	call s:dbg_display_toks("Vmap_apply", toks)
 	return toks
 endfu
 
@@ -3579,7 +3583,8 @@ fu! s:Vmap_cleanup(rgn, toks)
 	"     rgn: fmt,
 	"     idx: 1,
 	"     pos: [1,2],
-	"     action: '[iard]*'
+	"     " Note: d not introduced till this function.
+	"     action: '[iard]?'
 	"     loc: <|{|=|}|>
 	" }]
 	"
@@ -3590,39 +3595,45 @@ fu! s:Vmap_cleanup(rgn, toks)
 	let idx = 1
 	while idx < len(toks)
 		let ti = toks[idx]
-		" Calculate redundant and useful independently,
-		" Note: Never consider a non-explicit token to be useless.
+		" Calculate redundant and superseding independently,
+		" Note: Never consider a non-explicit token to be superseded.
 		" Rationale: sync_idx validity can be safely used to determine
-		" redundancy, but not uselessness (which relies on knowledge of
+		" redundancy, but not supersedence (which relies on knowledge of
 		" existence of hlable chars in unknown region of buffer).
-		" Note: useful refers to prev tok, not current.
-		let useful = empty(tip.pos) ? 1 : s:Contains_hlable(a:rgn, ti.tok_info.idx, tip.tok_info.pos, ti.tok_info.pos, 1)
-		let redundant = tip.tok_info.idx == ti.tok_info.idx
+		" Note: superseding refers to what ti does to tip.
+		let superseding = empty(tip.pos) ? 0 : !s:Contains_hlable(a:rgn, ti.idx, tip.pos, ti.pos, 1)
+		let redundant = tip.idx == ti.idx
 
-		" Ensure that useless or redundant toks are either discarded (phantom)
-		" or deleted from buffer.
+		" Ensure that superseded or redundant toks are either discarded
+		" (phantom) or deleted from buffer.
 		" Note: No need to remove anything from list at this point: setting a
 		" phantom's action to null accomplishes the same thing.
 		" TODO: Perhaps an tok_is_phantom() predicate?
-		" TODO: Consider whether useless/redundant removal logic needs to
+		" TODO: Consider whether superseded/redundant removal logic needs to
 		" consider loc { and }: e.g., if there's a choice about which to
 		" remove, keep head or tail.
-		let tdel = !useful ? tip : redundant ? ti : {}
+		let tdel = redundant ? ti : superseding ? tip : {}
 		if !empty(tdel)
 			let tdel.action = tdel.action == 'i' || tdel.action =='a' ? '' : 'd'
 		endif
-		" If ti is being deleted, tip is still previous.
-		if !redundant
+		" Unless ti is being deleted, tip becomes ti for next iter.
+		if empty(tdel) || tdel isnot ti
 			let tip = ti
 		endif
 		let idx += 1
 	endwhile
 endfu
 
-fu! s:dbg_display_toks(toks)
+fu! s:dbg_display_toks(context, toks)
+	echo "\r"
+	echo a:context
 	for ti in a:toks
-		echo printf('(%3d, %3d): %s(%d): => %s', ti.tok_info.pos[0], ti.tok_info.pos[1], ti.tok_info.rgn, ti.tok_info.idx, ti.action)
+		echo printf('(%3d, %3d): %s(%d): => %s'
+			\, empty(ti.pos) ? -1 : ti.pos[0]
+			\, empty(ti.pos) ? -1 : ti.pos[1]
+			\, ti.rgn, ti.idx, ti.action)
 	endfor
+	echo "\r"
 endfu
 
 " TODO: Remove this TODO list...
@@ -3981,9 +3992,7 @@ fu! s:Highlight_selection_impl(pspecs)
 		" TODO: May change name to calculate or something?
 		let toks_info = s:Vmap_do(rgn, pspec)
 		call s:Vmap_cleanup(rgn, toks_info)
-		echo "Post cleanup:"
-		call s:dbg_display_toks(toks_info.toks)
-		"echo string(toks_info.toks)
+		call s:dbg_display_toks("Vmap_cleanup", toks_info)
 		" TODO: Perhaps make this a merge operation instead of simple list
 		" append. Would simplify work of Vmap_apply_changes.
 		call add(toks_infos, toks_info)
