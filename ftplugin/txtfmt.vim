@@ -3578,6 +3578,95 @@ fu! s:Vmap_do(rgn, pspec)
 	return toks
 endfu
 
+fu! s:Vmap_cmp_pos(p_a, p_b)
+	let [al, bl, ac, bc] = [p_a[0], p_b[0], p_a[1], p_b[1]]
+	if al < bl
+		return -1
+	elseif al > bl
+		return 1
+	else
+		" Consider col
+		if ac < bc
+			return -1
+		elseif ac > bc
+			return 1
+		else
+			return 0
+		endif
+	endif
+endfu
+fu! s:Vmap_cmp_tok(t_a, t_b)
+	let cmp = s:Vmap_cmp_pos(a:t_a, a:t_b)
+	if !cmp
+		return cmp
+	endif
+	" Consider action to break positional tie.
+	" Possible values: i|a|r|d
+	" Logic: [ia] and [rd] are mutually-exclusive sets: i.e., one from each
+	" set could exist at same pos, but not multiples from same set.
+	" Assumption: Empty actions have been discarded.
+	let [act_a, act_b] = [t_a.action, t_b.action]
+	if act_a == 'i'
+		return -1
+	elseif act_a == 'a'
+		return 1
+	elseif act_b == 'i'
+		return 1
+	elseif act_b == 'a'
+		return -1
+	else
+		throw printf("Internal error: mutually-exclusive actions %c, %c at position [%d, %d].",
+			\act_a, act_b, a:t_a.pos[0], a:t_a.pos[1])
+	endif
+endfu
+
+" Reverse toks and merge with mtoks (assumed to be reversed/merged already).
+fu! s:Vmap_rev_and_merge(mtoks, toks)
+	if empty(a:toks)
+		" Note: For consistency with non-short-circuit case, return a copy.
+		return copy(a:mtoks)
+	endif
+	" Cache some convenience refs.
+	let [mtoks, toks, mtoks_ret] = [a:mtoks, a:toks, []]
+	let idx = len(toks) - 1
+	" Iterate mtoks (ordered from latest to earliest), peeling off toks from
+	" end of toks (still ordered earliest to latest). Each iteration, pull one
+	" or the other into the output list.
+	let tok = toks[idx]
+	for mtok in mtoks
+		if empty(tok.action)
+			" Discard toks for which we have nothing to do.
+			continue
+		endif
+		let cmp = Vmap_cmp_tok(tok, mtok)
+		if cmp >= 0
+			" Strip off end of toks and add to output list.
+			call add(mtoks_ret, tok)
+			if idx > 0
+				let idx -= 1
+				let tok = toks[idx]
+			else
+				break
+			endif
+		else
+			call add(mtoks_ret, mtok)
+		endif
+	endfor
+	if idx > 0
+		" Append what remains of toks to end of output list.
+		call extend(mtoks_ret, toks[0:idx])
+	endif
+	return mtoks_ret
+endfu
+
+" Merge the list of 1..3 tok lists together, performing the actions as we
+" go...
+fu! s:Vmap_apply_changes(toks_list)
+	let toks = s:Vmap_merge_and_reorder_toks(a:toks_list)
+	call s:dbg_display_toks("Vmap_merge_and_reorder_toks", toks)
+
+endfu
+
 fu! s:Vmap_cleanup(rgn, toks)
 	" toks: [{
 	"     rgn: fmt,
@@ -3622,6 +3711,8 @@ fu! s:Vmap_cleanup(rgn, toks)
 		endif
 		let idx += 1
 	endwhile
+	" TODO: Appropriate to return, or just call by ref?
+	return toks
 endfu
 
 fu! s:dbg_display_toks(context, toks)
@@ -3982,7 +4073,7 @@ fu! s:Highlight_selection_impl(pspecs)
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
 	let rgn_info = {}
-	let toks_infos = []
+	let mtoks = []
 	" Loop over rgn types.
 	for rgn in keys(a:pspecs)
 		" Unlet needed because rgn_info can be either num or list.
@@ -3990,12 +4081,14 @@ fu! s:Highlight_selection_impl(pspecs)
 		let pspec = a:pspecs[rgn]
 
 		" TODO: May change name to calculate or something?
-		let toks_info = s:Vmap_do(rgn, pspec)
-		call s:Vmap_cleanup(rgn, toks_info)
-		call s:dbg_display_toks("Vmap_cleanup", toks_info)
+		let toks = s:Vmap_do(rgn, pspec)
+		" TODO: Consider call by ref vs return...
+		let toks = s:Vmap_cleanup(rgn, toks)
+		call s:dbg_display_toks("Vmap_cleanup", toks)
 		" TODO: Perhaps make this a merge operation instead of simple list
 		" append. Would simplify work of Vmap_apply_changes.
-		call add(toks_infos, toks_info)
+		call s:Vmap_rev_and_merge(mtoks, toks)
+		"call add(toks, toks_info)
 
 	endfor
 	" Execute, merging the individual token lists together as we go.
