@@ -3512,7 +3512,7 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 	" TODO: Handle the easy cases: colors.
 	let old_idx = toks[0].idx
 	let i = 1
-	while 1
+	while i < len(toks)
 		let tok = toks[i]
 		" TODO: If we guarantee new_idx is set within if/else, remove this...
 		let new_idx = -1
@@ -3521,42 +3521,47 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 			let old_idx = tok.idx
 			let new_idx = old_idx
 		elseif tok.loc == '{'
-			if a:rgn == 'fmt'
-				if tok.action != 'i'
-					" Real tok - not phantom
-					let old_idx = tok.idx
-				endif
-				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
-			endif
-		elseif tok.loc == '='
-			if a:rgn == 'fmt'
+			if tok.action != 'i'
+				" Real tok - not phantom
 				let old_idx = tok.idx
+			endif
+			if a:rgn == 'fmt'
 				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
 			else
-				" TODO: Delete all interiors... Change ends only.
+				let new_idx = pspec
+			endif
+		elseif tok.loc == '='
+			let old_idx = tok.idx
+			" Leave new_idx == -1 for clr/bgc toks to force deletion.
+			if a:rgn == 'fmt'
+				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
 			endif
 		elseif tok.loc == '}'
-			if a:rgn == 'fmt'
-				if tok.action != 'a'
-					" Real tok - not phantom
-					let old_idx = tok.idx
-				endif
-				let new_idx = old_idx
+			if tok.action != 'a'
+				" Real tok - not phantom
+				let old_idx = tok.idx
 			endif
+			let new_idx = old_idx
 		else " past vsel
 			break
 		endif
-		if !exists('l:new_idx')
-			echoerr 'rgn: ' . string(rgn)
-		endif
 		" Handle any required tok update.
-		if new_idx >= 0 && new_idx != old_idx
-			let tok.idx = new_idx
-			" Phantom toks have correct action already; mark the others for
-			" replacement iff they need to change.
-			if empty(tok.action)
-				let tok.action = 'r'
+		if new_idx >= 0
+			" Don't make changes where none are required.
+			" Design Decision: Defer all decisions regarding redundancy and
+			" such.
+			if new_idx != tok.idx
+				let tok.idx = new_idx
+				" Assumption: Phantom toks are the only ones with non-empty
+				" action at this point, and their action shouldn't change.
+				if empty(tok.action)
+					let tok.action = 'r'
+				endif
 			endif
+		else
+			" Delete the tok.
+			" TODO: This is for colors only; should this be done here?
+			let tok.action = 'd'
 		endif
 		let i += 1
 	endwhile
