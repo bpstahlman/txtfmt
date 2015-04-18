@@ -3578,8 +3578,9 @@ fu! s:Vmap_do(rgn, pspec)
 	return toks
 endfu
 
+" Compare input positions (format: [row, col])
 fu! s:Vmap_cmp_pos(p_a, p_b)
-	let [al, bl, ac, bc] = [p_a[0], p_b[0], p_a[1], p_b[1]]
+	let [al, bl, ac, bc] = [a:p_a[0], a:p_b[0], a:p_a[1], a:p_b[1]]
 	if al < bl
 		return -1
 	elseif al > bl
@@ -3595,17 +3596,20 @@ fu! s:Vmap_cmp_pos(p_a, p_b)
 		endif
 	endif
 endfu
+" Compare input tokens, considering first pos, then action iff necessary to
+" break tie.
 fu! s:Vmap_cmp_tok(t_a, t_b)
-	let cmp = s:Vmap_cmp_pos(a:t_a, a:t_b)
-	if !cmp
+	let cmp = s:Vmap_cmp_pos(a:t_a.pos, a:t_b.pos)
+	if cmp
+		" Position decides.
 		return cmp
 	endif
 	" Consider action to break positional tie.
 	" Possible values: i|a|r|d
-	" Logic: [ia] and [rd] are mutually-exclusive sets: i.e., one from each
-	" set could exist at same pos, but not multiples from same set.
 	" Assumption: Empty actions have been discarded.
-	let [act_a, act_b] = [t_a.action, t_b.action]
+	" Assumption: [ia] and [rd] are mutually-exclusive sets: i.e., one from
+	" each set could exist at same pos, but not multiples from same set.
+	let [act_a, act_b] = [a:t_a.action, a:t_b.action]
 	if act_a == 'i'
 		return -1
 	elseif act_a == 'a'
@@ -3615,46 +3619,72 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 	elseif act_b == 'a'
 		return -1
 	else
-		throw printf("Internal error: mutually-exclusive actions %c, %c at position [%d, %d].",
+		throw printf("Internal error: mutually-exclusive actions %s, %s at position [%d, %d].",
 			\act_a, act_b, a:t_a.pos[0], a:t_a.pos[1])
 	endif
 endfu
 
 " Reverse toks and merge with mtoks (assumed to be reversed/merged already).
+" TODO: Probably should just merge in-place.
+" Tested: 18Apr2015 (the functional (non-merge-in-place) version)
 fu! s:Vmap_rev_and_merge(mtoks, toks)
 	if empty(a:toks)
+		" Special case: Nothing to merge.
 		" Note: For consistency with non-short-circuit case, return a copy.
+		" TODO: Inefficiency of this case bolsters case for performing
+		" in-place merge...
 		return copy(a:mtoks)
+	endif
+	if empty(a:mtoks)
+		" Special case: Merging into empty list. Short-circuit.
+		return reverse(filter(copy(a:toks), '!empty(v:val.action)'))
 	endif
 	" Cache some convenience refs.
 	let [mtoks, toks, mtoks_ret] = [a:mtoks, a:toks, []]
+	" Iterate mtoks (in descending buffer order), peeling off toks from end of
+	" toks (still ordered in ascending buffer order) for merge where
+	" appropriate. Each iteration, unless discarding action-less tok, append
+	" element from either mtoks or toks to output list.
 	let idx = len(toks) - 1
-	" Iterate mtoks (ordered from latest to earliest), peeling off toks from
-	" end of toks (still ordered earliest to latest). Each iteration, pull one
-	" or the other into the output list.
-	let tok = toks[idx]
-	for mtok in mtoks
+	let midx = 0
+	while midx < len(mtoks)
+		" Is toks exhausted?
+		if idx < 0
+			" No more toks to merge. No point in merging one-by-one...
+			call extend(mtoks_ret, mtoks[midx:])
+			break
+		endif
+		" At least one more tok from each list.
+		let tok = toks[idx]
+		let mtok = mtoks[midx]
+		" Set non-empty iff something to add this iteration.
+		let addtok = {}
+		" At least 1 more tok to process
 		if empty(tok.action)
-			" Discard toks for which we have nothing to do.
-			continue
-		endif
-		let cmp = Vmap_cmp_tok(tok, mtok)
-		if cmp >= 0
-			" Strip off end of toks and add to output list.
-			call add(mtoks_ret, tok)
-			if idx > 0
-				let idx -= 1
-				let tok = toks[idx]
-			else
-				break
-			endif
+			" Silently discard toks for which we have nothing to do.
+			let idx -= 1
 		else
-			call add(mtoks_ret, mtok)
+			" Compare to see whether tok or mtok comes next.
+			let cmp = s:Vmap_cmp_tok(tok, mtok)
+			if cmp >= 0
+				let addtok = tok
+				let idx -= 1
+			else
+				let addtok = mtok
+				let midx += 1
+			endif
 		endif
-	endfor
-	if idx > 0
-		" Append what remains of toks to end of output list.
-		call extend(mtoks_ret, toks[0:idx])
+		" Caveat: In case of discarded tok, we add nothing, but avoid use of
+		" :continue because we need the loop update logic.
+		if !empty(addtok)
+			call add(mtoks_ret, addtok)
+		endif
+	endwhile
+	" We've fully processed the reversed/merged target list; anything
+	" remaining in toks must come before it in the buffer, and can simply be
+	" reversed and appended (taking care to discard action-less toks).
+	if idx >= 0
+		call extend(mtoks_ret, reverse(filter(toks[0:idx], '!empty(v:val.action)')))
 	endif
 	return mtoks_ret
 endfu
@@ -4085,11 +4115,9 @@ fu! s:Highlight_selection_impl(pspecs)
 		" TODO: Consider call by ref vs return...
 		let toks = s:Vmap_cleanup(rgn, toks)
 		call s:dbg_display_toks("Vmap_cleanup", toks)
-		" TODO: Perhaps make this a merge operation instead of simple list
-		" append. Would simplify work of Vmap_apply_changes.
-		call s:Vmap_rev_and_merge(mtoks, toks)
-		"call add(toks, toks_info)
-
+		" TODO: Convert to in-place merge.
+		let mtoks = s:Vmap_rev_and_merge(mtoks, toks)
+		call s:dbg_display_toks("Vmap_rev_and_merge", toks)
 	endfor
 	" Execute, merging the individual token lists together as we go.
 	"call s:Vmap_apply_changes(toks_info)
