@@ -3052,10 +3052,17 @@ endfu
 " z reg) but slower.
 " TODO: Consider refactoring this and Get_char to avoid code duplication.
 fu! s:Delete_char(...)
-	let pos = a:0 ? a:1 : getpos('.')[1:2]
-	let c = s:Get_char(pos)
+	let need_move = !!a:0
+	if need_move
+		let save_pos = getpos('.')[1:2]
+		call cursor(a:1)
+	endif
+	let c = s:Get_char()
 	" Delete into black hole.
 	normal! "_x
+	if need_move
+		call cursor(save_pos)
+	endif
 	" Return deleted char.
 	return c
 endfu
@@ -3412,6 +3419,7 @@ endfu
 " Note: This function also should augment tok_info with loc and action: i.e.,
 " in addition to the basic tok returned by Search_tok, the toks in the
 " returned list will have the following:
+" TODO: Consider treating non-phantom `{'s and `}'s as `='
 "   loc    ('<|{|=|}|>')
 "   action ('i', 'a', '')
 "   Note: action may be assigned other values in Vmap_apply, but for now,
@@ -3687,7 +3695,7 @@ fu! s:Vmap_rev_and_merge(mtoks, toks)
 		" Is toks exhausted?
 		if idx < 0
 			" No more toks to merge. No point in merging one-by-one...
-			call extend(mtoks_ret, mtoks[midx:])
+			call extend(mtoks_ret, mtoks[midx :])
 			break
 		endif
 		" At least one more tok from each list.
@@ -3743,77 +3751,65 @@ endfu
 " }, ...]
 " !!!!!!!!!!!UNDER CONSTRUCTION!!!!!!!!!!!
 fu! s:Vmap_apply_changes(toks)
-	" TODO: Does this belong here or in caller?
-	let toks = s:Vmap_merge_and_reorder_toks(a:toks_list)
-	call s:dbg_display_toks("Vmap_merge_and_reorder_toks", toks)
+	" Note: A change can affect only a start/end on the same line.
 	let [vsel_beg_line, vsel_end_line] = [line("'<'"), line("'>")]
-	" Keep up with how changes affect vsel start/end (using list of signed
-	" offsets).
+	" Keep up with how changes affect vsel start/end as a list of signed byte
+	" offsets, which will be returned to caller who is responsible for
+	" adjustment.
 	let offs = [0, 0]
-	" Amortize save/restore of z reg (used by s:Delete_cur_char) across loop.
-	let regz_save = @z
 	for tok in a:toks
 		let act = tok.action
 		if empty(act)
 			" No change from what's in buffer.
 			continue
 		endif
-		" Move to the target tok.
-		call cursor(tok.pos)
 		if act == 'd'
 			" Delete tok from buffer.
 			call s:Delete_char(tok.pos)
-		else
+		else " [iar]
 			" We're going to be inserting/replacing a tok.
+			call cursor(tok.pos)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
-			let toklen = len(tokstr)
+			let off = len(tokstr)
 			if act == 'r'
-				let old_toklen = s:Get_char(tok.pos)
-				let off = toklen - old_toklen
-			else
-				let off = toklen
+				" Subtract len of tok being replaced.
+				let off -= len(s:Get_char(tok.pos))
 			endif
-			let ln = tok.pos[0]
+			let tok_line = tok.pos[0]
 			" Insert/replace using appropriate normal mode command.
-			exe 'normal! '.(act == 'r' ? s : act)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			" TODO: Perhaps change r to s to obviate need for conversion.
+			exe 'normal! '.(act == 'r' ? 's' : act)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			" Determine impact of insert/replace on offsets.
 			if tok.loc == '<'
-				if ln == vsel_beg_line
+				" Must be r
+				if tok_line == vsel_beg_line
 					let offs[0] += off
-					if ln == vsel_end_line
+					if tok_line == vsel_end_line
 						let offs[1] += off
 					endif
 				endif
 			elseif tok.loc == '{'
-				" Assumption: Must be 'i' or 'r', and an 'r' can't affect
-				" start, only end.
-				if act == 'i'
-					" Include the tok inserted.
-					let offs[0] -= off
-					if ln == vsel_end_line
-						let offs[1] += off
-					endif
-				else " 'r'
-					" Can affect only end.
+				" Must be i or r
+				if tok_line == vsel_end_line
 					let offs[1] += off
 				endif
 			elseif tok.loc == '='
-				" Can be only 'r' and can affect only end
-				if ln == vsel_end_line
+				" Must be r
+				if tok_line == vsel_end_line
 					let offs[1] += off
 				endif
 			elseif tok.loc == '}'
-				" Assumption: Must be 'a' or 'r', and an 'r' can't affect end,
-				" even when lengths differ.
+				" Must be a or r
+				" r can't effect end, even when lengths differ
 				if act == 'a'
-					" Include the tok appended.
-					let offs[1] += off
+					if tok_line == vsel_end_line
+						" Expand to include the tok appended.
+						let offs[1] += off
+					endif
 				endif
 			endif
 		endif
 	endfor
-	" Prevent side-effects.
-	" TODO: If we're going to do it this way, might want to use finally.
-	let @z = regz_save
 	" Return updated offsets so caller can adjust vsel.
 	return offs
 endfu
@@ -3822,7 +3818,7 @@ endfu
 "     rgn: fmt,
 "     idx: 1,
 "     pos: [1,2],
-"     " Note: d not introduced till this function.
+"     " Note: d can exist only for clr|bgc before this function.
 "     action: '[iard]?'
 "     loc: <|{|=|}|>
 " }, ...]
@@ -3835,6 +3831,11 @@ fu! s:Vmap_cleanup(rgn, toks)
 	let idx = 1
 	while idx < len(toks)
 		let ti = toks[idx]
+		if ti.action == 'd'
+			" Note: Won't see 'd' for anything but colors here.
+			" A deleted tok has no impact on anything.
+			let idx += 1
+		endif
 		" Calculate redundant and superseding independently,
 		" Note: Never consider a non-explicit token to be superseded.
 		" Rationale: sync_idx validity can be safely used to determine
@@ -4227,8 +4228,8 @@ fu! s:Highlight_selection_impl(pspecs)
 	let mtoks = []
 	" Loop over rgn types.
 	for rgn in keys(a:pspecs)
-		" Unlet needed because rgn_info can be either num or list.
-		unlet! rgn_info
+		" Unlet needed because pspec can be either num or list.
+		unlet! pspec
 		let pspec = a:pspecs[rgn]
 
 		" TODO: May change name to calculate or something?
@@ -4238,10 +4239,11 @@ fu! s:Highlight_selection_impl(pspecs)
 		call s:dbg_display_toks("Vmap_cleanup", toks)
 		" TODO: Convert to in-place merge.
 		let mtoks = s:Vmap_rev_and_merge(mtoks, toks)
-		call s:dbg_display_toks("Vmap_rev_and_merge", toks)
 	endfor
-	" Execute, merging the individual token lists together as we go.
-	call s:Vmap_apply_changes(toks_info)
+	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
+	let vsel_offs = s:Vmap_apply_changes(mtoks)
+	echo "offs: " . string(vsel_offs)
+	" TODO: Adjust vsel
 endfu
 
 fu! S_Highlight_selection2()
