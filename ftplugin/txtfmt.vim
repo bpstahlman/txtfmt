@@ -1635,7 +1635,7 @@ fu! Cleanup_tokens(startline, stopline, adj_vsel)
 	call cursor(orig_line, orig_col)
 endfu
 " >>>
-" Function: s:Highlight_selection() <<<
+" Function: s:Highlight_selection_obsolete() <<<
 " Called_from: 'visual' mode mapping
 " Purpose: Highlight the visual selection according to fmt/clr spec string
 " obtained from user (by this function).
@@ -1643,10 +1643,10 @@ endfu
 " Return:
 " Error:
 " Assumptions:
-fu! s:Highlight_selection()
+fu! s:Highlight_selection_obsolete()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
-		echoerr "Highlight_selection(): blockwise-visual mode not supported"
+		echoerr "Highlight_selection_obsolete(): blockwise-visual mode not supported"
 		return
 	endif
 	" Prompt user for desired highlighting
@@ -1665,7 +1665,7 @@ fu! s:Highlight_selection()
 	let tokstr = s:Translate_fmt_clr_list(tokstr)
 	if tokstr == ''
 		" Invalid fmt/clr sequence
-		echoerr "Highlight_selection(): Invalid fmt/clr sequence entered: ".s:err_str
+		echoerr "Highlight_selection_obsolete(): Invalid fmt/clr sequence entered: ".s:err_str
 		" Note that nothing about position or mode has changed at this point
 		" TODO: Probably want to restore selection here...
 		return
@@ -1682,7 +1682,7 @@ fu! s:Highlight_selection()
 	" will report multiple tokens of the same type...
 	if tokstr =~ '....'
 		" Too many tokens!
-		echoerr "Highlight_selection(): Too many fmt/clr specs entered"
+		echoerr "Highlight_selection_obsolete(): Too many fmt/clr specs entered"
 		" Note that nothing about position or mode has changed at this point
 		" TODO: Probably want to restore selection here...
 		return
@@ -2892,6 +2892,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			throw "Invalid type specifier in fmt/clr transformer spec: " . tt
 		endif
 	endfor
+	echo "\nparsed ret: " . string(ret) . ", type=" . type(ret)
 	return ret
 endfu
 " TODO: TEMP DEBUG
@@ -3254,8 +3255,10 @@ endfu
 " Return the idx resulting from application of fmt pspec to fmt idx
 " TODO: Perhaps rename...
 fu! s:Vmap_apply_fmt(pspec, idx)
+	echo "\npspec=" . a:pspec . ", idx=" . a:idx . ", type=" . type(a:pspec)
 	if type(a:pspec) == 0
 		" Set
+		echo "\npspec=" . a:pspec . ", idx=" . a:idx
 		return a:pspec
 	else
 		" Add/sub
@@ -3382,16 +3385,16 @@ fu! s:Vmap_sync_start(rgn)
 	let stoppos = s:Add_byte_offset(vsel_end_pos, s:SYNC_DIST_BYTES)
 	" Define zero-width assertions.
 	let pre_vsel_zwa = s:Make_pos_zwa({'end': {'pos': vsel_beg_pos}})
-	let post_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
+	let pre_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
 	let stoppos_zwa = s:Make_pos_zwa({'end': {'pos': stoppos}})
 	" Sync to tok or synstack() prior to vsel.
-	call cursor(vsel_beg_pos)
+	call cursor(sync_beg_pos)
 	" Look forward for tok prior to start of region.
 	let tok_info = s:Search_tok(a:rgn, '', pre_vsel_zwa)
 	let curpos_checked = 1
 	if empty(tok_info)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
-		let tok_info = s:Search_tok(a:rgn, 'b', post_sync_limit_zwa)
+		let tok_info = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
 		if empty(tok_info)
 			" We aren't going to be able to (hard) sync on a tok.
 			let tok_info = {'pos': [], 'rgn': a:rgn}
@@ -3526,8 +3529,7 @@ fu! s:Vmap_determine_hlable(rgn, toks_info)
 endfu
 
 fu! s:Vmap_apply(rgn, pspec, toks)
-	" TODO: Decide on this... Pass just rgn portion?
-	let pspec = a:pspec[a:rgn]
+	let pspec = a:pspec
 	let toks = a:toks
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
@@ -3598,7 +3600,7 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 endfu
 
 " TODO: Perhaps rename...
-fu! s:Vmap_do(rgn, pspec)
+fu! s:Vmap_compute(rgn, pspec)
 	let sync_info = s:Vmap_sync_start(a:rgn)
 	"echo string(sync_info)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
@@ -3867,7 +3869,11 @@ fu! s:Vmap_cleanup(rgn, toks)
 	return toks
 endfu
 
+" Debug only!
 fu! s:dbg_display_toks(context, toks)
+	if !exists('g:dbg_display_on') || !g:dbg_display_on
+		return
+	endif
 	echo "\r"
 	echo a:context
 	for ti in a:toks
@@ -4228,12 +4234,8 @@ fu! s:Highlight_selection_impl(pspecs)
 	let mtoks = []
 	" Loop over rgn types.
 	for rgn in keys(a:pspecs)
-		" Unlet needed because pspec can be either num or list.
-		unlet! pspec
-		let pspec = a:pspecs[rgn]
-
 		" TODO: May change name to calculate or something?
-		let toks = s:Vmap_do(rgn, pspec)
+		let toks = s:Vmap_compute(rgn, a:pspecs[rgn])
 		" TODO: Consider call by ref vs return...
 		let toks = s:Vmap_cleanup(rgn, toks)
 		call s:dbg_display_toks("Vmap_cleanup", toks)
@@ -4246,7 +4248,8 @@ fu! s:Highlight_selection_impl(pspecs)
 	" TODO: Adjust vsel
 endfu
 
-fu! S_Highlight_selection2()
+" TODO: Perhaps combine with Highlight_selection_impl...
+fu! s:Highlight_selection()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
 		throw "Highlight_selection(): blockwise-visual mode not supported"
