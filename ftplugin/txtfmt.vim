@@ -2725,15 +2725,19 @@ endfu
 " Convert the input comma-separated f/c/k transformer spec to a struct.
 " Input Format: In lieu of full grammar, here are some illustrative examples:
 " fubi
-"   Set to bold-underline-italic
-" f+ubi
 "   Add bold-underline-italic
-" fubi-
-"   Same as previous (presence of + implied by -)
+" f+ubi
+"   Same as previous (+ is the default).
+" fub-is
+"   Add bold-underline, remove italic-standout
 " f-ubi
-"   Subtract bold-underline-italic
+"   Remove bold-underline-italic
 " f-
-"   Remove all formats
+"   Special Case: Remove all formats
+" f=
+"   Same as f- (and not even really a special case)
+" f=ubi
+"   Set formats to exactly bold-underline-italic
 " cr
 "   Set fg color to red
 " k-
@@ -2741,7 +2745,7 @@ endfu
 " Output Format:
 " {
 "   fmt:
-"     0-N - {add-fmt-mask}
+"     0-N - {set-fmt-mask}
 "     |
 "     [
 "       0-N - {add-fmt-mask},
@@ -2797,9 +2801,13 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			" Design Decision: Discard spaces (even interior), which have no
 			" meaning in fmt specs.
 			let spec = substitute(spec, '\s\+', '', 'g')
-			echo "spec: " . spec
-			if spec == '-'
+			if empty(spec)
+				" TODO: Decide on this, noting that `f' is actually a
+				" degenerate form that means add/remove nothing. Allow it?
+				throw "Parse_fmt_clr_transformer: empty fmt specs not permitted"
+			elseif spec == '-' || spec == '='
 				" f- special case: return to default (mask all attributes)
+				" f= by itself is a more natural version of the special case.
 				" Decision: -1 permits distinction to be made if necessary
 				" (i.e., between f- and (e.g.) f-ubisrc)
 				"let ret.fmt = b:txtfmt_num_formats - 1
@@ -2808,22 +2816,27 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				" Break into sub-parts. 'keepempty' guarantees at least an add (or
 				" set) part (possibly empty).
 				" Note: split() will split (e.g.) +u into 1 element.
-				let [add; rest] = split(spec, '-', 1)
-				if len(rest) > 1
-					throw "Too many hyphens in fmt transformer spec: `f" . spec . "'"
-				elseif len(rest) == 1 || add[0] == '+'
-					let additive = 1
-					let sub = len(rest) == 1 ? rest[0] : ''
-					" Strip any leading '+' from the add part.
-					if add[0] == '+'
-						let add = add[1:]
-					endif
-				else
+				let re_set = '^=[ubisrc]*$'
+				" Design Decision: Defer checks for fmt tok active status till
+				" overall form has been validated.
+				" Assumption: This regex allows completely empty spec; if
+				" check necessary, perform elsewhere.
+				let re_add = '^+\?\([ubisrc]*\)\(-\([ubisrc]*\)\)\?$'
+				if spec =~ re_set
+					let add = spec[1:]
 					let additive = 0
 					let sub = ''
+				elseif spec =~ re_add
+					let ms = matchlist(spec, re_add)
+					let [add, sub] = [ms[1], ms[3]]
+					let additive = 1
+				else
+					throw "Invalid fmt transformer spec: `f" . spec . "'"
 				endif
 				" Design Decision: Either add or sub can be empty, but not
 				" both.
+				" TODO: Now that I check for empty above, consider removing
+				" this: e.g., allow something like `f+-' but not `f'
 				if empty(add) && empty(sub)
 					throw "Parse_fmt_clr_transformer: useless fmt specs not permitted"
 				endif
@@ -2893,7 +2906,6 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			throw "Invalid type specifier in fmt/clr transformer spec: " . tt
 		endif
 	endfor
-	echo "\nparsed ret: " . string(ret) . ", type=" . type(ret)
 	return ret
 endfu
 " TODO: TEMP DEBUG
@@ -3126,101 +3138,6 @@ fu! s:Forward_char()
 		endif
 	endif
 	return save_pos
-endfu
-
-" Instantiate an object representing an ordered list of buffer modifications,
-" whose apply() method applies all actions in order.
-" Ordering: Modifications later in buffer always happen first (to avoid
-" invalidating [lnum, col] pairs). When distinct modifications are requested
-" for the same location, the order that makes sense is chosen:
-" TODO: Most of the following rules were written prior to addition of 'a'
-" operaton. Update...
-" -inserts occur after deletes and replaces (else the wrong char would be
-"  deleted / replaced)
-" -a replace overrides a previously-scheduled delete or replace (which was
-"  apparently a mistake)
-" -a delete overrides a previously-scheduled replace (which was apparently a
-"  mistake)
-" -multiple deletes collapse to a single delete
-" -inserts come before previously-scheduled inserts (so that inserts scheduled
-"  later end up being applied earlier, such that their characters end up
-"  closer to the end of the buffer.
-" -appends happen before anything else: conceptually, they're like inserts
-"  occurring later in the buffer, but can be more conveniently specified
-"  (e.g.) when the append position corresponds to the final char in buffer.
-" -appends come before previously-scheduled appends (so that appends scheduled
-"  later end up being applied earlier, such that their characters end up
-"  closer to the end of the buffer.
-" Actions:
-" {
-"   %% delete, insert, append or replace
-"   %% Design Decision: 'd' and 'i' would be equivalent to 'r', but allow
-"   %% caller to specify either way
-"   typ: 'd'|'i'|'a'|'r',
-"   pos: buffer location as [lnum, col],
-"   tok: char to be added by 'i', 'a' or 'r'
-" }
-" Tested: 02Jan2015 (before addition of append op)
-fu! s:Create_actions()
-	let self = {'actions': []}
-	" Define a truth-table used to break sort-order ties between an action to
-	" be inserted and one already in the list.
-	" Format: Each outer key represents the action type of an element already
-	" in the list. The inner keys are the action types of the action to be
-	" inserted. The values specify what to do with the action to be inserted:
-	"   b=insert before existing
-	"   a=insert after existing
-	"   r=replace existing (overwrite)
-	"   d=discard new
-	" Note: See header comment for logic details.
-	let self._tt = {
-		\'d': {'d': 'd', 'i': 'a', 'a': 'b', 'r': 'r'},
-		\'i': {'d': 'b', 'i': 'b', 'a': 'b', 'r': 'b'},
-		\'a': {'d': 'a', 'i': 'a', 'a': 'b', 'r': 'a'},
-		\'r': {'d': 'r', 'i': 'a', 'a': 'b', 'r': 'r'}
-	\}	
-	fu! self.add(action) dict
-		let idx = 0
-		let [lnum, col] = a:action.pos
-		let typ = a:action.typ
-		for action in self.actions
-			let [_lnum, _col] = action.pos
-			let _typ = action.typ
-			" Comparison Logic: Later in buffer comes earlier; to break tie,
-			" later added comes later, but a delete must always happen before
-			" a non-delete at same position.
-			if lnum == _lnum && col == _col
-				" Positional tie - use truth-table to break
-				let tt_val = self._tt[_typ][typ]
-				" Note: 'a' (after) case intentionally omitted so we'll fall
-				" through naturally to next iteration.
-				if tt_val == 'b'
-					" Insert before
-					break
-				elseif tt_val == 'r'
-					" Replace old (removal happens here / insert after loop)
-					call remove(self.actions, idx)
-					break
-				elseif tt_val == 'd'
-					" Discard new
-					return
-				endif
-			elseif lnum > _lnum || (lnum == _lnum && col > _col)
-				" Insert before this item.
-				break
-			endif
-			let idx += 1
-		endfor
-		call insert(self.actions, a:action, idx)
-	endfu
-	" Apply all actions in ordered list.
-	fu! self.apply() dict
-		for action in self.actions
-			" TODO...
-			echo "Applying " . string(action)
-		endfor
-	endfu
-	return self
 endfu
 
 " TODO: Figure out where to put this, or whether it's even needed.
@@ -3904,7 +3821,6 @@ fu! s:Highlight_selection_impl(pspecs)
 	endfor
 	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
 	let vsel_offs = s:Vmap_apply_changes(mtoks)
-	echo "offs: " . string(vsel_offs)
 	" TODO: Adjust vsel
 endfu
 
@@ -4968,6 +4884,9 @@ fu! S_Get_menu_fmts_list()
 	endfor
 	return fmts
 endfu
+" Filter out by options
+fu! S_Filter_menu_fmts_list()
+endfu
 fu! s:Build_format_submenu(path)
 	let ops = ['Add format attributes', 'Remove format attributes', 'Set format attributes']
 	for op in ops
@@ -5418,6 +5337,10 @@ fu! s:Do_config()
 	" txtfmtUsermaplimit: Max # of user maps that will be checked <<<
 	" Allow nonnegative dec, hex, or oct
 	" Cannot set from modeline
+	" IMPORTANT TODO: !!! The s:txtfmtUsermaplimit var set here appears not to
+	" be used any longer! s:Do_user_maps handles everything, and it checks for
+	" buffer-local option (as it should, and as this doesn't). Confirm, and
+	" remove this...
 	if exists('g:txtfmtUsermaplimit') && g:txtfmtUsermaplimit =~ '^\%(0[xX]\)\?[0-9]\+$'
 		let s:txtfmtUsermaplimit = g:txtfmtUsermaplimit
 	else
