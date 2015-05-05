@@ -530,14 +530,18 @@ endfu
 " Question: Should I be doing manually with visualmode() as I was originally,
 " or should I use setpos at both ends...
 fu! s:Restore_visual_mode(pos_beg, pos_end, ...)
-	let leave_at_end = a:0 && !!a:1
-	call cursor(a:pos_beg)
+	let poss = [a:pos_beg, a:pos_end]
+	echo string(poss)
+	" Start with the old selection...
 	exe 'normal! ' . visualmode() 
-	call cursor(a:pos_end)
-	if !leave_at_end
-		" Return cursor to start of selection
-		normal! o
-	endif
+	" Possible TODO: Could make this an Adjust_visual_mode function taking offset, or leave as Restore, but take optional offsets.
+	let i = getpos(".") == getpos("'<") ? 1 : 0
+	" ...Adjust the opposite end first.
+	normal! o
+	call cursor(poss[i])
+	" ...and finish with the end where cursor should remain.
+	normal! o
+	call cursor(poss[(i + 1) % 2])
 endfu
 " >>>
 " TODO: Header comments and convert to static
@@ -3131,6 +3135,7 @@ fu! s:Highlight_selection_impl(pspecs)
 	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
 	let vsel_offs = s:Vmap_apply_changes(mtoks)
 	" Adjust and restore vsel.
+	echo string(vsel_offs)
 	let vsel_beg[1] += vsel_offs[0]
 	let vsel_end[1] += vsel_offs[1]
 	call s:Restore_visual_mode(vsel_beg, vsel_end)
