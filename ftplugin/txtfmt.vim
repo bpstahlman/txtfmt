@@ -2348,6 +2348,8 @@ fu! s:Search_tok(rgn, flags, ...)
 	" Process optional zero-width-assertion.
 	let zwa = a:0 > 0 ? a:1 : ''
 	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
+	" BUG TODO: Apply_zwa puts \%-1l into pattern when near end of buf.
+	echomsg "azwa: " . s:Apply_zwa(zwa, re_tok)
 	" Note: Apply_zwa can handle empty zwa.
 	let [lnum, col] = searchpos(s:Apply_zwa(zwa, re_tok), a:flags . 'W')
 	if lnum
@@ -2986,8 +2988,8 @@ fu! s:Vmap_apply_changes(toks)
 	" Note: A change can affect only a start/end on the same line.
 	let [vsel_beg_line, vsel_end_line] = [line("'<'"), line("'>")]
 	" Keep up with how changes affect vsel start/end as a list of signed byte
-	" offsets, which will be returned to caller who is responsible for
-	" adjustment.
+	" offsets, which will be returned to caller (who is responsible for
+	" adjustment).
 	let offs = [0, 0]
 	for tok in a:toks
 		let act = tok.action
@@ -2997,7 +2999,33 @@ fu! s:Vmap_apply_changes(toks)
 		endif
 		if act == 'd'
 			" Delete tok from buffer.
-			call s:Delete_char(tok.pos)
+			let delc = s:Delete_char(tok.pos)
+			let off = len(delc)
+			let tok_line = tok.pos[0]
+			echo "pos: " . string(tok.pos) . " off=" . off . " delc=" . char2nr(delc)
+			" IMPORTANT TODO: Refactor this adjustment logic with the stuff in
+			" the else, possibly into a separate function.
+			" Determine impact of delete on offsets.
+			if tok.loc == '<'
+				if tok_line == vsel_beg_line
+					let offs[0] -= off
+					if tok_line == vsel_end_line
+						let offs[1] -= off
+					endif
+				endif
+			elseif tok.loc == '{'
+				if tok_line == vsel_end_line
+					let offs[1] -= off
+				endif
+			elseif tok.loc == '='
+				if tok_line == vsel_end_line
+					let offs[1] -= off
+				endif
+			elseif tok.loc == '}'
+				" TODO: Normally, a delete couldn't affect end, but what if
+				" last token in buffer? Should we pull back, or can Vim handle
+				" having '> point to char beyond end?
+			endif
 		else " [iar]
 			" We're going to be inserting/replacing a tok.
 			call cursor(tok.pos)
