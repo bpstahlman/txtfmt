@@ -2536,15 +2536,30 @@ endfu
 " find it.
 fu! s:Add_byte_offset(pos, offset)
 	" Handle trivial special case.
-	if !a:offset | return pos | endif
+	if !a:offset | return a:pos | endif
 	let [lnum, col] = a:pos
 	let bi = line2byte(lnum) + col - 1
 	let bi_tgt = bi + a:offset
-	let bi_tgt = a:offset < 0
-		\? max([1, bi_tgt])
-		\: min([bi_tgt, line2byte(line('$') + 1)])
-	let lnum_tgt = byte2line(bi_tgt)
-	let bi_bol_tgt = line2byte(lnum_tgt)
+	" Caveat!: Docs specifically allow use of line past end with line2byte,
+	" but passing a byte past end to byte2line returns -1: hence, the special
+	" logic...
+	if bi_tgt < 0
+		let bi_tgt = 1
+		let lnum_tgt = 1
+		let bi_bol_tgt = 1
+	else
+		let bi_eof = line2byte(line('$') + 1)
+		if bi_tgt >= bi_eof
+			" Byte offset past end - byte2line can't handle.
+			" Note: Ok for byte index to be 1 past end of buffer; this will
+			" simply result in col position past end of final line.
+			let bi_tgt = bi_eof
+			let lnum_tgt = line('$')
+		else
+			let lnum_tgt = byte2line(bi_tgt)
+		endif
+		let bi_bol_tgt = line2byte(lnum_tgt)
+	endif
 	return [lnum_tgt, bi_tgt - bi_bol_tgt + 1]
 endfu
 
@@ -2625,6 +2640,7 @@ fu! s:Vmap_sync_start(rgn)
 	if empty(tok_info)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
 		let tok_info = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
+		echo "Found it: " . string(tok_info)
 		if empty(tok_info)
 			" We aren't going to be able to (hard) sync on a tok.
 			let tok_info = {'pos': [], 'rgn': a:rgn}
