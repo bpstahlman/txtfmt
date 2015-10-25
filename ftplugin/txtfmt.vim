@@ -531,7 +531,6 @@ endfu
 " or should I use setpos at both ends...
 fu! s:Restore_visual_mode(pos_beg, pos_end, ...)
 	let poss = [a:pos_beg, a:pos_end]
-	echo string(poss)
 	" Start with the old selection...
 	exe 'normal! ' . visualmode() 
 	" Possible TODO: Could make this an Adjust_visual_mode function taking offset, or leave as Restore, but take optional offsets.
@@ -2216,6 +2215,8 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			throw "Invalid type specifier in fmt/clr transformer spec: " . tt
 		endif
 	endfor
+	echo "Returning from Parse_fmt_clr_transformer:"
+	echo ret
 	return ret
 endfu
 " TODO: TEMP DEBUG
@@ -2458,6 +2459,16 @@ fu! s:Idx_to_tok(rgn, idx)
 	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
 endfu
 
+" Vim's empty() considers integer 0 as empty. This one doesn't.
+fu! s:Is_empty(v)
+	let t = type(a:v)
+	if t == 0 || t == 5
+		return 0
+	else
+		" Defer to Vim's empty.
+		return empty(a:v)
+	endif
+endfu
 fu! s:At_buf_end()
 	return !!search('\%#.\?\%$', 'nc')
 endfu
@@ -2640,7 +2651,6 @@ fu! s:Vmap_sync_start(rgn)
 	if empty(tok_info)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
 		let tok_info = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
-		echo "Found it: " . string(tok_info)
 		if empty(tok_info)
 			" We aren't going to be able to (hard) sync on a tok.
 			let tok_info = {'pos': [], 'rgn': a:rgn}
@@ -2848,12 +2858,15 @@ endfu
 " TODO: Perhaps rename...
 fu! s:Vmap_compute(rgn, pspec)
 	let sync_info = s:Vmap_sync_start(a:rgn)
-	"echo string(sync_info)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 	" start/end indices returned explicitly.
-	let toks = s:Vmap_collect(a:rgn, sync_info, !empty(a:pspec))
+	" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
+	" predicate for tokens.
+	"
+	" Question: When do we expect empty?
+	let toks = s:Vmap_collect(a:rgn, sync_info, !s:Is_empty(a:pspec))
 	call s:dbg_display_toks("Vmap_collect", toks)
-	if !empty(a:pspec)
+	if !s:Is_empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
 		call s:Vmap_apply(a:rgn, a:pspec, toks)
 	endif
@@ -3018,7 +3031,7 @@ fu! s:Vmap_apply_changes(toks)
 			let delc = s:Delete_char(tok.pos)
 			let off = len(delc)
 			let tok_line = tok.pos[0]
-			echo "pos: " . string(tok.pos) . " off=" . off . " delc=" . char2nr(delc)
+			"echo "pos: " . string(tok.pos) . " off=" . off . " delc=" . char2nr(delc)
 			" IMPORTANT TODO: Refactor this adjustment logic with the stuff in
 			" the else, possibly into a separate function.
 			" Determine impact of delete on offsets.
@@ -3111,6 +3124,11 @@ fu! s:Vmap_cleanup(rgn, toks)
 			" Note: Won't see 'd' for anything but colors here.
 			" A deleted tok has no impact on anything.
 			let idx += 1
+			" TODO: Validate addition of continue, which was added only
+			" because the code made no sense without it, so I assumed it must
+			" have been omitted (or perhaps the code below used to be in an
+			" if).
+			continue
 		endif
 		" Calculate redundant and superseding independently,
 		" Note: Never consider a non-explicit token to be superseded.
@@ -3172,11 +3190,12 @@ fu! s:Highlight_selection_impl(pspecs)
 		let toks = s:Vmap_compute(rgn, a:pspecs[rgn])
 		" TODO: Consider call by ref vs return...
 		let toks = s:Vmap_cleanup(rgn, toks)
-		call s:dbg_display_toks("Vmap_cleanup", toks)
+		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks)
 		" TODO: Convert to in-place merge.
 		let mtoks = s:Vmap_rev_and_merge(mtoks, toks)
+		call s:dbg_display_toks("Vmap_rev_and_merge " . rgn, mtoks)
 	endfor
-	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
+	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
 	let vsel_offs = s:Vmap_apply_changes(mtoks)
 	" Adjust and restore vsel.
 	echo string(vsel_offs)
