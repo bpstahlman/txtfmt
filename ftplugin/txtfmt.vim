@@ -2507,6 +2507,17 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 	endif
 endfu
 
+" Return regex matching any single char, highlightable by input rgn/idx.
+" Inputs:
+" rgn:  'fmt'|'clr'|'bgc',
+" idx:  <color-idx>|<fmt-mask>
+" TODO: Should this be a function, or perhaps just a Dict?
+fu! s:Get_hlable_patt(rgn, idx)
+	let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
+	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
+	return b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
+endfu
+
 " Return true iff the region between pos1 and pos2 (inclusivity/exclusivity
 " specified by the inc arg) contains anything hlable, given the specified rgn
 " type and tok idx.
@@ -2518,11 +2529,7 @@ endfu
 " inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
 " Tested: 08Jan2015
 fu! s:Contains_hlable(rgn, idx, pos1, pos2, inc)
-	" TODO: Put the building of this mask somewhere where it will be always
-	" available, like b:txtfmt_re_any_ntok et al.
-	let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
-	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
-	let hlable = b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
+	let hlable = s:Get_hlable_patt(a:rgn, a:idx)
 	" Process inclusivity arg.
 	if type(a:inc) == 3
 		let ie = a:inc
@@ -2532,6 +2539,7 @@ fu! s:Contains_hlable(rgn, idx, pos1, pos2, inc)
 	endif
 	" Generate the region constraints.
 	let zwa = s:Make_pos_zwa({'beg': {'pos': a:pos1, 'inc': ie[0]}, 'end': {'pos': a:pos2, 'inc': ie[1]}})
+	echo "Contains_hlable: patt=/" . s:Apply_zwa(zwa, hlable) . "/ " . string(getpos('.')[1:2])
 	return !!search(s:Apply_zwa(zwa, hlable), 'nc')
 endfu
 
@@ -2633,7 +2641,7 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 "     idx: *
 "   }
 " } 
-fu! s:Vmap_sync_start(rgn)
+fu! s:Vmap_sync_start_prev(rgn)
 	let vsel_beg_pos = s:Getpos("'<")
 	let vsel_end_pos = s:Getpos("'>")
 	let sync_beg_pos = s:Add_byte_offset(vsel_beg_pos, -s:SYNC_DIST_BYTES)
@@ -2646,11 +2654,31 @@ fu! s:Vmap_sync_start(rgn)
 	" Sync to tok or synstack() prior to vsel.
 	call cursor(sync_beg_pos)
 	" Look forward for tok prior to start of region.
-	let tok_info = s:Search_tok(a:rgn, '', pre_vsel_zwa)
+	while 1
+		let tok_info = s:Search_tok(a:rgn, '', pre_vsel_zwa)
+		if empty(tok_info) | break | endif
+		" If here, we have an actual tok in tok_info
+		" Constraint: Require at least 1 hlable between sync tok and vsel
+		let hlable = s:Get_hlable_patt(a:rgn, tok_info.idx)
+		echo "Testing pattern: " . pre_vsel_zwa . hlable
+		if search(pre_vsel_zwa . hlable, 'nW')
+			break
+		endif
+	endw
+	echo "1 tok_info=" . string(tok_info)
 	let curpos_checked = 1
 	if empty(tok_info)
 		" Couldn't find pre-vsel tok within min sync distance. Look backwards.
-		let tok_info = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
+		while 1
+			let tok_info = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
+			if empty(tok_info) | break | endif
+			" Constraint: Require at least 1 hlable between sync tok and vsel
+			let hlable = s:Get_hlable_patt(a:rgn, tok_info.idx)
+			if search(pre_vsel_zwa . hlable, 'nW')
+				break
+			endif
+		endwhile
+		echo "2 tok_info=" . string(tok_info)
 		if empty(tok_info)
 			" We aren't going to be able to (hard) sync on a tok.
 			let tok_info = {'pos': [], 'rgn': a:rgn}
@@ -2675,6 +2703,182 @@ fu! s:Vmap_sync_start(rgn)
 		\'tok_info': tok_info
 	\}
 endfu
+
+" Rewrite of preceding...
+" Logic:
+" Ensure that the first tok is one of the following:
+"    -a tok that cannot be superseded: ie, has hlable between it and vsel
+"    -a virtual (positionless) tok, which simply gives the formatting in
+"     effect at one of the following points...
+"         -vsel start
+"         -an actual tok prior to vsel start, which could not be guaranteed to
+"          be non-supersedable. (This tok would be the 2nd tok in the list.)
+"          Note: We could determine the effective highlighting in 1 of 2 ways:
+"              1. Examining synstack
+"              2. Looking for an actual tok, whose position we simply discard
+"                 (this is actually preferable, with synstack being last
+"                 resort)
+" Position Note: Originally, cursor was left on position at which subsequent
+" forward search should start, with curpos_checked flag set to indicate
+" whether search should include cursor position. However, subsequent logic can
+" now know everything it needs to know from tok_infos: if its final tok is
+" actual tok, start on it and disallow match at cursor; otherwise, start at
+" vsel head and allow match at cursor.
+fu! s:Vmap_sync_start_new_abandoned(rgn)
+	let vsel_beg_pos = s:Getpos("'<")
+	let vsel_end_pos = s:Getpos("'>")
+	let sync_beg_pos = s:Add_byte_offset(vsel_beg_pos, -s:SYNC_DIST_BYTES)
+	let sync_beg_limit_pos = s:Add_byte_offset(sync_beg_pos, -s:SYNC_DIST_BYTES_EXTRA)
+	let stoppos = s:Add_byte_offset(vsel_end_pos, s:SYNC_DIST_BYTES)
+	" Define zero-width assertions.
+	let pre_vsel_zwa = s:Make_pos_zwa({'end': {'pos': vsel_beg_pos}})
+	let pre_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
+	let stoppos_zwa = s:Make_pos_zwa({'end': {'pos': stoppos}})
+	" Sync to tok or synstack() prior to vsel.
+	call cursor(sync_beg_pos)
+	" Look forward for tok prior to start of region.
+	" TODO: What if we skip over a number of toks looking for one that's
+	" ss_safe? Note that if we find 2, we could be done, even if neither is
+	" ss_safe, though the downside is that cleanup might not be complete.
+	" Question: What is the downside of not finding an actual tok that really
+	" can't be superseded?
+	let ss_safe = 0
+	let tok_infos = []
+	while 1
+		let tok_info = s:Search_tok(a:rgn, '', pre_vsel_zwa)
+		if empty(tok_info) | break | endif
+		call add(tok_infos, tok_info)
+		" If here, we have an actual tok in tok_info
+		" Constraint: Require at least 1 hlable between sync tok and vsel
+		let hlable = s:Get_hlable_patt(a:rgn, tok_info.idx)
+		if search(pre_vsel_zwa . hlable, 'nW')
+			let ss_safe = 1
+			break
+		endif
+	endw
+	let curpos_checked = 1 " TODO: Rework logic for this flag
+	" Note: If ss_safe is false at this point...
+	" Either we didn't find explicit sync token, or we did, but it's
+	" supersedable, in which case, we need to leave cursor on it, but set
+	" curpos_checked false, and find an actual or virtual tok prior to
+	" this one to serve as sync tok.
+	" Actually...: Why discard? Could allow sync_info to contain an
+	" array, in which case we would set curpos_checked and obviate need
+	" for Vmap_collect to re-find tok at cursor...
+	while !ss_safe
+		let tok_info = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
+		if empty(tok_info) | break | endif
+		if !empty(tok_infos)
+			" We needed this tok's highlighting, but not its position.
+			let tok_info.pos = []
+			let ss_safe = 1
+		endif
+		call insert(tok_infos, tok_info)
+		if !ss_safe
+			" Has this tok satisfied supersedence constraint?
+			let hlable = s:Get_hlable_patt(a:rgn, tok_info.idx)
+			" TODO: Don't really need to check all the way to vsel; could stop
+			" at next tok (i.e., tok_infos[0] if it exists). Using
+			" pre_vsel_zwa is safe but not optimized.
+			if search(pre_vsel_zwa . hlable, 'nW')
+				let ss_safe = 1
+			endif
+		endif
+	endwhile
+	" Note: If ss_safe is still false, we're going to have to prepend a
+	" virtual tok to satisfy supersedence constraint.
+	if !ss_safe
+		" We aren't going to be able to (hard) sync on a tok.
+		let tok_info = {'pos': [], 'rgn': a:rgn}
+		" Guarantee: If len(tok_infos) == 2, supersedence constraint has been
+		" satisfied.
+		if len(tok_infos) < 2
+			if len(tok_infos) == 1
+				call cursor(tok_infos[0].pos[0], tok_infos[0].pos[1])
+			else
+				call cursor(line("'<"), col("'<"))
+			endif
+		endif
+		if empty(s:Backward_char())
+			" Already at head of buffer
+			let tok_info.idx = 0
+			let curpos_checked = 0
+		else
+			" Sitting 1 char prior to vsel.
+			" Sync on synstack.
+			let tok_info.idx = s:Get_cur_rgn_info()[a:rgn]
+		endif
+		call insert(tok_infos, tok_info)
+	endif
+	
+	" TODO: Decide on stoppos vs stoppos_zwa vs both.
+	return {
+		\'stoppos': stoppos,
+		\'stoppos_zwa': stoppos_zwa,
+		\'curpos_checked': curpos_checked,
+		\'tok_infos': tok_infos
+	\}
+endfu
+
+" IMPORTANT NOTE!!!! This is the version under development, expected to
+" supersede the preceding 2.
+fu! s:Vmap_sync_start(rgn)
+	let vsel_beg_pos = s:Getpos("'<")
+	let vsel_end_pos = s:Getpos("'>")
+	let sync_beg_limit_pos = s:Add_byte_offset(vsel_beg_pos, -s:SYNC_DIST_BYTES)
+	let stoppos = s:Add_byte_offset(vsel_end_pos, s:SYNC_DIST_BYTES)
+	" Define zero-width assertions.
+	let stoppos_zwa = s:Make_pos_zwa({'end': {'pos': stoppos}})
+	let pre_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
+	" Start looking at head of vsel.
+	call cursor(line("'<"), col("'<"))
+	" Look backward for an ss_safe tok if we can find it.
+	let ss_safe = 0
+	let tok_infos = []
+	while !ss_safe
+		" Cache last tok encountered (if any).
+		let prev_pos = empty(tok_infos) ? [] : ti.pos
+		let ti = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
+		if empty(ti) | break | endif
+		" Add found tok, whether supersedence constraint satisfied or not.
+		call insert(tok_infos, ti)
+		" Has this tok satisfied supersedence constraint?
+		" Question: Should we be using Contains_hlable for this? Consider any
+		" assumptions it makes regarding cursor pos.
+		let hlable = s:Get_hlable_patt(a:rgn, ti.idx)
+		" Look only up to next tok (if one was found) or head of vsel.
+		let hlable_zwa = s:Make_pos_zwa({'end': {'pos': empty(prev_pos) ? vsel_beg_pos : prev_pos}})
+		if search(hlable_zwa . hlable, 'nW')
+			let ss_safe = 1
+		endif
+	endwhile
+	" Did we find ss_safe tok or not?
+	if !ss_safe
+		" Note: We're going to have to prepend a virtual tok to satisfy
+		" supersedence constraint.
+		let tok_info = {'pos': [], 'rgn': a:rgn}
+		" Assumption: We're either on earliest tok found or vsel head.
+		if empty(s:Backward_char())
+			" Already at head of buffer
+			let tok_info.idx = 0
+		else
+			" Sitting 1 char prior to earliest point of interest (which could
+			" be either vsel head or actual tok)
+			" Sync on synstack.
+			let tok_info.idx = s:Get_cur_rgn_info()[a:rgn]
+		endif
+		call insert(tok_infos, tok_info)
+	endif
+	
+	" TODO: Decide on stoppos vs stoppos_zwa vs both. Actually, consider
+	" getting it at point of use. Shouldn't be expensive...
+	" Currently, stoppos isn't used, but stoppos_zwa is.
+	return {
+		\'stoppos': stoppos,
+		\'stoppos_zwa': stoppos_zwa,
+		\'tok_infos': tok_infos
+	\}
+endfu
 " Note: This function also should augment tok_info with loc and action: i.e.,
 " in addition to the basic tok returned by Search_tok, the toks in the
 " returned list will have the following:
@@ -2683,19 +2887,25 @@ endfu
 "   action ('i', 'a', '')
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
-fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
-	let sync_tok = a:sync_info.tok_info
-	if a:mark_vsel
-		let sync_tok.loc = '<'
-		let sync_tok.action = ''
+fu! s:Vmap_collect(rgn, sync_info)
+	let toks = a:sync_info.tok_infos
+	" Mark toks added during sync as being prior to vsel.
+	for tok in toks
+		let tok.loc = '<'
+		let tok.action = ''
+	endfor
+	" Final tok in list (latest in buf) is our starting point.
+	let tok = toks[-1]
+	if !empty(tok.pos)
+		" Actual sync tok: start on it and disallow cur pos match.
+		call cursor(tok.pos)
+		let allow_cmatch = 0
+	else
+		" No actual toks found before vsel: start at head of vsel and allow
+		" cur pos match.
+		call cursor(line("'<"), col("'<"))
+		let allow_cmatch = 1
 	endif
-	" Bootstrap with the sync tok (possibly implied).
-	let toks = [a:sync_info.tok_info]
-	" Assumption: Cursor on sync tok if one was found; otherwise, it's where
-	" we need to begin our forward search, with match at cursor allowed only
-	" if sync_info says it should be (e.g., if marking vsel and vsel coincides
-	" with start of buffer).
-	let allow_cmatch = !a:sync_info.curpos_checked
 	let vsel_cmp_prev = -1
 	let [vsel_beg_found, vsel_end_found] = [0, 0]
 	while 1
@@ -2703,56 +2913,52 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stoppos_zwa)
 		let allow_cmatch = 0
-		if a:mark_vsel
-			let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
-			if vsel_cmp_prev < vsel_cmp
-				" We've advanced w.r.t. vsel.
-				if !vsel_beg_found
-					" Need to add something for head: either a phantom (here) or
-					" augmented tok (end of loop).
-					let vsel_beg_found = 1
-					if empty(tok_info) || !s:Is_at_vsel_head()
-						" Add empty for vsel beg
-						call add(toks, {
-							\'rgn': a:rgn,
-							\'pos': s:Getpos("'<"),
-							\'idx': -1,
-							\'loc': '{',
-							\'action': 'i'
-						\})
-					endif
+		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
+		if vsel_cmp_prev < vsel_cmp
+			" We've advanced w.r.t. vsel.
+			if !vsel_beg_found
+				" Need to add something for head: either a phantom (here) or
+				" augmented tok (end of loop).
+				let vsel_beg_found = 1
+				if empty(tok_info) || !s:Is_at_vsel_head()
+					" Add empty for vsel beg
+					call add(toks, {
+						\'rgn': a:rgn,
+						\'pos': s:Getpos("'<"),
+						\'idx': -1,
+						\'loc': '{',
+						\'action': 'i'
+					\})
 				endif
-				if !vsel_end_found && vsel_cmp == 1
-					" Need to add something for tail: either a phantom (here) or
-					" augmented tok (end of loop).
-					let vsel_end_found = 1
-					if empty(tok_info) || !s:Is_at_vsel_tail()
-						" Add empty for vsel end
-						" TODO: Extra flags to denote head/tail?
-						call add(toks, {
-							\'rgn': a:rgn,
-							\'pos': s:Getpos("'>"),
-							\'idx': -1,
-							\'loc': '}',
-							\'action': 'a'
-						\})
-					endif
+			endif
+			if !vsel_end_found && vsel_cmp == 1
+				" Need to add something for tail: either a phantom (here) or
+				" augmented tok (end of loop).
+				let vsel_end_found = 1
+				if empty(tok_info) || !s:Is_at_vsel_tail()
+					" Add empty for vsel end
+					" TODO: Extra flags to denote head/tail?
+					call add(toks, {
+						\'rgn': a:rgn,
+						\'pos': s:Getpos("'>"),
+						\'idx': -1,
+						\'loc': '}',
+						\'action': 'a'
+					\})
 				endif
 			endif
 		endif
 		if !empty(tok_info)
 			" Assumption: A real tok is always added here, never above.
-			if a:mark_vsel
-				" TODO: Perhaps have Cmp_vsel return symbols directly.
-				let tok_info.loc = vsel_cmp < 0 ? '<' : vsel_cmp > 0 ? '>'
-					\: s:Getpos("'<") == tok_info.pos ? '{'
-					\: s:Getpos("'>") == tok_info.pos ? '}' : '='
-				" Note: Could be actual (non-phantom) head or tail (no special
-				" distinction required).
-				let tok_info.action = ''
-				" Update for next iteration...
-				let vsel_cmp_prev = vsel_cmp
-			endif
+			" TODO: Perhaps have Cmp_vsel return symbols directly.
+			let tok_info.loc = vsel_cmp < 0 ? '<' : vsel_cmp > 0 ? '>'
+				\: s:Getpos("'<") == tok_info.pos ? '{'
+				\: s:Getpos("'>") == tok_info.pos ? '}' : '='
+			" Note: Could be actual (non-phantom) head or tail (no special
+			" distinction required).
+			let tok_info.action = ''
+			" Update for next iteration...
+			let vsel_cmp_prev = vsel_cmp
 			call add(toks, tok_info)
 		else
 			" No more tokens in range.
@@ -2761,6 +2967,7 @@ fu! s:Vmap_collect(rgn, sync_info, mark_vsel)
 	endwhile
 	return toks
 endfu
+" TODO: This doesn't appear to be used.
 fu! s:Vmap_determine_hlable(rgn, toks_info)
 	let toks = a:toks_info.toks
 	let num_toks = len(toks)
@@ -2864,7 +3071,7 @@ fu! s:Vmap_compute(rgn, pspec)
 	" predicate for tokens.
 	"
 	" Question: When do we expect empty?
-	let toks = s:Vmap_collect(a:rgn, sync_info, !s:Is_empty(a:pspec))
+	let toks = s:Vmap_collect(a:rgn, sync_info)
 	call s:dbg_display_toks("Vmap_collect", toks)
 	if !s:Is_empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
@@ -3114,45 +3321,62 @@ endfu
 "
 fu! s:Vmap_cleanup(rgn, toks)
 	let toks = a:toks
-	" Keep up with tok and prev tok within loop.
-	let tip = toks[0]
-	" Start with tok *after* (implied or explicit) sync tok
+	" Keep up with latest tok that's safe from deletion.
+	" Note: If supersedence check updates this, the updated tok will be used
+	" by redundancy check. Another name for this would be 'redundancy tok'.
+	let ti_safe = toks[0]
+	" Keep up with tok to be used in supersedence tests. Empty means skip
+	" supersedence check. First tok is never superseded.
+	let tip = {}
+	" Start with tok *after* (virtual or actual) sync tok (since it can't be
+	" superseded).
 	let idx = 1
 	while idx < len(toks)
+		" Get tok to be checked for redundancy.
 		let ti = toks[idx]
 		if ti.action == 'd'
 			" Note: Won't see 'd' for anything but colors here.
 			" A deleted tok has no impact on anything.
 			let idx += 1
-			" TODO: Validate addition of continue, which was added only
-			" because the code made no sense without it, so I assumed it must
-			" have been omitted (or perhaps the code below used to be in an
-			" if).
 			continue
 		endif
-		" Calculate redundant and superseding independently,
-		" Note: Never consider a non-explicit token to be superseded.
-		" Rationale: sync_idx validity can be safely used to determine
-		" redundancy, but not supersedence (which relies on knowledge of
-		" existence of hlable chars in unknown region of buffer).
-		" Note: superseding refers to what ti does to tip.
-		let superseding = empty(tip.pos) ? 0 : !s:Contains_hlable(a:rgn, ti.idx, tip.pos, ti.pos, 1)
-		let redundant = tip.idx == ti.idx
-
 		" Ensure that superseded or redundant toks are either discarded
 		" (phantom) or deleted from buffer.
-		" Note: No need to remove anything from list at this point: setting a
-		" phantom's action to null accomplishes the same thing.
+		" Note: No need to remove anything from list at this point: to ensure
+		" eventual removal, set a phantom's action to null, real tok's action
+		" to 'd'.
 		" TODO: Perhaps an tok_is_phantom() predicate?
-		" TODO: Consider whether superseded/redundant removal logic needs to
-		" consider loc { and }: e.g., if there's a choice about which to
-		" remove, keep head or tail.
-		let tdel = redundant ? ti : superseding ? tip : {}
-		if !empty(tdel)
-			let tdel.action = tdel.action == 'i' || tdel.action =='a' ? '' : 'd'
+		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to " remove, keep head or tail.
+		"  b hb i i  i b  i - x b  u
+
+		if !empty(tip)
+			" Need check for supersedence.
+			if !s:Contains_hlable(a:rgn, ti.idx, tip.pos, ti.pos, 0)
+				" Delete superseded tok.
+				let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
+			else
+				" A tok that isn't superseded is safe.
+				let ti_safe = tip
+			endif
 		endif
-		" Unless ti is being deleted, tip becomes ti for next iter.
-		if empty(tdel) || tdel isnot ti
+		" Never consider same tok twice for supersedence.
+		" Note: tip never gets set without finding a non-deleted tok below.
+		" (Thus, color toks deleted prior to this function won't be considered
+		" in supersedence tests.)
+		let tip = {}
+		"echomsg "tip.pos=" . string(tip.pos) . ", ti.pos=" . string(ti.pos) . ", superseding=" . string(superseding)
+		" Is this tok redundant? Consider possible update to ti_safe by
+		" supersedence logic.
+		echomsg "ti_safe: " . string(ti_safe) . ", ti: " . string(ti)
+		if ti_safe.idx == ti.idx
+			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+		else
+			" Token is not deleted; ensure it's used in supersedence check
+			" next iteration.
+			" Assumption: tip.action != 'd'
+			" Rationale: Only color toks can be deleted prior to this
+			" conditional, and the earlier continue ensures we don't get here
+			" in that case.
 			let tip = ti
 		endif
 		let idx += 1
@@ -3169,7 +3393,7 @@ fu! s:dbg_display_toks(context, toks)
 	echo "\r"
 	echo a:context
 	for ti in a:toks
-		echo printf('(%3d, %3d): %s(%d): => %s'
+		echo printf('(%3d, %3d): %s(%2d): => %s'
 			\, empty(ti.pos) ? -1 : ti.pos[0]
 			\, empty(ti.pos) ? -1 : ti.pos[1]
 			\, ti.rgn, ti.idx, ti.action)
@@ -3189,6 +3413,7 @@ fu! s:Highlight_selection_impl(pspecs)
 		" TODO: May change name to calculate or something?
 		let toks = s:Vmap_compute(rgn, a:pspecs[rgn])
 		" TODO: Consider call by ref vs return...
+		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks)
 		let toks = s:Vmap_cleanup(rgn, toks)
 		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks)
 		" TODO: Convert to in-place merge.
