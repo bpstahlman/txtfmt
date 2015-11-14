@@ -3180,22 +3180,38 @@ fu! s:Vmap_cleanup(rgn, toks)
 		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to " remove, keep head or tail.
 		"  b hb i i  i b  i - x b  u
 
-		" TODO: Prove that we don't have a problem when esc=self, and
-		" Vmap_apply has put identical toks adjacent to one another: i.e.,
-		" prove that the Contains_hlable test will work. If not, fix...
+		" Is this tok redundant?
+		" Design Decision: When both superseding and redundant toks exist,
+		" prefer to delete redundant.
+		echomsg "ti_safe: " . string(ti_safe) . ", ti: " . string(ti)
+		if tip.idx == ti.idx
+			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+			let idx += 1
+			" Note: Leave tip unchanged, but it's not yet safe.
+			continue
+		endif
+
+		" If here, we have a tok that is not *currently* redundant, but
+		" could supersede any preceding non-deleted tok (in which case, it
+		" could be redundant with an earlier tok uncovered by the supersedence
+		" delete).
 		if !empty(tip)
 			" Need check for supersedence.
-			if !s:Contains_hlable(a:rgn, ti.idx, tip.pos, ti.pos, 0)
+			if !s:Contains_hlable(a:rgn, tip.idx, tip.pos, ti.pos, 0)
 				" Either delete superseded tok, or replace it with f- (if
 				" necessary to prevent bleed-through from 'last safe' tok.
 				" Hlable test is for region between tip and ti, but uses idx
 				" of last safe tok: i.e., the one that would bleed through.
-				if s:Contains_hlable(a:rgn, ti_safe.idx, tip.pos, ti.pos, 0)
+				" Special Case: If bleed-through is from default tok,
+				" superseded tok can be deleted.
+				if ti_safe.idx && s:Contains_hlable(a:rgn, ti_safe.idx, tip.pos, ti.pos, 0)
 					" Prevent bleed-through.
+					" Actions 'i' and 'a' need not change.
 					if empty(tip.action) | let tip.action = 'r' | endif
 					let tip.idx = 0
 				else
-					" Delete superseded tok.
+					" Delete superseded tok, and check for redundancy with
+					" uncovered tok.
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
 				endif
 			else
@@ -3203,26 +3219,10 @@ fu! s:Vmap_cleanup(rgn, toks)
 				let ti_safe = tip
 			endif
 		endif
-		" Never consider same tok twice for supersedence.
-		" Note: tip never gets set without finding a non-deleted tok below.
-		" (Thus, color toks deleted prior to this function won't be considered
-		" in supersedence tests.)
-		let tip = {}
+		" Current tok was not deleted; ensure it's used in supersedence check
+		" next iteration.
+		let tip = ti
 		"echomsg "tip.pos=" . string(tip.pos) . ", ti.pos=" . string(ti.pos) . ", superseding=" . string(superseding)
-		" Is this tok redundant? Consider possible update to ti_safe by
-		" supersedence logic.
-		echomsg "ti_safe: " . string(ti_safe) . ", ti: " . string(ti)
-		if ti_safe.idx == ti.idx
-			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
-		else
-			" Token is not deleted; ensure it's used in supersedence check
-			" next iteration.
-			" Assumption: tip.action != 'd'
-			" Rationale: Only color toks can be deleted prior to this
-			" conditional, and the earlier continue ensures we don't get here
-			" in that case.
-			let tip = ti
-		endif
 		let idx += 1
 	endwhile
 	" TODO: Appropriate to return, or just call by ref?
