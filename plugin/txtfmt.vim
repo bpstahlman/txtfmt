@@ -1893,7 +1893,10 @@ fu! s:Define_fmtclr_regexes()
 	if b:txtfmt_cfg_escape == 'bslash'
 		" The following pattern is a zero-width look-behind assertion, which
 		" matches only at a non-backslash-escaped position.
-		let noesc = '\%(\%(^\|[^\\]\)\%(\\\\\)*\\\)\@<!'
+		" Note: Changing to (slightly shorter) pos lookahead after years of
+		" release. Just noticed the superfluity, and it bugged me...
+		"let noesc_orig = '\%(\%(^\|[^\\]\)\%(\\\\\)*\\\)\@<!'
+		let noesc = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
 		" Make this persistent, as it's used elsewhere...
 		let b:re_no_bslash_esc = noesc
 		" clr
@@ -1941,7 +1944,16 @@ fu! s:Define_fmtclr_regexes()
 	elseif b:txtfmt_cfg_escape == 'self'
 		" The following pattern serves as the template for finding tokens that
 		" are neither escaping nor escaped.
-		let tmpl = '\%(\(placeholder\)\%(\1\)\@!\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\1\1\)*\1\)\@<!.'
+		" Bugfix: Incredibly, the tmpl_bug pattern has been in use for a long
+		" time; apparently, not many folks use 'self' escaping... There were 2
+		" problems:
+		" 1. The intent was for the ^ to be factored out of the \@<!
+		" 2. Apparently, Vim's regex engine doesn't guarantee that an earlier
+		"    lookahead will be processed before a later lookbehind; thus, the
+		"    first capture can't be used in the lookbehind.
+		let tmpl_bug = '\%(\(placeholder\)\%(\1\)\@!\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\1\1\)*\1\)\@<!.'
+		let tmpl = '\%(\(placeholder\)\1\@!\)\%(\%(^\|\1\@!.\)\%(\1\1\)*.\)\@<='
+		let g:tmp = tmpl
 		" Make this persistent, as it's used elsewhere...
 		let b:re_no_self_esc = tmpl
 		" clr
