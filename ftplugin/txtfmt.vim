@@ -2508,29 +2508,44 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 endfu
 
 " Return regex matching any single char, highlightable by input rgn/idx.
+" Special Case: If no empty object specified for rgn/idx, return true for
+" *any* non-tok chars.
 " Inputs:
-" rgn:  'fmt'|'clr'|'bgc',
-" idx:  <color-idx>|<fmt-mask>
+" tok_info: {} | {
+"   rgn:  'fmt'|'clr'|'bgc',
+"   idx:  <color-idx>|<fmt-mask>
+" }
 " TODO: Should this be a function, or perhaps just a Dict?
-fu! s:Get_hlable_patt(rgn, idx)
-	let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
-	let ws_hlable = a:rgn == 'bgc' || (a:rgn == 'fmt' && and(a:idx, ws_hlable_fmt_mask))
+fu! s:Get_hlable_patt(tok_info)
+	if !empty(a:tok_info)
+		let [rgn, idx] = [a:tok_info.rgn, a:tok_info.idx]
+		let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
+		let ws_hlable = rgn == 'bgc' || (rgn == 'fmt' && and(idx, ws_hlable_fmt_mask))
+	else
+		let ws_hlable = 1
+	endif
 	return b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
 endfu
 
 " Return true iff the region between pos1 and pos2 (inclusivity/exclusivity
 " specified by the inc arg) contains anything hlable, given the specified rgn
 " type and tok idx.
+" Special Case: If empty tok_info object specified, return true for *any*
+" non-tok chars.
 " Inputs:
-" rgn:  'fmt'|'clr'|'bgc',
-" idx:  <color-idx>|<fmt-mask>
+" tok_info: {} | {
+"   rgn:  'fmt'|'clr'|'bgc',
+"   idx:  <color-idx>|<fmt-mask>
+" }
 " pos1: <start of region>
 " pos2: <end of region>
 " inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
-" Tested: 08Jan2015
+" Tested: 08Jan2015 (but modified 14Nov2015)
 let g:patt = []
-fu! s:Contains_hlable(rgn, idx, pos1, pos2, inc)
-	let hlable = s:Get_hlable_patt(a:rgn, a:idx)
+fu! s:Contains_hlable(tok_info, pos1, pos2, inc)
+	" TODO: Do we want to defer to Get_hlable_patt for empty tok_info, or
+	" should the special case by handled wholly here?
+	let hlable = s:Get_hlable_patt(a:tok_info)
 	" Process inclusivity arg.
 	if type(a:inc) == 3
 		let ie = a:inc
@@ -2676,7 +2691,7 @@ fu! s:Vmap_sync_start(rgn)
 		" Has this tok satisfied supersedence constraint?
 		" Question: Should we be using Contains_hlable for this? Consider any
 		" assumptions it makes regarding cursor pos.
-		let hlable = s:Get_hlable_patt(a:rgn, ti.idx)
+		let hlable = s:Get_hlable_patt(ti)
 		" Look only up to next tok (if one was found) or head of vsel.
 		let hlable_zwa = s:Make_pos_zwa({'end': {'pos': empty(prev_pos) ? vsel_beg_pos : prev_pos}})
 		if search(hlable_zwa . hlable, 'nW')
@@ -2815,7 +2830,7 @@ fu! s:Vmap_determine_hlable(rgn, toks_info)
 	let tidx = 1
 	while tidx < num_toks
 		let tok_info = toks[tidx].tok_info
-		let tok_info.hlable = s:Contains_hlable(a:rgn, tok_info.idx, prev_tok_info.pos, tok_info.pos, 0)
+		let tok_info.hlable = s:Contains_hlable(tok_info, prev_tok_info.pos, tok_info.pos, 0)
 		let prev_tok_info = tok_info
 		let tidx += 1
 	endwhile
@@ -3153,21 +3168,19 @@ endfu
 fu! s:Vmap_cleanup(rgn, toks)
 	let toks = a:toks
 	" Keep up with latest tok that's safe from deletion.
-	" Note: If supersedence check updates this, the updated tok will be used
-	" by redundancy check. Another name for this would be 'redundancy tok'.
+	" First tok is never deletable (and may not be an actual tok).
 	let ti_safe = toks[0]
 	" Keep up with tok to be used in supersedence tests. Empty means skip
 	" supersedence check. First tok is never superseded.
 	let tip = {}
-	" Start with tok *after* (virtual or actual) sync tok (since it can't be
-	" superseded).
+	" Start with first tok susceptible to supersedence; i.e., tok *after*
+	" (virtual or actual) sync tok.
 	let idx = 1
 	while idx < len(toks)
-		" Get tok to be checked for redundancy.
 		let ti = toks[idx]
 		if ti.action == 'd'
+			" Skip deleted toks, which have no impact on anything.
 			" Note: Won't see 'd' for anything but colors here.
-			" A deleted tok has no impact on anything.
 			let idx += 1
 			continue
 		endif
@@ -3177,52 +3190,61 @@ fu! s:Vmap_cleanup(rgn, toks)
 		" eventual removal, set a phantom's action to null, real tok's action
 		" to 'd'.
 		" TODO: Perhaps an tok_is_phantom() predicate?
-		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to " remove, keep head or tail.
-		"  b hb i i  i b  i - x b  u
+		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to remove, keep head or tail.
 
-		" Is this tok redundant?
+		" Perform 1st redundancy check using tip if it exists, else ti_safe.
 		" Design Decision: When both superseding and redundant toks exist,
 		" prefer to delete redundant.
-		echomsg "ti_safe: " . string(ti_safe) . ", ti: " . string(ti)
-		if tip.idx == ti.idx
+		if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
 			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 			let idx += 1
-			" Note: Leave tip unchanged, but it's not yet safe.
+			" Note: Leave tip unchanged, but don't make safe.
 			continue
 		endif
 
 		" If here, we have a tok that is not *currently* redundant, but
-		" could supersede any preceding non-deleted tok (in which case, it
-		" could be redundant with an earlier tok uncovered by the supersedence
+		" could supersede a preceding non-deleted tok (in which case, it could
+		" be redundant with an earlier tok uncovered by the supersedence
 		" delete).
+		" Set default tip for next iter; unset below if we determine that cur
+		" tok is not supersedable (i.e., if it becomes redundant due to
+		" supersedence).
+		let tip_next = ti
 		if !empty(tip)
 			" Need check for supersedence.
-			if !s:Contains_hlable(a:rgn, tip.idx, tip.pos, ti.pos, 0)
+			if !s:Contains_hlable(tip, tip.pos, ti.pos, 0)
 				" Either delete superseded tok, or replace it with f- (if
-				" necessary to prevent bleed-through from 'last safe' tok.
-				" Hlable test is for region between tip and ti, but uses idx
-				" of last safe tok: i.e., the one that would bleed through.
+				" necessary to prevent bleed-through from 'last safe' tok).
+				" TODO: Reword to reflect new meaning of bleed-through.
 				" Special Case: If bleed-through is from default tok,
 				" superseded tok can be deleted.
-				if ti_safe.idx && s:Contains_hlable(a:rgn, ti_safe.idx, tip.pos, ti.pos, 0)
-					" Prevent bleed-through.
-					" Actions 'i' and 'a' need not change.
+				if ti_safe.idx && s:Contains_hlable({}, tip.pos, ti.pos, 0)
+					" Cap non-default region to prevent bleed through.
 					if empty(tip.action) | let tip.action = 'r' | endif
 					let tip.idx = 0
+					" Design Decision: Once we decide to cap, the decision is
+					" final: though subsequent tok might be rendered
+					" redundant, this one won't be superseded.
+					let ti_safe = tip
 				else
-					" Delete superseded tok, and check for redundancy with
-					" uncovered tok.
+					" Nothing but maybe toks exposed. Delete superseded tok.
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
+				endif
+				" Supersedence test complete.
+				" Do 2nd redundancy check (necessitated by tok
+				" removal/replacement).
+				if ti_safe.idx == ti.idx
+					" The current tok has become redundant.
+					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+					let tip_next = {}
 				endif
 			else
 				" A tok that isn't superseded is safe.
 				let ti_safe = tip
 			endif
 		endif
-		" Current tok was not deleted; ensure it's used in supersedence check
-		" next iteration.
-		let tip = ti
-		"echomsg "tip.pos=" . string(tip.pos) . ", ti.pos=" . string(ti.pos) . ", superseding=" . string(superseding)
+		" Update for next iter.
+		let tip = tip_next
 		let idx += 1
 	endwhile
 	" TODO: Appropriate to return, or just call by ref?
@@ -3394,6 +3416,7 @@ fu! s:Jump_to_tok(mode, type, dir, till, ...)
 		" Error - shouldn't ever get here - just return
 		return ''
 	endif
+	let g:re = re
 	" Important Note: If mode is visual, Vim has already removed the visual
 	" highlighting and positioned the cursor at the start of the visual
 	" region. Since this is a motion mapping, we need to undo this; i.e.,
@@ -5244,4 +5267,4 @@ call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
 " Restore compatibility options to what they were
 let &cpo = s:save_cpo
 " >>>
-	" vim: sw=4 ts=4 foldmethod=marker foldmarker=<<<,>>> :
+	" vim: sw=4 ts=4 tw=80 foldmethod=marker foldmarker=<<<,>>> :
