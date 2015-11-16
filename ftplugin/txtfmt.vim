@@ -3196,6 +3196,7 @@ fu! s:Vmap_cleanup(rgn, toks)
 		" Design Decision: When both superseding and redundant toks exist,
 		" prefer to delete redundant.
 		if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
+			echomsg "Removing in 1st red test: " . string(ti)
 			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 			let idx += 1
 			" Note: Leave tip unchanged, but don't make safe.
@@ -3212,14 +3213,27 @@ fu! s:Vmap_cleanup(rgn, toks)
 		let tip_next = ti
 		if !empty(tip)
 			" Need check for supersedence.
-			if !s:Contains_hlable(tip, tip.pos, ti.pos, 0)
+			echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
+			if !s:Contains_hlable(tip, tip.pos, ti.pos,
+					\[tip.action == 'i', ti.action == 'a'])
 				" Either delete superseded tok, or replace it with f- (if
 				" necessary to prevent bleed-through from 'last safe' tok).
 				" TODO: Reword to reflect new meaning of bleed-through.
 				" Special Case: If bleed-through is from default tok,
 				" superseded tok can be deleted.
-				if ti_safe.idx && s:Contains_hlable({}, tip.pos, ti.pos, 0)
+				" TODO: Probably replace the special arg Contains_hlable with
+				" something specific to the nonzero width buffer space
+				" concept. See notes...
+				" TODO: Document the inc/exc logic, and either create a new
+				" predicate, or modify Contains_hlable in a way that obviates
+				" need for the line number test... Also, decide whether a single
+				" newline, or only multiple, should constitute the sort of
+				" non-zero width we're looking for here...
+				if ti_safe.idx && (s:Contains_hlable({}, tip.pos, ti.pos,
+					\[tip.action == 'i', ti.action == 'a'])
+					\|| tip.pos[0] + 1 < ti.pos[0])
 					" Cap non-default region to prevent bleed through.
+					echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
 					let tip.idx = 0
 					" Design Decision: Once we decide to cap, the decision is
@@ -3228,6 +3242,7 @@ fu! s:Vmap_cleanup(rgn, toks)
 					let ti_safe = tip
 				else
 					" Nothing but maybe toks exposed. Delete superseded tok.
+					echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip)
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
 				endif
 				" Supersedence test complete.
@@ -3235,6 +3250,7 @@ fu! s:Vmap_cleanup(rgn, toks)
 				" removal/replacement).
 				if ti_safe.idx == ti.idx
 					" The current tok has become redundant.
+					echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
 					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 					let tip_next = {}
 				endif
@@ -3270,6 +3286,8 @@ endfu
 fu! s:Highlight_selection_impl(pspecs)
 	call s:Adjust_vsel_to_protect_escapes()
 	let [vsel_beg, vsel_end] = [getpos("'<")[1:2], getpos("'>")[1:2]]
+	" TODO: At some point, don't we need to test for hlable, and cancel the
+	" mapping if the vsel contains nothing to highlight??? Where?
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
 	let rgn_info = {}
