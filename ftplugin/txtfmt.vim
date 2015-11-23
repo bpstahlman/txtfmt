@@ -3344,9 +3344,15 @@ endfu
 " even add it to begin with - it really serves no purpose...
 fu! s:Vmap_delete(toks, opt)
 	" TODO TODO: Clean this up with refactoring...
+	" Important: Currently, this is done by all 3 region types, and the result
+	" is exactly the same!!! At least calculate externally and pass in; however,
+	" a better way is to parameterize the various pipeline functions, which
+	" currently operate independently on the rgn types. This would also simplify
+	" the main controller function.
 	let del_lines = a:opt.sel_end[0] - a:opt.sel_beg[0]
 	let t = getline(a:opt.sel_end[0])[a:opt.sel_end[1] - 1 : ]
-	" UNDER CONSTRUCTION - del_bytes is misnomer...
+	" UNDER CONSTRUCTION - del_bytes is misnomer... Perhaps shift_bytes or
+	" something.
 	let del_bytes = a:opt.sel_end[1] + byteidx(t, 1) - 1
 	echomsg "1. del_bytes = " . del_bytes
 	let del_bytes -= a:opt.sel_beg[1] - 1
@@ -3365,9 +3371,11 @@ fu! s:Vmap_delete(toks, opt)
 			" If this tok is on final line in range, adjust for # of bytes
 			" deleted on that line.
 			if tok.pos[0] == a:opt.sel_end[0]
+				echomsg "Decrementing col pos: " . string(tok)
 				" TODO: Consider how this will work with NUL on empty line being
 				" at end of char.
-				" Issue: Something is wrong here.
+				" Issue: Something is wrong here. Ah. See Special Case below,
+				" and perhaps refactor...
 				let tok.pos[1] -= del_bytes
 			endif
 			" Adjust for # of newlines deleted (could be 0).
@@ -3377,7 +3385,10 @@ fu! s:Vmap_delete(toks, opt)
 				let idx_tail = idx
 				" Special Case: If nothing left to append to, convert to an
 				" insert at col 1.
-				if tok.pos[1] == 0
+				" TODO: When mb chars/toks are at head of line and vsel end
+				" points to tok, pos[1] can go slightly negative. Figure out
+				" cleanest way to handle this. this is sort of a kludge...
+				if tok.pos[1] <= 0
 					let tok.pos[1] = 1
 					let tok.action = 'i'
 				endif
@@ -3392,6 +3403,8 @@ fu! s:Vmap_delete(toks, opt)
 	" that would result in attempt to delete already deleted tok. Similarly,
 	" setting to '' would allow the deleted tok's effect to be felt in (eg) tok
 	" cleanup, and we don't want that either. We want it completely ignored.
+	" Assumption: Upstream logic guarantees existence of both idx_head and
+	" idx_tail.
 	call remove(a:toks, idx_head, idx_tail - 1)
 endfu
 
@@ -3425,6 +3438,9 @@ fu! s:Operate_selection_impl(pspecs, op)
 		\'sel_beg': vsel_beg, 'sel_end': vsel_end
 	\}
 	call s:Adjust_vsel_to_protect_escapes()
+	" TODO: May need some validation on selection: i.e., to determine whether
+	" the operation is valid.
+
 	" TODO: At some point, we need to test for hlable, and cancel the mapping if
 	" the vsel contains nothing to highlight??? Where?
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
@@ -3432,8 +3448,9 @@ fu! s:Operate_selection_impl(pspecs, op)
 	let rgn_info = {}
 	let mtoks = []
 	" Loop over rgn types.
-	" TODO: Can't delete anything in vsel till after we've computed all rgn
-	" types.
+	" Big TODO: Parameterize the functions taking rgn; this will obviate the
+	" need for multiple loops (currently, the pipeline is broken up so we can do
+	" the (non-rgn-specific) s:Delete_region once-only.
 	let toks = {}
 	for rgn in keys(a:pspecs)
 		" TODO: May change name to calculate or something?
@@ -3453,9 +3470,8 @@ fu! s:Operate_selection_impl(pspecs, op)
 		" Important Note: Delete the region text once-only, regardless of number
 		" of rgn types involved.
 		" WHOA!!!! Do I really not need to know # of bytes deleted by the following?
-		" If not, I did a lot of work in Delete_region for nothing...
-		" Assumption: Upstream logic guarantees existence of both idx_head and
-		" idx_tail.
+		" If not, I did a lot of work in Delete_region for nothing... Could
+		" probably really simplify things if # deleted bytes isn't needed.
 		call s:Delete_region(vsel_beg, vsel_end, [1, 1])
 	endif
 	" Now for cleanup phases...
@@ -3480,6 +3496,7 @@ fu! s:Operate_selection_impl(pspecs, op)
 		echo string(vsel_offs)
 		let vsel_beg[1] += vsel_offs[0]
 		let vsel_end[1] += vsel_offs[1]
+		" TODO: Do we want to leave things visually selected or not?
 		call s:Restore_visual_mode(vsel_beg, vsel_end)
 	endif
 endfu
