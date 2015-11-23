@@ -505,6 +505,71 @@ fu! s:Delete_cur_char()
 	return strlen(@z)
 endfu
 " >>>
+" Function: s:Delete_region() <<<
+" Purpose: Delete all text in specified region.
+" Inputs:
+" pos1: <[ln, col] of beg of region to delete>
+" pos2: <[ln, col] of end of region to delete>
+" inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
+" Return: Number of bytes deleted
+" Tested: 22Nov2015
+" Rationale: The reason I chose to do this analytically (as opposed to simply
+" using a delete motion with \%l and \%c assertions in target pattern, saving
+" deleted text to a register, and running strlen on the register) is that the
+" analytic approach doesn't require saving the (potentially large) deleted text
+" (for calculation of # of bytes deleted). Technically, the delete operator
+" approach doesn't require this either, but it's certainly the easiest way, and
+" if we're going to calculate the length of deleted text more analytically, the
+" delete operator provides no real advantage over the analytic approach...
+fu! s:Delete_region(pos_beg, pos_end, inc)
+	let inc = type(a:inc) == 3 ? a:inc : [a:inc, a:inc]
+	let [line_beg, col_beg, line_end, col_end] =
+		\[a:pos_beg[0], a:pos_beg[1], a:pos_end[0], a:pos_end[1]]
+
+	" Begin
+	let linetext_beg = getline(line_beg)
+	if !inc[0]
+		let col_beg += byteidx(strpart(linetext_beg, col_beg - 1), 1)
+	endif
+	let keeptext_beg = strpart(linetext_beg, 0, col_beg - 1)
+
+	" End
+	let keeptext_end = line_beg == line_end
+		\? linetext_beg[col_end - 1 : ]
+		\: getline(line_end)[col_end - 1 : ]
+	if inc[1]
+		" Make sure the final char is included in deletion.
+		let offset = byteidx(keeptext_end, 1)
+		let col_end += offset
+		let keeptext_end = keeptext_end[offset : ]
+	endif
+
+	" Calculate # of bytes being deleted (before making any buffer mods).
+	if line_beg == line_end
+		" Recall that col_beg and col_end now point to first char to be deleted
+		" and char *beyond* last char to be deleted, respectively.
+		let del_bytes = col_end - col_beg
+	else
+		" Initialize to # of bytes between *start* of line_beg and *start* of
+		" line_end (includes newlines).
+		let del_bytes = line2byte(line_end) - line2byte(line_beg)
+		" Subtract bytes kept at head of beg line
+		let del_bytes -= col_beg - 1
+		" Add bytes removed at head of end line
+		let del_bytes += col_end - 1
+	endif
+
+	" Modify the buffer.
+	call setline(line_beg, keeptext_beg . keeptext_end)
+	if line_end - line_beg
+		" Remove lines to bit bucket.
+		exe (line_beg + 1) . "," . line_end . "d _"
+	endif
+
+	" Return number of bytes removed
+	return del_bytes
+endfu
+" >>>
 " Function: s:Get_cur_char() <<<
 " Purpose: Get and return the character under the cursor
 " Return: Character under the cursor or empty string if ga would display NUL
@@ -2065,6 +2130,7 @@ endfu
 " }
 " Note: In masks, 0 means `-'; in color numbers, -1 means `-' (both by
 " convention, and naturally, since its 2's complement is an all 1's mask).
+" TODO: I believe the concept of 'mask' no longer applies - remove above note.
 " TODO: Rework the exception messages.
 " TODO: Perhaps move these strip methods into TxtfmtUtil_...
 fu! s:Parse_fmt_clr_transformer(specs)
@@ -2909,7 +2975,7 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 endfu
 
 " TODO: Perhaps rename...
-fu! s:Vmap_compute(rgn, pspec)
+fu! s:Vmap_compute(rgn, pspec, opt)
 	let sync_info = s:Vmap_sync_start(a:rgn)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 	" start/end indices returned explicitly.
@@ -2985,7 +3051,7 @@ endfu
 " Reverse toks and merge with mtoks (assumed to be reversed/merged already).
 " TODO: Probably should just merge in-place.
 " Tested: 18Apr2015 (the functional (non-merge-in-place) version)
-fu! s:Vmap_rev_and_merge(mtoks, toks)
+fu! s:Vmap_rev_and_merge(mtoks, toks, opt)
 	if empty(a:toks)
 		" Special case: Nothing to merge.
 		" Note: For consistency with non-short-circuit case, return a copy.
@@ -3066,7 +3132,7 @@ endfu
 " Return: length-2 list containing the signed col offset adjustments for start and
 " end of visual selection (entailed by insertion/removal of tokens).
 " !!!!!!!!!!!UNDER CONSTRUCTION!!!!!!!!!!!
-fu! s:Vmap_apply_changes(toks)
+fu! s:Vmap_apply_changes(toks, opts)
 	" Note: A change can affect only a start/end on the same line.
 	let [vsel_beg_line, vsel_end_line] = [line("'<'"), line("'>")]
 	" Keep up with how changes affect vsel start/end as a list of signed byte
@@ -3142,7 +3208,7 @@ fu! s:Vmap_apply_changes(toks)
 				endif
 			elseif tok.loc == '}'
 				" Must be a or r
-				" r can't effect end, even when lengths differ
+				" r can't affect end, even when lengths differ
 				if act == 'a'
 					if tok_line == vsel_end_line
 						" Expand to include the tok appended.
@@ -3165,7 +3231,7 @@ endfu
 "     loc: <|{|=|}|>
 " }, ...]
 "
-fu! s:Vmap_cleanup(rgn, toks)
+fu! s:Vmap_cleanup(rgn, toks, opt)
 	let toks = a:toks
 	" Keep up with latest tok that's safe from deletion.
 	" First tok is never deletable (and may not be an actual tok).
@@ -3263,8 +3329,73 @@ fu! s:Vmap_cleanup(rgn, toks)
 		let tip = tip_next
 		let idx += 1
 	endwhile
-	" TODO: Appropriate to return, or just call by ref?
-	return toks
+endfu
+
+" TODO: Clean up this comment block...
+" Delete everything
+" Delete all text in buffer between phantom tok at head (inclusive) and phantom
+" tok at tail (exclusive).
+" Note: Could probably leave the phantom tok at head, and let it be cleaned up
+" naturally if necessary. Since region it modifies is empty, it will be
+" superseded by a surviving, non-default phantom at the tail. If that tail is
+" default, the tail phantom would be redundant, but it's a difference without a
+" distinction in that case: i.e., doesn't matter which we delete... Still, I'm
+" thinking just delete the phantom at head, or for that matter, perhaps don't
+" even add it to begin with - it really serves no purpose...
+fu! s:Vmap_delete(toks, opt)
+	" TODO TODO: Clean this up with refactoring...
+	let del_lines = a:opt.sel_end[0] - a:opt.sel_beg[0]
+	let t = getline(a:opt.sel_end[0])[a:opt.sel_end[1] - 1 : ]
+	" UNDER CONSTRUCTION - del_bytes is misnomer...
+	let del_bytes = a:opt.sel_end[1] + byteidx(t, 1) - 1
+	echomsg "1. del_bytes = " . del_bytes
+	let del_bytes -= a:opt.sel_beg[1] - 1
+	echomsg "2. del_bytes = " . del_bytes
+	" Loop over all tokens, though the we won't really start doing anything till
+	" we get to phantom head.
+	" Possible TODO: If location were cached somewhere, we could start there.
+	let idx = 0
+	for tok in a:toks
+		if tok.loc == '{'
+			" TODO: Consider whether to skip adding this tok in the 'delete'
+			" case (since we know it will be deleted); in that case, phantom
+			" head pos would correspond to a:opt.sel_beg.
+			let idx_head = idx
+		elseif tok.loc == '}' || tok.loc == '>'
+			" If this tok is on final line in range, adjust for # of bytes
+			" deleted on that line.
+			if tok.pos[0] == a:opt.sel_end[0]
+				" TODO: Consider how this will work with NUL on empty line being
+				" at end of char.
+				" Issue: Something is wrong here.
+				let tok.pos[1] -= del_bytes
+			endif
+			" Adjust for # of newlines deleted (could be 0).
+			let tok.pos[0] -= del_lines
+			if tok.loc == '}'
+				" Phantom tail
+				let idx_tail = idx
+				" Special Case: If nothing left to append to, convert to an
+				" insert at col 1.
+				if tok.pos[1] == 0
+					let tok.pos[1] = 1
+					let tok.action = 'i'
+				endif
+			endif
+		endif
+		let idx += 1
+	endfor
+
+	" Remove tok elements corresponding to what we deleted.
+	" Rationale: Could introduce an 'action' type that means ignore, but this
+	" will simplify subsequent stages. Note that we couldn't set to 'd', since
+	" that would result in attempt to delete already deleted tok. Similarly,
+	" setting to '' would allow the deleted tok's effect to be felt in (eg) tok
+	" cleanup, and we don't want that either. We want it completely ignored.
+	call remove(a:toks, idx_head, idx_tail - 1)
+endfu
+
+fu! s:Vmap_protect_bslash(opt)
 endfu
 
 " Debug only!
@@ -3283,37 +3414,87 @@ fu! s:dbg_display_toks(context, toks)
 	echo "\r"
 endfu
 
-fu! s:Highlight_selection_impl(pspecs)
-	call s:Adjust_vsel_to_protect_escapes()
+" TODO: Consider whether is_del is best approach? Perhaps string op arg instead?
+" Or even something within pspecs?
+fu! s:Operate_selection_impl(pspecs, op)
+	" Create struct for communication with lower levels.
 	let [vsel_beg, vsel_end] = [getpos("'<")[1:2], getpos("'>")[1:2]]
-	" TODO: At some point, don't we need to test for hlable, and cancel the
-	" mapping if the vsel contains nothing to highlight??? Where?
+	" TODO: Have this used in called functions as appropriate.
+	let opt = {
+		\'op': a:op,
+		\'sel_beg': vsel_beg, 'sel_end': vsel_end
+	\}
+	call s:Adjust_vsel_to_protect_escapes()
+	" TODO: At some point, we need to test for hlable, and cancel the mapping if
+	" the vsel contains nothing to highlight??? Where?
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
 	let rgn_info = {}
 	let mtoks = []
 	" Loop over rgn types.
+	" TODO: Can't delete anything in vsel till after we've computed all rgn
+	" types.
+	let toks = {}
 	for rgn in keys(a:pspecs)
 		" TODO: May change name to calculate or something?
-		let toks = s:Vmap_compute(rgn, a:pspecs[rgn])
+		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs[rgn], opt)
+		if opt['op'] == 'delete'
+			" Update list to reflect toks we're going to delete before cleanup.
+			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
+			" Issue: Some indices aren't getting updated properly.
+			call s:Vmap_delete(toks[rgn], opt)
+			call s:dbg_display_toks("Vmap_delete " . rgn, toks[rgn])
+		endif
+	endfor
+	if opt['op'] == 'delete'
+		" Delete text between phantom head (inclusive) and phantom tail (exclusive).
+		" Note: Phantom tail tok would be *appended* at the stored position: hence,
+		" the 'inclusive' arg.
+		" Important Note: Delete the region text once-only, regardless of number
+		" of rgn types involved.
+		" WHOA!!!! Do I really not need to know # of bytes deleted by the following?
+		" If not, I did a lot of work in Delete_region for nothing...
+		" Assumption: Upstream logic guarantees existence of both idx_head and
+		" idx_tail.
+		call s:Delete_region(vsel_beg, vsel_end, [1, 1])
+	endif
+	" Now for cleanup phases...
+	for rgn in keys(a:pspecs)
 		" TODO: Consider call by ref vs return...
-		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks)
-		let toks = s:Vmap_cleanup(rgn, toks)
-		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks)
+		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks[rgn])
+		call s:Vmap_cleanup(rgn, toks[rgn], opt)
+		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks[rgn])
 		" TODO: Convert to in-place merge.
-		let mtoks = s:Vmap_rev_and_merge(mtoks, toks)
+		let mtoks = s:Vmap_rev_and_merge(mtoks, toks[rgn], opt)
 		call s:dbg_display_toks("Vmap_rev_and_merge " . rgn, mtoks)
 	endfor
 	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
-	let vsel_offs = s:Vmap_apply_changes(mtoks)
-	" Adjust and restore vsel.
-	echo string(vsel_offs)
-	let vsel_beg[1] += vsel_offs[0]
-	let vsel_end[1] += vsel_offs[1]
-	call s:Restore_visual_mode(vsel_beg, vsel_end)
+	let vsel_offs = s:Vmap_apply_changes(mtoks, opt)
+	if opt['op'] == 'delete' && b:txtfmt_cfg_escape == 'bslash'
+		" Note: There can be only 1 bslash affected, no matter how many rgn
+		" types are involved in the delete.
+		call s:Vmap_protect_bslash(opt)
+	endif
+	if opt['op'] != 'delete'
+		" Adjust and restore vsel.
+		echo string(vsel_offs)
+		let vsel_beg[1] += vsel_offs[0]
+		let vsel_end[1] += vsel_offs[1]
+		call s:Restore_visual_mode(vsel_beg, vsel_end)
+	endif
 endfu
 
-" TODO: Perhaps combine with Highlight_selection_impl...
+fu! s:Delete_selection()
+	" TODO: Refactor check also performed by Highlight_selection; consider
+	" combining the functions themselves with a highlight/delete operation arg?
+	" Blockwise visual selections not supported!
+	if visualmode() == "\<C-V>"
+		throw "Highlight_selection(): blockwise-visual mode not supported"
+	endif
+	" TODO VMAPS: Check for active regions. Don't hardcode like this.
+	call s:Operate_selection_impl({'fmt': 0, 'clr': 0, 'bgc': 0}, 'delete')
+endfu 
+
 fu! s:Highlight_selection()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
@@ -3330,7 +3511,7 @@ fu! s:Highlight_selection()
 		return
 	endif
 
-	call s:Highlight_selection_impl(tokinfo)
+	call s:Operate_selection_impl(tokinfo, 'apply')
 
 endfu
 
@@ -5260,8 +5441,13 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 " >>>
 " visual mode insert token mappings <<<
 " Note: The following will work for either visual or select mode
-call s:Def_map('v', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_v',
+call s:Def_map('v', '<C-\><C-\>', '<Plug>TxtfmtVmapApply_v',
 			\":<C-U>call <SID>Highlight_selection()<CR>")
+" >>>
+" visual mode delete token mappings <<<
+" Note: The following will work for either visual or select mode
+call s:Def_map('v', '<C-\>d', '<Plug>TxtfmtVmapDelete_v',
+			\":<C-U>call <SID>Delete_selection()<CR>")
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
