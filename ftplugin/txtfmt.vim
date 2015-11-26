@@ -508,8 +508,8 @@ endfu
 " Function: s:Delete_region() <<<
 " Purpose: Delete all text in specified region.
 " Inputs:
-" pos1: <[ln, col] of beg of region to delete>
-" pos2: <[ln, col] of end of region to delete>
+" pos_beg: <[ln, col] of pos at beg of region to delete>
+" pos_end: <[ln, col] of pos just past end of region to delete>
 " inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
 " Return: Number of bytes deleted
 " Tested: 22Nov2015
@@ -3175,7 +3175,20 @@ fu! s:Vmap_apply_changes(toks, opts)
 				" having '> point to char beyond end?
 			endif
 		else " [iar]
+			echomsg "INSIDE IAR case!"
 			" We're going to be inserting/replacing a tok.
+			" Special Case: If insert pos is past end of non-empty line, need to
+			" convert to append at last char (but inserting at col 1 of empty
+			" line is ok).
+			" Assumption: Caller logic ensures no append past end of line, but
+			" even if it didn't, there's nothing we'd want to change here.
+			if act == 'i' && tok.pos[1] > 1 && tok.pos[1] >= col([tok.pos[0], '$'])
+				" Note: Ok to leave pos as is: cursor() can handle pos past end
+				" of line.
+				let act = 'a'
+			endif
+			" Note: pos could be just past end of line, in which case we simply
+			" position at end.
 			call cursor(tok.pos)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
 			let off = len(tokstr)
@@ -3186,7 +3199,9 @@ fu! s:Vmap_apply_changes(toks, opts)
 			let tok_line = tok.pos[0]
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
+			echomsg "About to append, " . string(tok) . ", act=" . act . ", line 3 = " . getline(3)
 			exe 'normal! '.(act == 'r' ? 's' : act)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			echomsg "Just appended, " . string(tok) . ", act=" . act . ", line 3 = " . getline(3)
 			" Determine impact of insert/replace on offsets.
 			if tok.loc == '<'
 				" Must be r
@@ -3207,9 +3222,12 @@ fu! s:Vmap_apply_changes(toks, opts)
 					let offs[1] += off
 				endif
 			elseif tok.loc == '}'
-				" Must be a or r
-				" r can't affect end, even when lengths differ
-				if act == 'a'
+				" Must be i, a or r
+				" Note: 'i' was impossible before this function was extended to
+				" support vsel delete.
+				" r can't affect end, even when lengths differ (since pos
+				" represents *beginning* of mb char)
+				if act == 'a' || act == 'i'
 					if tok_line == vsel_end_line
 						" Expand to include the tok appended.
 						let offs[1] += off
@@ -3331,6 +3349,55 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 	endwhile
 endfu
 
+fu! s:Vmap_get_region_info(opt)
+	" Calculate first pos deleted at head, and first pos not deleted at tail.
+	let [lb, cb, le, ce] = [
+		\a:opt.sel_beg[0], a:opt.sel_beg[1],
+		\a:opt.sel_end[0], a:opt.sel_end[1]]
+	" Adjust end pos such that it points to first char pos *beyond* text to be
+	" deleted.
+	if ce == col([le, '$'])
+		" Special Case: Region end includes pos at end of line: advance end pos
+		" to include newline.
+		" Rationale: Consistent with the way Vim handles visual sel deletes.
+		let [le, ce] = [le + 1, 1]
+	else
+		" Note: Getting the entire line to determine length of char at end pos
+		" may be heavy-handed. Consider other approaches... (TODO)
+		let ce += byteidx(getline(le)[ce - 1 : ], 1)
+	endif
+	" Determine # of whole lines after beg that should be deleted.
+	" Note: Ok to include a partial final line, since the text on it that's kept
+	" will be appended to first line.
+	let del_lines = le - lb
+
+	" Calculate signed byte left-shift on final line.
+	" Note: Left shift in bytes to apply to toks *beyond* region end.
+	" TODO: Should this one be in the interface, given that it's easily
+	" calculable from others that are?
+	let byte_lsh = ce - cb
+
+	" Determine phantom tail pos/action.
+	" Assumption: Phantom head pos is going away; thus, we don't need to worry
+	" about relative ordering of head and tail.
+	" Logic: Nominal case is to convert phantom tail to an insert at first kept
+	" char pos, but if that turns out to be the end of line (because the last
+	" char on line was included in delete), attempting to position at ce would
+	" actually put us on char just *before* region, and we don't want to insert
+	" there.
+	" WHOAAA!!!: Instead of all this, should I perhaps just make
+	" Vmap_apply_changes capable of handling append to nonexistent position at
+	" end of line?
+	" DONE:
+	return {
+		\'pos_beg': [lb, cb],
+		\'pos_end': [le, ce],
+		\'pos_end_adj': [le - del_lines, cb],
+		\'del_lines': del_lines,
+		\'byte_lsh': byte_lsh
+	\}
+endfu
+
 " TODO: Clean up this comment block...
 " Delete everything
 " Delete all text in buffer between phantom tok at head (inclusive) and phantom
@@ -3342,21 +3409,14 @@ endfu
 " distinction in that case: i.e., doesn't matter which we delete... Still, I'm
 " thinking just delete the phantom at head, or for that matter, perhaps don't
 " even add it to begin with - it really serves no purpose...
-fu! s:Vmap_delete(toks, opt)
+fu! s:Vmap_delete(toks, ri)
 	" TODO TODO: Clean this up with refactoring...
 	" Important: Currently, this is done by all 3 region types, and the result
 	" is exactly the same!!! At least calculate externally and pass in; however,
 	" a better way is to parameterize the various pipeline functions, which
 	" currently operate independently on the rgn types. This would also simplify
 	" the main controller function.
-	let del_lines = a:opt.sel_end[0] - a:opt.sel_beg[0]
-	let t = getline(a:opt.sel_end[0])[a:opt.sel_end[1] - 1 : ]
-	" UNDER CONSTRUCTION - del_bytes is misnomer... Perhaps shift_bytes or
-	" something.
-	let del_bytes = a:opt.sel_end[1] + byteidx(t, 1) - 1
-	echomsg "1. del_bytes = " . del_bytes
-	let del_bytes -= a:opt.sel_beg[1] - 1
-	echomsg "2. del_bytes = " . del_bytes
+
 	" Loop over all tokens, though the we won't really start doing anything till
 	" we get to phantom head.
 	" Possible TODO: If location were cached somewhere, we could start there.
@@ -3368,30 +3428,28 @@ fu! s:Vmap_delete(toks, opt)
 			" head pos would correspond to a:opt.sel_beg.
 			let idx_head = idx
 		elseif tok.loc == '}' || tok.loc == '>'
-			" If this tok is on final line in range, adjust for # of bytes
-			" deleted on that line.
-			if tok.pos[0] == a:opt.sel_end[0]
-				echomsg "Decrementing col pos: " . string(tok)
-				" TODO: Consider how this will work with NUL on empty line being
-				" at end of char.
-				" Issue: Something is wrong here. Ah. See Special Case below,
-				" and perhaps refactor...
-				let tok.pos[1] -= del_bytes
-			endif
-			" Adjust for # of newlines deleted (could be 0).
-			let tok.pos[0] -= del_lines
 			if tok.loc == '}'
 				" Phantom tail
 				let idx_tail = idx
-				" Special Case: If nothing left to append to, convert to an
-				" insert at col 1.
-				" TODO: When mb chars/toks are at head of line and vsel end
-				" points to tok, pos[1] can go slightly negative. Figure out
-				" cleanest way to handle this. this is sort of a kludge...
-				if tok.pos[1] <= 0
-					let tok.pos[1] = 1
-					let tok.action = 'i'
+				" Note: Convert append to insert and adjust pos accordingly.
+				" Rationale: Any char at original append position is being
+				" deleted, which precludes append at that location.
+				" Solution: Convert append to an insert at location just past
+				" deleted region (taking into account any adjustment intended to
+				" include trailing newline in delete region). (Note that
+				" Vmap_apply_changes can handle location past end of line.)
+				let tok.pos = a:ri.pos_end
+				let tok.action = 'i'
+			else " tok.loc == '>'
+				" If this tok is on final line in range, adjust for # of bytes
+				" deleted on that line.
+				if tok.pos[0] == a:ri.pos_end[0]
+					" TODO: Consider how this will work with NUL on empty line being
+					" at end of char.
+					let tok.pos[1] -= a:ri.byte_lsh
 				endif
+				" Adjust for # of newlines deleted (could be 0).
+				let tok.pos[0] -= a:ri.del_lines
 			endif
 		endif
 		let idx += 1
@@ -3447,6 +3505,10 @@ fu! s:Operate_selection_impl(pspecs, op)
 	" needed, its return is cached.
 	let rgn_info = {}
 	let mtoks = []
+	if opt['op'] == 'delete'
+		" Get info needed for proper delete.
+		let dri = s:Vmap_get_region_info(opt)
+	endif
 	" Loop over rgn types.
 	" Big TODO: Parameterize the functions taking rgn; this will obviate the
 	" need for multiple loops (currently, the pipeline is broken up so we can do
@@ -3459,7 +3521,7 @@ fu! s:Operate_selection_impl(pspecs, op)
 			" Update list to reflect toks we're going to delete before cleanup.
 			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
 			" Issue: Some indices aren't getting updated properly.
-			call s:Vmap_delete(toks[rgn], opt)
+			call s:Vmap_delete(toks[rgn], dri)
 			call s:dbg_display_toks("Vmap_delete " . rgn, toks[rgn])
 		endif
 	endfor
@@ -3472,7 +3534,7 @@ fu! s:Operate_selection_impl(pspecs, op)
 		" WHOA!!!! Do I really not need to know # of bytes deleted by the following?
 		" If not, I did a lot of work in Delete_region for nothing... Could
 		" probably really simplify things if # deleted bytes isn't needed.
-		call s:Delete_region(vsel_beg, vsel_end, [1, 1])
+		call s:Delete_region(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Now for cleanup phases...
 	for rgn in keys(a:pspecs)
