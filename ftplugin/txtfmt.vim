@@ -2416,7 +2416,6 @@ fu! s:Search_tok(rgn, flags, ...)
 	let zwa = a:0 > 0 ? a:1 : ''
 	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
 	" BUG TODO: Apply_zwa puts \%-1l into pattern when near end of buf.
-	echomsg "azwa: " . s:Apply_zwa(zwa, re_tok)
 	" Note: Apply_zwa can handle empty zwa.
 	let [lnum, col] = searchpos(s:Apply_zwa(zwa, re_tok), a:flags . 'W')
 	if lnum
@@ -2621,7 +2620,6 @@ fu! s:Contains_hlable(tok_info, pos1, pos2, inc)
 	endif
 	" Generate the region constraints.
 	let zwa = s:Make_pos_zwa({'beg': {'pos': a:pos1, 'inc': ie[0]}, 'end': {'pos': a:pos2, 'inc': ie[1]}})
-	echo "Contains_hlable: patt=/" . s:Apply_zwa(zwa, hlable) . "/ " . string(getpos('.')[1:2])
 	call add(g:patt, s:Apply_zwa(zwa, hlable))
 	return !!search(s:Apply_zwa(zwa, hlable), 'nc')
 endfu
@@ -3175,7 +3173,6 @@ fu! s:Vmap_apply_changes(toks, opts)
 				" having '> point to char beyond end?
 			endif
 		else " [iar]
-			echomsg "INSIDE IAR case!"
 			" We're going to be inserting/replacing a tok.
 			" Special Case: If insert pos is past end of non-empty line, need to
 			" convert to append at last char (but inserting at col 1 of empty
@@ -3199,9 +3196,7 @@ fu! s:Vmap_apply_changes(toks, opts)
 			let tok_line = tok.pos[0]
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
-			echomsg "About to append, " . string(tok) . ", act=" . act . ", line 3 = " . getline(3)
 			exe 'normal! '.(act == 'r' ? 's' : act)."\<C-R>\<C-R>=l:tokstr\<CR>"
-			echomsg "Just appended, " . string(tok) . ", act=" . act . ", line 3 = " . getline(3)
 			" Determine impact of insert/replace on offsets.
 			if tok.loc == '<'
 				" Must be r
@@ -3280,7 +3275,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		" Design Decision: When both superseding and redundant toks exist,
 		" prefer to delete redundant.
 		if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
-			echomsg "Removing in 1st red test: " . string(ti)
+			"echomsg "Removing in 1st red test: " . string(ti)
 			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 			let idx += 1
 			" Note: Leave tip unchanged, but don't make safe.
@@ -3297,7 +3292,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		let tip_next = ti
 		if !empty(tip)
 			" Need check for supersedence.
-			echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
+			"echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
 			if !s:Contains_hlable(tip, tip.pos, ti.pos,
 					\[tip.action == 'i', ti.action == 'a'])
 				" Either delete superseded tok, or replace it with f- (if
@@ -3317,7 +3312,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 					\[tip.action == 'i', ti.action == 'a'])
 					\|| tip.pos[0] + 1 < ti.pos[0])
 					" Cap non-default region to prevent bleed through.
-					echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
+					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
 					let tip.idx = 0
 					" Design Decision: Once we decide to cap, the decision is
@@ -3326,7 +3321,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 					let ti_safe = tip
 				else
 					" Nothing but maybe toks exposed. Delete superseded tok.
-					echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip)
+					"echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip)
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
 				endif
 				" Supersedence test complete.
@@ -3334,7 +3329,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" removal/replacement).
 				if ti_safe.idx == ti.idx
 					" The current tok has become redundant.
-					echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
+					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
 					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 					let tip_next = {}
 				endif
@@ -3438,7 +3433,7 @@ fu! s:Vmap_delete(toks, ri)
 				" deleted region (taking into account any adjustment intended to
 				" include trailing newline in delete region). (Note that
 				" Vmap_apply_changes can handle location past end of line.)
-				let tok.pos = a:ri.pos_end
+				let tok.pos = a:ri.pos_end_adj
 				let tok.action = 'i'
 			else " tok.loc == '>'
 				" If this tok is on final line in range, adjust for # of bytes
@@ -3555,7 +3550,6 @@ fu! s:Operate_selection_impl(pspecs, op)
 	endif
 	if opt['op'] != 'delete'
 		" Adjust and restore vsel.
-		echo string(vsel_offs)
 		let vsel_beg[1] += vsel_offs[0]
 		let vsel_end[1] += vsel_offs[1]
 		" TODO: Do we want to leave things visually selected or not?
