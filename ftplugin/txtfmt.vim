@@ -3462,6 +3462,35 @@ fu! s:Vmap_delete(toks, ri)
 endfu
 
 fu! s:Vmap_protect_bslash(opt)
+	let [l, c] = [a:opt.sel_beg[0], a:opt.sel_beg[1]]
+	call cursor(l, c)
+	if !search('\%#' . b:re_no_bslash_esc, 'cn')
+		" Unescaped bslash just before region. Is it now escaping something it
+		" shouldn't?
+		" Assumption: Bslash fixup prior to operation precludes possibility that
+		" it was meant to escape anything.
+		if c < col([l, '$'])
+			" Rationale: We've already determined that the preceding bslash was
+			" not meant to escape anything, but if it's allowed to come into
+			" contact with either a token or a sequence of bslashes immediately
+			" preceding a token, it will have an escaping effect (either to
+			" escape or unescape the token).
+			" TODO: In current syntax, bslashes in isolation do not escape one
+			" another - only when preceding a token. Should they?
+			" Caveat: Use <...>_atom regex here, since the preceding bslash
+			" would preclude a match with b:txtfmt_re_any_tok.
+			" TODO: Consider adding regex vars for the character class (to
+			" obviate need for wrapping with [ ... ].
+			if search('\%#\\*[' . b:txtfmt_re_any_tok_atom . ']', 'cn')
+				" Escape the preceding bslash and return flag indicating we have
+				" so that caller can adjust offsets.
+				normal! hi\
+				return 1
+			endif
+		endif
+	endif
+	" Nothing escaped
+	return 0
 endfu
 
 " Debug only!
@@ -3483,14 +3512,14 @@ endfu
 " TODO: Consider whether is_del is best approach? Perhaps string op arg instead?
 " Or even something within pspecs?
 fu! s:Operate_selection_impl(pspecs, op)
+	" Make sure vsel borders don't 'split' an escape-escapee pair.
+	call s:Adjust_vsel_to_protect_escapes()
 	" Create struct for communication with lower levels.
-	let [vsel_beg, vsel_end] = [getpos("'<")[1:2], getpos("'>")[1:2]]
 	" TODO: Have this used in called functions as appropriate.
 	let opt = {
 		\'op': a:op,
-		\'sel_beg': vsel_beg, 'sel_end': vsel_end
+		\'sel_beg': getpos("'<")[1:2], 'sel_end': getpos("'>")[1:2]
 	\}
-	call s:Adjust_vsel_to_protect_escapes()
 	" TODO: May need some validation on selection: i.e., to determine whether
 	" the operation is valid.
 
@@ -3543,17 +3572,31 @@ fu! s:Operate_selection_impl(pspecs, op)
 	endfor
 	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
 	let vsel_offs = s:Vmap_apply_changes(mtoks, opt)
-	if opt['op'] == 'delete' && b:txtfmt_cfg_escape == 'bslash'
+	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the delete.
-		call s:Vmap_protect_bslash(opt)
+		if s:Vmap_protect_bslash(opt)
+			let vsel_offs[0] += 1
+			" Adjust end offset if it's on same line as start (always is for
+			" delete, though we don't really even need end offset for delete).
+			if opt['op'] == 'delete' || opt.sel_beg[0] == opt.sel_end[0]
+				let vsel_offs[1] += 1
+			endif
+		endif
 	endif
-	if opt['op'] != 'delete'
-		" Adjust and restore vsel.
-		let vsel_beg[1] += vsel_offs[0]
-		let vsel_end[1] += vsel_offs[1]
-		" TODO: Do we want to leave things visually selected or not?
-		call s:Restore_visual_mode(vsel_beg, vsel_end)
+	" Adjust and restore vsel.
+	let opt.sel_beg[1] += vsel_offs[0]
+	let opt.sel_end[1] += vsel_offs[1]
+	if opt['op'] == 'delete'
+		" Leave cursor at pos of first deleted char.
+		call cursor(opt.sel_beg)
+	else
+		" Adjust '< and '> to account for our modifications.
+		echomsg "offsets: " . string(vsel_offs)
+		echomsg "Restoring mode: beg=" . string(opt.sel_beg) . ", end=" . string(opt.sel_end)
+		call s:Restore_visual_mode(opt.sel_beg, opt.sel_end)
+		" Don't stay in visual mode.
+		exe "normal! \<Esc>"
 	endif
 endfu
 
