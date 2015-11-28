@@ -2572,9 +2572,10 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 	endif
 endfu
 
-" Return regex matching any single char, highlightable by input rgn/idx.
-" Special Case: If no empty object specified for rgn/idx, return true for
-" *any* non-tok chars.
+" Return regex matching any single char, highlightable by input tok_info.
+" Note: tok_info is irrelevant when non-aggressive cleanup is configured; also,
+" caller can override configuration by passing empty tok_info (forces
+" non-aggressive mode).
 " Inputs:
 " tok_info: {} | {
 "   rgn:  'fmt'|'clr'|'bgc',
@@ -2582,45 +2583,70 @@ endfu
 " }
 " TODO: Should this be a function, or perhaps just a Dict?
 fu! s:Get_hlable_patt(tok_info)
-	if !empty(a:tok_info)
+	" VMAPS TODO: Make this a configurable option.
+	let aggressive = exists('g:txtfmt_aggressive_cleanup') && g:txtfmt_aggressive_cleanup
+
+	" Logic: A non-tok, non-whitespace character is always hlable. When we're
+	" not configured for aggressive cleanup, whitespace and completely blank
+	" lines are also considered to be hlable. In aggressive cleanup mode,
+	" completely blank lines are never hlable (since there's nothing to
+	" highlight), and whitespace is hlable if and only if the the input tok_info
+	" would have an effect (empty tok_info forces non-aggressive mode).
+	" Rationale: Originally, was thinking a single newline would constitute
+	" hlable; however, given that you can't position the cursor on a
+	" newline, it makes more sense to require a blank line.
+	" Caveat: Using line/col constraints won't work when testing for '\n'
+	" between end of a blank line and beginning of next (since the '\n' is
+	" considered to have col pos of 1.
+	if aggressive && !empty(a:tok_info)
 		let [rgn, idx] = [a:tok_info.rgn, a:tok_info.idx]
-		let ws_hlable_fmt_mask = or(or(or(s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
-		let ws_hlable = rgn == 'bgc' || (rgn == 'fmt' && and(idx, ws_hlable_fmt_mask))
+		if rgn != 'fmt' || idx == 0
+			" No need to test specific format attributes
+			" Design Decision: Default tok is special: whether it affects
+			" subsequent whitespace depends upon what precedes it (think
+			" 'bleed-through'). We exclude whitespace here because we want
+			" supersedence logic to err on the side of considering a default tok
+			" redundant, with 'bleed-through' logic (which forces non-aggressive
+			" mode) making the final determination.
+			let ws_hlable = rgn == 'bgc' ? 1 : 0
+		else
+			" Check specific fmt attributes.
+			let ws_hlable_fmt_mask = or(or(or(
+				\s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
+			let ws_hlable = and(idx, ws_hlable_fmt_mask)
+		endif
+		let re_extra = (ws_hlable  ? '' : '\&\S')
 	else
-		let ws_hlable = 1
+		" Non-aggressive mode
+		let re_extra = '\|^$'
 	endif
-	return b:txtfmt_re_any_ntok . (ws_hlable  ? '' : '\&\S')
+	return b:txtfmt_re_any_ntok . re_extra
 endfu
 
 " Return true iff the region between pos1 and pos2 (inclusivity/exclusivity
 " specified by the inc arg) contains anything hlable, given the specified rgn
 " type and tok idx.
-" Special Case: If empty tok_info object specified, return true for *any*
-" non-tok chars.
+" Note: When option specifies non-aggressive cleanup, tok_info will be ignored.
+" Rationale: For non-aggressive cleanup, anything that occupies non-zero-width
+" buffer space (nzwbs) (even whitespace and newlines) is treated as hlable.
 " Inputs:
-" tok_info: {} | {
-"   rgn:  'fmt'|'clr'|'bgc',
-"   idx:  <color-idx>|<fmt-mask>
-" }
 " pos1: <start of region>
 " pos2: <end of region>
 " inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
-" Tested: 08Jan2015 (but modified 14Nov2015)
-let g:patt = []
-fu! s:Contains_hlable(tok_info, pos1, pos2, inc)
-	" TODO: Do we want to defer to Get_hlable_patt for empty tok_info, or
-	" should the special case by handled wholly here?
-	let hlable = s:Get_hlable_patt(a:tok_info)
+" [tok_info]: {
+"   rgn:  'fmt'|'clr'|'bgc',
+"   idx:  <color-idx>|<fmt-mask>
+" }
+" Tested: 08Jan2015 (but modified 27Nov2015)
+fu! s:Contains_hlable(pos1, pos2, inc, ...)
+	let tok_info = a:0 ? a:1 : {}
 	" Process inclusivity arg.
-	if type(a:inc) == 3
-		let ie = a:inc
-	else
-		" Single bool specified for both ends.
-		let ie = [a:inc, a:inc]
-	endif
+	let inc = type(a:inc) == 3 ? a:inc : [a:inc, a:inc]
+	let hlable = s:Get_hlable_patt(tok_info)
 	" Generate the region constraints.
-	let zwa = s:Make_pos_zwa({'beg': {'pos': a:pos1, 'inc': ie[0]}, 'end': {'pos': a:pos2, 'inc': ie[1]}})
-	call add(g:patt, s:Apply_zwa(zwa, hlable))
+	let zwa = s:Make_pos_zwa({
+		\'beg': {'pos': a:pos1, 'inc': inc[0]},
+		\'end': {'pos': a:pos2, 'inc': inc[1]}})
 	return !!search(s:Apply_zwa(zwa, hlable), 'nc')
 endfu
 
@@ -2876,29 +2902,6 @@ fu! s:Vmap_collect(rgn, sync_info)
 		endif
 	endwhile
 	return toks
-endfu
-" TODO: This doesn't appear to be used.
-fu! s:Vmap_determine_hlable(rgn, toks_info)
-	let toks = a:toks_info.toks
-	let num_toks = len(toks)
-	if num_toks == 0
-		return a:toks_info
-	endif
-	" At least 1
-	" Design Decision: We've already looked back a ways to sync. We've got to
-	" stop somewhere. Thus, assume first always preceded by hlable (noting
-	" that if first is head of buffer, it doesn't matter anyway, since there
-	" couldn't be a prior useless).
-	let prev_tok_info = toks[0].tok_info
-	let prev_tok_info.hlable = 1
-	let tidx = 1
-	while tidx < num_toks
-		let tok_info = toks[tidx].tok_info
-		let tok_info.hlable = s:Contains_hlable(tok_info, prev_tok_info.pos, tok_info.pos, 0)
-		let prev_tok_info = tok_info
-		let tidx += 1
-	endwhile
-	return a:toks_info
 endfu
 
 fu! s:Vmap_apply(rgn, pspec, toks)
@@ -3293,24 +3296,16 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		if !empty(tip)
 			" Need check for supersedence.
 			"echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
-			if !s:Contains_hlable(tip, tip.pos, ti.pos,
-					\[tip.action == 'i', ti.action == 'a'])
-				" Either delete superseded tok, or replace it with f- (if
+			if !s:Contains_hlable(tip.pos, ti.pos,
+					\[tip.action == 'i', ti.action == 'a'], tip)
+				"echomsg "Not hlable between " . string(tip.pos) . ' and ' . string(ti.pos)
+				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
 				" TODO: Reword to reflect new meaning of bleed-through.
 				" Special Case: If bleed-through is from default tok,
 				" superseded tok can be deleted.
-				" TODO: Probably replace the special arg Contains_hlable with
-				" something specific to the nonzero width buffer space
-				" concept. See notes...
-				" TODO: Document the inc/exc logic, and either create a new
-				" predicate, or modify Contains_hlable in a way that obviates
-				" need for the line number test... Also, decide whether a single
-				" newline, or only multiple, should constitute the sort of
-				" non-zero width we're looking for here...
-				if ti_safe.idx && (s:Contains_hlable({}, tip.pos, ti.pos,
+				if ti_safe.idx && s:Contains_hlable(tip.pos, ti.pos,
 					\[tip.action == 'i', ti.action == 'a'])
-					\|| tip.pos[0] + 1 < ti.pos[0])
 					" Cap non-default region to prevent bleed through.
 					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
