@@ -665,6 +665,7 @@ endfu
 " what appears to be the punctuation at the end of a sentence or phrase.
 " Assumption: Cursor is positioned on a token. (We don't check.)
 " Assumption: Caller saves and restores @z, which is used by this function
+" TODO !!! UNUSED !!! REMOVE !!!
 fu! s:Can_delete_tok()
 	" TODO: Eventually, make this (or something similar) an option
 	let b:txtfmt_cfg_keepsep = 1
@@ -781,6 +782,7 @@ endfu
 " Possible Bug: Discovered 26Dec2014 - In the event that the search ends up
 " being backwards, it doesn't appear that I do anything to ensure that the
 " first (of potentially multiple) within search region is selected.
+" TODO !!! UNUSED !!! REMOVE !!!
 fu! Search_in_range(re, l1, c1, l2, c2)
 	" Save original position
 	let l_orig = line('.')
@@ -996,6 +998,7 @@ endfu
 " >>>
 " Function: s:Cleanup_tokens_working() <<<
 " TODO: Make static after testing
+" TODO !!! UNUSED !!! REMOVE !!!
 fu! Cleanup_tokens_working(startline, stopline)
 	" Save original position
 	let orig_line = line('.')
@@ -1313,6 +1316,9 @@ endfu
 " >>>
 " Function: s:Cleanup_tokens() <<<
 " TODO: Make static after testing
+" VMAPS TODO: I'm thinking this can go away, though I might want to review
+" first. It's a *very* early implementation.
+" TODO !!! UNUSED !!! REMOVE !!!
 fu! Cleanup_tokens(startline, stopline, adj_vsel)
 	" Save original position
 	let orig_line = line('.')
@@ -2358,24 +2364,56 @@ fu! s:Get_tok_info(c)
 	return ret
 endfu
 ">>>
+" Function: s:Is_escaping_tok <<<
+" Description: Return true iff char under cursor represents an escaping token.
+" Tested: 29Nov2015
+fu! s:Is_escaping_tok()
+	if b:txtfmt_cfg_escape != 'none'
+		if b:txtfmt_cfg_escape == 'bslash'
+			" Are we on a bslash preceded by even # of bslashes (possibly 0),
+			" followed by 0 or more bslashes, followed by any tok atom?
+			" Note: Bslash is escaping whether following # of bslashes is even
+			" or odd: if even, tok is escaped; if odd, final bslash is escaped.
+			" TODO: Assuming the \%#=1 was for Vim bug workaround; confirm and
+			" document (also for Is_escaped_tok)...
+			return search('\%#=1\%#\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
+				\.'\\\\*[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
+		else
+			" Are we on a tok preceded by even # (possibly 0) of itself, and
+			" followed by *any* # of itself (once again, odd/even simply
+			" determines whether the tok at end of seq is escaped).
+			return search('\%#=1\%#\([' . b:txtfmt_re_any_tok_atom . ']\)'
+				\.'\%(\%(^\|\1\@!.\)\1\%(\1\1\)*\)\@<=\1', 'nc')
+		endif
+	endif
+	" Can't be on an escaped tok if we're not even on a tok char.
+	return 0
+endfu
+" >>>
 " Function: s:Is_escaped_tok <<<
 " Description: Return true iff char under cursor represents an escaped (i.e.,
 " escapee, not escaping) token.
 " Note: Original Is_esc_tok didn't differentiate between escape and escapee.
 " Tested: 27Dec2014
+" Reworked: 29Nov2015
+" Tested: 29Nov2015
 fu! s:Is_escaped_tok()
 	if b:txtfmt_cfg_escape != 'none'
 		if b:txtfmt_cfg_escape == 'bslash'
-			if search('\%#=1\%#[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
-				" On tok char. If not a tok, must be escaped.
-				return !search('\%#' . b:txtfmt_re_any_tok, 'nc')
-			endif
+			" Are we at a location preceded by odd # of bslashes, matching any
+			" number of bslashes (possibly 0) terminated with any tok?
+			" Note: See note regarding even/odd distinction in Is_escaping_tok.
+			return search('\%#=1\%#\%(\%(^\|[^\\]\)\\\%(\\\\\)*\)\@<='
+				\.'\\*[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
 		else
 			" Differentiate between escape and escapee.
 			let re = '\%#=1\%#\([' . b:txtfmt_re_any_tok_atom
 				\. ']\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\%(\1\1\)*\1\)\)\@<='
 			let g:dbg = re
 			return search(re, 'nc')
+			" Are we on a tok preceded by odd # of itself?
+			return search('\%#=1\%#\([' . b:txtfmt_re_any_tok_atom . ']\)'
+				\.'\%(\%(^\|\1\@!.\)\%(\1\1\)\+\)\@<=', 'nc')
 		endif
 	endif
 	" Can't be on an escaped tok if we're not even on a tok char.
@@ -2459,26 +2497,23 @@ fu! s:Delete_char(...)
 	return c
 endfu
 " >>>
-" Function: s:Adjust_vsel_to_protect_escapes <<<
+" Function: s:Adjust_sel_to_protect_escapes <<<
 " Adjust visual selection to prevent splitting of escape/escapee pairs.
-" Tested: Dec 2014
-fu! s:Adjust_vsel_to_protect_escapes()
-	let [ss_line, se_line] = [-1, -1]
-	" TODO: Will cursor always be at start here?
-	normal! `<
+" Return Note: This function modifies input positions in-place.
+fu! s:Adjust_sel_to_protect_escapes(opt)
+	echomsg "About to position on " . string(a:opt)
+	" TODO: Modify Is_escaped_tok to accept a pos (possibly optional) and use
+	" it without modifying cursor pos.
+	call cursor(a:opt.sel_beg)
 	if s:Is_escaped_tok()
+		" Assumption: Because tok was escaped, we know there's a preceding char.
 		normal! h
-		let [ss_line, ss_col] = [line('.'), col('.')] 
+		let [a:opt.sel_beg[0], a:opt.sel_beg[1]] = [line('.'), col('.')] 
 	endif
-	normal! '>
-	if s:Is_escaped_tok()
+	call cursor(a:opt.sel_end)
+	if s:Is_escaping_tok()
 		normal! l
-		let [se_line, se_col] = [line('.'), col('.')] 
-	endif
-	" Make sure `< and `> reflect the change.
-	if ss_line >= 0 || se_line >= 0
-		" TODO: Perhaps add arg to cancel selection immediately.
-		call s:Restore_visual_mode([ss_line, ss_col], [se_line, se_col])
+		let [a:opt.sel_end[0], a:opt.sel_end[1]] = [line('.'), col('.')] 
 	endif
 endfu
 " >>>
@@ -2643,11 +2678,21 @@ fu! s:Contains_hlable(pos1, pos2, inc, ...)
 	" Process inclusivity arg.
 	let inc = type(a:inc) == 3 ? a:inc : [a:inc, a:inc]
 	let hlable = s:Get_hlable_patt(tok_info)
-	" Generate the region constraints.
-	let zwa = s:Make_pos_zwa({
-		\'beg': {'pos': a:pos1, 'inc': inc[0]},
-		\'end': {'pos': a:pos2, 'inc': inc[1]}})
-	return !!search(s:Apply_zwa(zwa, hlable), 'nc')
+	" Position cursor at start of range.
+	" Note: Originally, generated both start and end were handled with
+	" zwa, but this can be pathologically slow when cursor is past start pos in
+	" very large file.
+	let savepos = getpos('.')
+	call cursor(a:pos1)
+	" Generate the end of region constraint.
+	let zwa = s:Make_pos_zwa({'end': {'pos': a:pos2, 'inc': inc[1]}})
+	" Since cursor is positioned at start, inc[0] determines 'c' flag.
+	let re = s:Apply_zwa(zwa, hlable)
+	echomsg "re: " . re . " at pos=" . string(getpos('.'))
+	let ret = !!search(s:Apply_zwa(zwa, hlable), 'n' . (inc[0] ? 'c' : ''))
+	" Restore cursor pos.
+	call cursor(savepos)
+	return ret
 endfu
 
 " Add specified byte offset to the input pos and return the adjusted pos.
@@ -2690,6 +2735,7 @@ fu! s:Add_byte_offset(pos, offset)
 endfu
 
 " Workaround for Vim Bug with getpos()
+" TODO: I've removed use of this, so understand what the bug was?
 fu! s:Getpos(m)
 	return [line(a:m), col(a:m)]
 endfu
@@ -2758,16 +2804,17 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 
 " IMPORTANT NOTE!!!! This is the version under development, expected to
 " supersede the preceding 2.
-fu! s:Vmap_sync_start(rgn)
-	let vsel_beg_pos = s:Getpos("'<")
-	let vsel_end_pos = s:Getpos("'>")
-	let sync_beg_limit_pos = s:Add_byte_offset(vsel_beg_pos, -s:SYNC_DIST_BYTES)
-	let stoppos = s:Add_byte_offset(vsel_end_pos, s:SYNC_DIST_BYTES)
+" TODO: Document inputs, etc...
+fu! s:Vmap_sync_start(rgn, opt)
+	let sel_beg_pos = a:opt.sel_beg
+	let sel_end_pos = a:opt.sel_end
+	let sync_beg_limit_pos = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)
+	let stoppos = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)
 	" Define zero-width assertions.
 	let stoppos_zwa = s:Make_pos_zwa({'end': {'pos': stoppos}})
 	let pre_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
 	" Start looking at head of vsel.
-	call cursor(line("'<"), col("'<"))
+	call cursor(sel_beg_pos)
 	" Look backward for an ss_safe tok if we can find it.
 	let ss_safe = 0
 	let tok_infos = []
@@ -2783,7 +2830,7 @@ fu! s:Vmap_sync_start(rgn)
 		" assumptions it makes regarding cursor pos.
 		let hlable = s:Get_hlable_patt(ti)
 		" Look only up to next tok (if one was found) or head of vsel.
-		let hlable_zwa = s:Make_pos_zwa({'end': {'pos': empty(prev_pos) ? vsel_beg_pos : prev_pos}})
+		let hlable_zwa = s:Make_pos_zwa({'end': {'pos': empty(prev_pos) ? sel_beg_pos : prev_pos}})
 		if search(hlable_zwa . hlable, 'nW')
 			let ss_safe = 1
 		endif
@@ -2823,7 +2870,8 @@ endfu
 "   action ('i', 'a', '')
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
-fu! s:Vmap_collect(rgn, sync_info)
+" VMAPS TODO: Update function header.
+fu! s:Vmap_collect(rgn, sync_info, opt)
 	let toks = a:sync_info.tok_infos
 	" Mark toks added during sync as being prior to vsel.
 	for tok in toks
@@ -2839,44 +2887,44 @@ fu! s:Vmap_collect(rgn, sync_info)
 	else
 		" No actual toks found before vsel: start at head of vsel and allow
 		" cur pos match.
-		call cursor(line("'<"), col("'<"))
+		call cursor(a:opt.sel_beg)
 		let allow_cmatch = 1
 	endif
-	let vsel_cmp_prev = -1
-	let [vsel_beg_found, vsel_end_found] = [0, 0]
+	let sel_cmp_prev = -1
+	let [sel_beg_found, sel_end_found] = [0, 0]
 	while 1
 		" IN FLUX!!!!!!!!!!!!!!!!!!!!! TODO
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stoppos_zwa)
 		let allow_cmatch = 0
-		let vsel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
-		if vsel_cmp_prev < vsel_cmp
+		let sel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
+		if sel_cmp_prev < sel_cmp
 			" We've advanced w.r.t. vsel.
-			if !vsel_beg_found
+			if !sel_beg_found
 				" Need to add something for head: either a phantom (here) or
 				" augmented tok (end of loop).
-				let vsel_beg_found = 1
+				let sel_beg_found = 1
 				if empty(tok_info) || !s:Is_at_vsel_head()
 					" Add empty for vsel beg
 					call add(toks, {
 						\'rgn': a:rgn,
-						\'pos': s:Getpos("'<"),
+						\'pos': a:opt.sel_beg,
 						\'idx': -1,
 						\'loc': '{',
 						\'action': 'i'
 					\})
 				endif
 			endif
-			if !vsel_end_found && vsel_cmp == 1
+			if !sel_end_found && sel_cmp == 1
 				" Need to add something for tail: either a phantom (here) or
 				" augmented tok (end of loop).
-				let vsel_end_found = 1
+				let sel_end_found = 1
 				if empty(tok_info) || !s:Is_at_vsel_tail()
 					" Add empty for vsel end
 					" TODO: Extra flags to denote head/tail?
 					call add(toks, {
 						\'rgn': a:rgn,
-						\'pos': s:Getpos("'>"),
+						\'pos': a:opt.sel_end,
 						\'idx': -1,
 						\'loc': '}',
 						\'action': 'a'
@@ -2887,14 +2935,14 @@ fu! s:Vmap_collect(rgn, sync_info)
 		if !empty(tok_info)
 			" Assumption: A real tok is always added here, never above.
 			" TODO: Perhaps have Cmp_vsel return symbols directly.
-			let tok_info.loc = vsel_cmp < 0 ? '<' : vsel_cmp > 0 ? '>'
-				\: s:Getpos("'<") == tok_info.pos ? '{'
-				\: s:Getpos("'>") == tok_info.pos ? '}' : '='
+			let tok_info.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
+				\: a:opt.sel_beg == tok_info.pos ? '{'
+				\: a:opt.sel_end == tok_info.pos ? '}' : '='
 			" Note: Could be actual (non-phantom) head or tail (no special
 			" distinction required).
 			let tok_info.action = ''
 			" Update for next iteration...
-			let vsel_cmp_prev = vsel_cmp
+			let sel_cmp_prev = sel_cmp
 			call add(toks, tok_info)
 		else
 			" No more tokens in range.
@@ -2977,14 +3025,14 @@ endfu
 
 " TODO: Perhaps rename...
 fu! s:Vmap_compute(rgn, pspec, opt)
-	let sync_info = s:Vmap_sync_start(a:rgn)
+	let sync_info = s:Vmap_sync_start(a:rgn, a:opt)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 	" start/end indices returned explicitly.
 	" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
 	" predicate for tokens.
 	"
 	" Question: When do we expect empty?
-	let toks = s:Vmap_collect(a:rgn, sync_info)
+	let toks = s:Vmap_collect(a:rgn, sync_info, a:opt)
 	call s:dbg_display_toks("Vmap_collect", toks)
 	if !s:Is_empty(a:pspec)
 		" Apply pspec without worrying about whether toks will be kept.
@@ -3133,9 +3181,9 @@ endfu
 " Return: length-2 list containing the signed col offset adjustments for start and
 " end of visual selection (entailed by insertion/removal of tokens).
 " !!!!!!!!!!!UNDER CONSTRUCTION!!!!!!!!!!!
-fu! s:Vmap_apply_changes(toks, opts)
+fu! s:Vmap_apply_changes(toks, opt)
 	" Note: A change can affect only a start/end on the same line.
-	let [vsel_beg_line, vsel_end_line] = [line("'<'"), line("'>")]
+	let [sel_beg_line, sel_end_line] = [a:opt.sel_beg[0], a:opt.sel_end[0]]
 	" Keep up with how changes affect vsel start/end as a list of signed byte
 	" offsets, which will be returned to caller (who is responsible for
 	" adjustment).
@@ -3156,18 +3204,18 @@ fu! s:Vmap_apply_changes(toks, opts)
 			" the else, possibly into a separate function.
 			" Determine impact of delete on offsets.
 			if tok.loc == '<'
-				if tok_line == vsel_beg_line
+				if tok_line == sel_beg_line
 					let offs[0] -= off
-					if tok_line == vsel_end_line
+					if tok_line == sel_end_line
 						let offs[1] -= off
 					endif
 				endif
 			elseif tok.loc == '{'
-				if tok_line == vsel_end_line
+				if tok_line == sel_end_line
 					let offs[1] -= off
 				endif
 			elseif tok.loc == '='
-				if tok_line == vsel_end_line
+				if tok_line == sel_end_line
 					let offs[1] -= off
 				endif
 			elseif tok.loc == '}'
@@ -3203,20 +3251,20 @@ fu! s:Vmap_apply_changes(toks, opts)
 			" Determine impact of insert/replace on offsets.
 			if tok.loc == '<'
 				" Must be r
-				if tok_line == vsel_beg_line
+				if tok_line == sel_beg_line
 					let offs[0] += off
-					if tok_line == vsel_end_line
+					if tok_line == sel_end_line
 						let offs[1] += off
 					endif
 				endif
 			elseif tok.loc == '{'
 				" Must be i or r
-				if tok_line == vsel_end_line
+				if tok_line == sel_end_line
 					let offs[1] += off
 				endif
 			elseif tok.loc == '='
 				" Must be r
-				if tok_line == vsel_end_line
+				if tok_line == sel_end_line
 					let offs[1] += off
 				endif
 			elseif tok.loc == '}'
@@ -3226,7 +3274,7 @@ fu! s:Vmap_apply_changes(toks, opts)
 				" r can't affect end, even when lengths differ (since pos
 				" represents *beginning* of mb char)
 				if act == 'a' || act == 'i'
-					if tok_line == vsel_end_line
+					if tok_line == sel_end_line
 						" Expand to include the tok appended.
 						let offs[1] += off
 					endif
@@ -3506,27 +3554,13 @@ endfu
 
 " TODO: Consider whether is_del is best approach? Perhaps string op arg instead?
 " Or even something within pspecs?
-fu! s:Operate_selection_impl(pspecs, op)
-	" Make sure vsel borders don't 'split' an escape-escapee pair.
-	call s:Adjust_vsel_to_protect_escapes()
-	" Create struct for communication with lower levels.
-	" TODO: Have this used in called functions as appropriate.
-	let opt = {
-		\'op': a:op,
-		\'sel_beg': getpos("'<")[1:2], 'sel_end': getpos("'>")[1:2]
-	\}
-	" TODO: May need some validation on selection: i.e., to determine whether
-	" the operation is valid.
-
-	" TODO: At some point, we need to test for hlable, and cancel the mapping if
-	" the vsel contains nothing to highlight??? Where?
+fu! s:Operate_region(pspecs, opt)
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
-	let rgn_info = {}
 	let mtoks = []
-	if opt['op'] == 'delete'
+	if a:opt['op'] == 'delete'
 		" Get info needed for proper delete.
-		let dri = s:Vmap_get_region_info(opt)
+		let dri = s:Vmap_get_region_info(a:opt)
 	endif
 	" Loop over rgn types.
 	" Big TODO: Parameterize the functions taking rgn; this will obviate the
@@ -3535,8 +3569,8 @@ fu! s:Operate_selection_impl(pspecs, op)
 	let toks = {}
 	for rgn in keys(a:pspecs)
 		" TODO: May change name to calculate or something?
-		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs[rgn], opt)
-		if opt['op'] == 'delete'
+		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs[rgn], a:opt)
+		if a:opt['op'] == 'delete'
 			" Update list to reflect toks we're going to delete before cleanup.
 			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
 			" Issue: Some indices aren't getting updated properly.
@@ -3544,7 +3578,7 @@ fu! s:Operate_selection_impl(pspecs, op)
 			call s:dbg_display_toks("Vmap_delete " . rgn, toks[rgn])
 		endif
 	endfor
-	if opt['op'] == 'delete'
+	if a:opt['op'] == 'delete'
 		" Delete text between phantom head (inclusive) and phantom tail (exclusive).
 		" Note: Phantom tail tok would be *appended* at the stored position: hence,
 		" the 'inclusive' arg.
@@ -3559,71 +3593,116 @@ fu! s:Operate_selection_impl(pspecs, op)
 	for rgn in keys(a:pspecs)
 		" TODO: Consider call by ref vs return...
 		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks[rgn])
-		call s:Vmap_cleanup(rgn, toks[rgn], opt)
+		call s:Vmap_cleanup(rgn, toks[rgn], a:opt)
 		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks[rgn])
 		" TODO: Convert to in-place merge.
-		let mtoks = s:Vmap_rev_and_merge(mtoks, toks[rgn], opt)
+		let mtoks = s:Vmap_rev_and_merge(mtoks, toks[rgn], a:opt)
 		call s:dbg_display_toks("Vmap_rev_and_merge " . rgn, mtoks)
 	endfor
 	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
-	let vsel_offs = s:Vmap_apply_changes(mtoks, opt)
+	let sel_offs = s:Vmap_apply_changes(mtoks, a:opt)
 	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the delete.
-		if s:Vmap_protect_bslash(opt)
-			let vsel_offs[0] += 1
+		if s:Vmap_protect_bslash(a:opt)
+			let sel_offs[0] += 1
 			" Adjust end offset if it's on same line as start (always is for
 			" delete, though we don't really even need end offset for delete).
-			if opt['op'] == 'delete' || opt.sel_beg[0] == opt.sel_end[0]
-				let vsel_offs[1] += 1
+			if a:opt['op'] == 'delete' || a:opt.sel_beg[0] == a:opt.sel_end[0]
+				let sel_offs[1] += 1
 			endif
 		endif
 	endif
-	" Adjust and restore vsel.
-	let opt.sel_beg[1] += vsel_offs[0]
-	let opt.sel_end[1] += vsel_offs[1]
-	if opt['op'] == 'delete'
-		" Leave cursor at pos of first deleted char.
-		call cursor(opt.sel_beg)
-	else
-		" Adjust '< and '> to account for our modifications.
-		echomsg "offsets: " . string(vsel_offs)
-		echomsg "Restoring mode: beg=" . string(opt.sel_beg) . ", end=" . string(opt.sel_end)
-		call s:Restore_visual_mode(opt.sel_beg, opt.sel_end)
-		" Don't stay in visual mode.
-		exe "normal! \<Esc>"
+	" Adjust and restore vsel (may be needed by caller).
+	let a:opt.sel_beg[1] += sel_offs[0]
+	let a:opt.sel_end[1] += sel_offs[1]
+endfu
+
+" Adjust region bounds (if necessary) to avoid splitting an escape-escapee pair,
+" and throw exception if the adjusted region contains nothing that can be
+" operated upon.
+" Rule: Non-token characters and blank lines can be operated upon.
+fu! s:Vmap_validate_region(opt)
+	" Make sure sel borders don't 'split' an escape-escapee pair.
+	" Note: Function modifies positions in-place.
+	call s:Adjust_sel_to_protect_escapes(a:opt)
+	" Note: Intentionally omitting optional tok_info arg.
+	" Rationale: We want non-aggressive hlable interpretation.
+	echomsg "Validating " . string(a:opt.sel_beg) . " -- " . string(a:opt.sel_end)
+	" BUG - Why does a \tok pair not pass validation?
+	if !s:Contains_hlable(a:opt.sel_beg, a:opt.sel_end, [1, 1])
+		echomsg "Ooops! " . string(a:opt.sel_beg) . " -- " . string(a:opt.sel_end)
+		throw "Nothing hlable in specified region"
 	endif
 endfu
 
+fu! s:Delete_region(pos_beg, pos_end)
+	let opt = {'sel_beg': a:pos_beg, 'sel_end': a:pos_end, 'op': 'delete'}
+	" Note: Validation may adjust cur pos, but never alters '< and '>.
+	call s:Vmap_validate_region(opt)
+	" Perform the delete.
+	" TODO VMAPS: Check for active regions. Don't hardcode like this.
+	call s:Operate_region({'fmt': 0, 'clr': 0, 'bgc': 0}, opt)
+
+	" Leave cursor at pos of first deleted char.
+	call cursor(opt.sel_beg)
+endfu
+
 fu! s:Delete_selection()
-	" TODO: Refactor check also performed by Highlight_selection; consider
-	" combining the functions themselves with a highlight/delete operation arg?
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
-		throw "Highlight_selection(): blockwise-visual mode not supported"
+		throw "Delete_selection: blockwise-visual mode not supported"
 	endif
-	" TODO VMAPS: Check for active regions. Don't hardcode like this.
-	call s:Operate_selection_impl({'fmt': 0, 'clr': 0, 'bgc': 0}, 'delete')
+	try
+		let opt = s:Delete_region(getpos("'<")[1:2], getpos("'>")[1:2])
+	catch
+		" Restore cursor position to start of vsel.
+		call cursor(getpos("'<")[1:2])
+		throw "Delete_selection: Unable to delete selection: " . v:exception
+	endtry
+
+	" Leave cursor at pos of first deleted char.
+	call cursor(opt.sel_beg)
 endfu 
 
-fu! s:Highlight_selection()
-	" Blockwise visual selections not supported!
-	if visualmode() == "\<C-V>"
-		throw "Highlight_selection(): blockwise-visual mode not supported"
-	endif
+fu! s:Highlight_region(pos_beg, pos_end)
+	" TODO: Consider factoring the common stuff out of Delete/Highlight_region...
+	" Initialize a struct to hold r/w params passed to various functions.
+	let opt = {'sel_beg': a:pos_beg, 'sel_end': a:pos_end, 'op': 'highlight'}
+	" Note: Validation may adjust cur pos, but never alters '< and '>.
+	call s:Vmap_validate_region(opt)
 	" Prompt user for desired highlighting
 	let tokstr = s:Prompt_fmt_clr_spec()
 	" Parse and validate fmt/clr transformer spec
 	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
 	" Check for Cancel request
 	if empty(tokinfo)
-		" Note that nothing about position or mode has changed at this point
-		" TODO: Probably want to restore selection here...
+		" Note that nothing about position or mode has changed at this point.
 		return
 	endif
 
-	call s:Operate_selection_impl(tokinfo, 'apply')
+	" Perform the highlighting.
+	call s:Operate_region(tokinfo, opt)
+	return opt
+endfu
 
+fu! s:Highlight_selection()
+	" Blockwise visual selections not supported!
+	if visualmode() == "\<C-V>"
+		throw "Highlight_selection: blockwise-visual mode not supported"
+	endif
+	try
+		let opt = s:Highlight_region(getpos("'<")[1:2], getpos("'>")[1:2])
+	catch
+		" Restore cursor position to start of vsel.
+		call cursor(getpos("'<")[1:2])
+		throw "Highlight_selection: Unable to highlight selection: " . v:exception
+	endtry
+	echomsg "Done! " . string(opt)
+	" Adjust '< and '> to account for our modifications.
+	call s:Restore_visual_mode(opt.sel_beg, opt.sel_end)
+	" Don't stay in visual mode.
+	exe "normal! \<Esc>"
 endfu
 
 
@@ -5581,5 +5660,7 @@ call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
 " Restore compatibility options <<<
 " Restore compatibility options to what they were
 let &cpo = s:save_cpo
+" >>>
+" Code Graveyard <<<
 " >>>
 	" vim: sw=4 ts=4 tw=80 foldmethod=marker foldmarker=<<<,>>> :

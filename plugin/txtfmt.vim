@@ -1893,7 +1893,7 @@ fu! s:Define_fmtclr_regexes()
 	if b:txtfmt_cfg_escape == 'bslash'
 		" The following pattern is a zero-width look-behind assertion, which
 		" matches only at a non-backslash-escaped position.
-		" Note: Changing to (slightly shorter) pos lookahead after years of
+		" Note: Changing to (slightly shorter) pos lookbehind after years of
 		" release. Just noticed the superfluity, and it bugged me...
 		"let noesc_orig = '\%(\%(^\|[^\\]\)\%(\\\\\)*\\\)\@<!'
 		let noesc = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
