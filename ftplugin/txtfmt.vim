@@ -505,7 +505,7 @@ fu! s:Delete_cur_char()
 	return strlen(@z)
 endfu
 " >>>
-" Function: s:Delete_region() <<<
+" Function: s:Delete_region_text() <<<
 " Purpose: Delete all text in specified region.
 " Inputs:
 " pos_beg: <[ln, col] of pos at beg of region to delete>
@@ -521,7 +521,7 @@ endfu
 " approach doesn't require this either, but it's certainly the easiest way, and
 " if we're going to calculate the length of deleted text more analytically, the
 " delete operator provides no real advantage over the analytic approach...
-fu! s:Delete_region(pos_beg, pos_end, inc)
+fu! s:Delete_region_text(pos_beg, pos_end, inc)
 	let inc = type(a:inc) == 3 ? a:inc : [a:inc, a:inc]
 	let [line_beg, col_beg, line_end, col_end] =
 		\[a:pos_beg[0], a:pos_beg[1], a:pos_end[0], a:pos_end[1]]
@@ -592,9 +592,7 @@ endfu
 " setpos, Vim automatically sets the other (not explicitly set vsel endpoint)
 " to the old vsel's cursor pos.
 " TODO: I need to restore cursor pos just as Vim does.
-" Question: Should I be doing manually with visualmode() as I was originally,
-" or should I use setpos at both ends...
-fu! s:Restore_visual_mode(pos_beg, pos_end, ...)
+fu! s:Restore_visual_mode(pos_beg, pos_end, deactivate)
 	let poss = [a:pos_beg, a:pos_end]
 	" Start with the old selection...
 	exe 'normal! ' . visualmode() 
@@ -606,6 +604,10 @@ fu! s:Restore_visual_mode(pos_beg, pos_end, ...)
 	" ...and finish with the end where cursor should remain.
 	normal! o
 	call cursor(poss[(i + 1) % 2])
+	if a:deactivate
+		" TODO: Consider using v or V (as function of visualmode() return) to de-activate.
+		exe "normal! \<Esc>"
+	endif
 endfu
 " >>>
 " TODO: Header comments and convert to static
@@ -3565,7 +3567,7 @@ fu! s:Operate_region(pspecs, opt)
 	" Loop over rgn types.
 	" Big TODO: Parameterize the functions taking rgn; this will obviate the
 	" need for multiple loops (currently, the pipeline is broken up so we can do
-	" the (non-rgn-specific) s:Delete_region once-only.
+	" the (non-rgn-specific) s:Delete_region_text once-only.
 	let toks = {}
 	for rgn in keys(a:pspecs)
 		" TODO: May change name to calculate or something?
@@ -3585,9 +3587,9 @@ fu! s:Operate_region(pspecs, opt)
 		" Important Note: Delete the region text once-only, regardless of number
 		" of rgn types involved.
 		" WHOA!!!! Do I really not need to know # of bytes deleted by the following?
-		" If not, I did a lot of work in Delete_region for nothing... Could
+		" If not, I did a lot of work in Delete_region_text for nothing... Could
 		" probably really simplify things if # deleted bytes isn't needed.
-		call s:Delete_region(dri.pos_beg, dri.pos_end, [1, 0])
+		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Now for cleanup phases...
 	for rgn in keys(a:pspecs)
@@ -3636,33 +3638,67 @@ fu! s:Vmap_validate_region(opt)
 	endif
 endfu
 
+fu! s:Get_opfunc_adjusted_pos(mode)
+	let [pos_beg, pos_end] = [getpos("'[")[1:2], getpos("']")[1:2]]
+	if a:mode == 'line'
+		" TODO: Refactor this out of Delete/Highlight_operator?
+		" Adjust end positions to include full lines.
+		" (Vim provides the actual start/end pos of motion, regardless of mode.)
+		let pos_beg[1] = 1
+		let pos_end[1] = col([pos_end[0], '$']) - 1
+	endif
+	return [pos_beg, pos_end]
+endfu
+
 fu! s:Delete_region(pos_beg, pos_end)
 	let opt = {'sel_beg': a:pos_beg, 'sel_end': a:pos_end, 'op': 'delete'}
 	" Note: Validation may adjust cur pos, but never alters '< and '>.
 	call s:Vmap_validate_region(opt)
 	" Perform the delete.
-	" TODO VMAPS: Check for active regions. Don't hardcode like this.
+	" TODO VMAPS: Check for active regions, or pass some sort of special
+	" indicator value. Don't hardcode like this...
 	call s:Operate_region({'fmt': 0, 'clr': 0, 'bgc': 0}, opt)
-
 	" Leave cursor at pos of first deleted char.
 	call cursor(opt.sel_beg)
 endfu
 
-fu! s:Delete_selection()
+fu! s:Delete_visual()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
-		throw "Delete_selection: blockwise-visual mode not supported"
+		throw "Delete_visual: blockwise-visual mode not supported"
 	endif
 	try
 		let opt = s:Delete_region(getpos("'<")[1:2], getpos("'>")[1:2])
 	catch
-		" Restore cursor position to start of vsel.
+		throw "Delete_visual: Unable to delete selection: " . v:exception
+	finally
+		" Leave cursor just past deleted text (as Vim does).
 		call cursor(getpos("'<")[1:2])
-		throw "Delete_selection: Unable to delete selection: " . v:exception
 	endtry
+endfu 
 
-	" Leave cursor at pos of first deleted char.
-	call cursor(opt.sel_beg)
+fu! s:Delete_operator()
+	if a:mode == 'block'
+		" TODO: Can we constrain with mapping itself?
+		throw "Delete_operator: blockwise motions not supported"
+	endif
+	let [sel_beg, sel_end] = s:Get_opfunc_adjusted_pos(a:mode)
+	try
+		let opt = s:Delete_region(sel_beg, sel_end)
+		" Adjust '[ and '] to account for any modifications.
+		" Important Note: Intentionally setting both '[ and '] to start pos, as
+		" this is what Vim does in deletion case.
+		" TODO: Ooops! Need to make '[ and '] correspond to the *input*
+		" positions, not the line-adjusted ones! (Justification: It's what Vim
+		" does.)
+		call setpos("'[", opt.sel_beg)
+		call setpos("']", opt.sel_beg)
+	catch
+		" Restore cursor position to start of operated region.
+		call cursor(getpos("'[")[1:2])
+		throw "Delete_operator: Unable to delete selection: " . v:exception
+	finally
+	endtry
 endfu 
 
 fu! s:Highlight_region(pos_beg, pos_end)
@@ -3680,30 +3716,53 @@ fu! s:Highlight_region(pos_beg, pos_end)
 		" Note that nothing about position or mode has changed at this point.
 		return
 	endif
-
 	" Perform the highlighting.
 	call s:Operate_region(tokinfo, opt)
 	return opt
 endfu
 
-fu! s:Highlight_selection()
+fu! s:Highlight_visual()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
-		throw "Highlight_selection: blockwise-visual mode not supported"
+		throw "Highlight_visual: blockwise-visual mode not supported"
 	endif
 	try
 		let opt = s:Highlight_region(getpos("'<")[1:2], getpos("'>")[1:2])
+		" Adjust '< and '> to account for any modifications.
+		call s:Restore_visual_mode(opt.sel_beg, opt.sel_end, 1)
 	catch
-		" Restore cursor position to start of vsel.
+		throw "Highlight_visual: Unable to highlight selection: " . v:exception
+	finally
+		" Leave cursor at start of selection (as Vim does).
 		call cursor(getpos("'<")[1:2])
-		throw "Highlight_selection: Unable to highlight selection: " . v:exception
 	endtry
-	echomsg "Done! " . string(opt)
-	" Adjust '< and '> to account for our modifications.
-	call s:Restore_visual_mode(opt.sel_beg, opt.sel_end)
-	" Don't stay in visual mode.
-	exe "normal! \<Esc>"
+	call cursor(opt.sel_beg)
 endfu
+
+fu! s:Highlight_operator(mode)
+	if a:mode == 'block'
+		" TODO: Can we constrain with mapping itself?
+		throw "Highlight_operator: blockwise motions not supported"
+	endif
+	let [sel_beg, sel_end] = s:Get_opfunc_adjusted_pos(a:mode)
+	try
+		let opt = s:Highlight_region(sel_beg, sel_end)
+		" Adjust '[ and '] to account for any modifications.
+		" TODO: Ooops! Need to make '[ and '] correspond to the *input*
+		" positions, not the line-adjusted ones! (Justification: It's what Vim
+		" does.)
+		call setpos("'[", opt.sel_beg)
+		call setpos("']", opt.sel_end)
+	catch
+		throw "Highlight_operator: Unable to highlight operated region: " . v:exception
+	finally
+		" Restore cursor position to start of operated region.
+		" Note: Do so whether termination was normal or abnormal.
+		call cursor(getpos("'[")[1:2])
+	endtry
+endfu
+
+
 
 
 " >>>
@@ -5629,15 +5688,19 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\"<C-R>=<SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
 " >>>
-" visual mode insert token mappings <<<
+" visual mode mappings <<<
 " Note: The following will work for either visual or select mode
-call s:Def_map('v', '<C-\><C-\>', '<Plug>TxtfmtVmapApply_v',
-			\":<C-U>call <SID>Highlight_selection()<CR>")
+call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
+			\":<C-U>call <SID>Highlight_visual()<CR>")
+call s:Def_map('v', '<C-\>d', '<Plug>TxtfmtVmapDelete',
+			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
-" visual mode delete token mappings <<<
-" Note: The following will work for either visual or select mode
-call s:Def_map('v', '<C-\>d', '<Plug>TxtfmtVmapDelete_v',
-			\":<C-U>call <SID>Delete_selection()<CR>")
+" Operator-pending mode mappings <<<
+nmap <Bslash>h :set opfunc=<SID>Operator<CR>g@
+call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
+			\":set opfunc=<SID>Highlight_operator<CR>g@")
+call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
+			\":set opfunc=<SID>Delete_operator<CR>g@")
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
