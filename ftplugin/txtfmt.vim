@@ -2574,24 +2574,31 @@ endfu
 fu! s:At_buf_end()
 	return !!search('\%#.\?\%$', 'nc')
 endfu
-fu! s:Is_in_vsel()
-	return !!search('\%#\%V', 'nc')
+
+" TODO: A couple of these may now be unnecessary.
+fu! s:Is_pos_in_rng(p, pos_beg, pos_end)
+	return a:p[0] >= pos[0] && a:p[0] <= pos[0]
+		\&& (a:p[0] > pos[0] || a:p[1] >= pos[1])
+		\&& (a:p[0] < pos[0] || a:p[1] <= pos[1])
 endfu
-fu! s:Is_pre_vsel()
-	return !!search("\\%#\\%<'<", 'nc')
+fu! s:Is_pos_before_pos(p, pos)
+	return a:p[0] < a:pos[0] || (a:p[0] == a:pos[0] && a:p[1] < a:pos[1])
 endfu
-fu! s:Is_post_vsel()
-	return !!search("\\%#\\%>'>", 'nc')
+fu! s:Is_pos_after_pos(p, pos)
+	return a:p[0] > a:pos[0] || (a:p[0] == a:pos[0] && a:p[1] > a:pos[1])
 endfu
-fu! s:Is_at_vsel_head()
-	return !!search("\\%#\\%'<", 'nc')
+fu! s:Cmp_pos_to_pos(p, pos)
+	return s:Is_pos_before_pos(a:p, a:pos)
+		\? -1
+		\: s:Is_pos_after_pos(a:p, a:pos)
+			\? 1 : 0
 endfu
-fu! s:Is_at_vsel_tail()
-	return !!search("\\%#\\%'>", 'nc')
-endfu
-" Assumption: vsel exists.
-fu! s:Cmp_vsel()
-	return s:Is_in_vsel() ? 0 : s:Is_pre_vsel() ? -1 : 1
+fu! s:Cmp_pos_to_rng(p, pos_beg, pos_end)
+	return s:Is_pos_before_pos(a:p, a:pos_beg)
+		\? -1
+		\: s:Is_pos_after_pos(a:p, a:pos_end)
+			\? 1
+			\: 0
 endfu
 
 " TODO: Document...
@@ -2899,14 +2906,15 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stoppos_zwa)
 		let allow_cmatch = 0
-		let sel_cmp = empty(tok_info) ? 1 : s:Cmp_vsel()
+		let sel_cmp = empty(tok_info) ? 1 : s:Cmp_pos_to_rng(tok_info.pos, a:opt.sel_beg, a:opt.sel_end)
 		if sel_cmp_prev < sel_cmp
 			" We've advanced w.r.t. vsel.
 			if !sel_beg_found
 				" Need to add something for head: either a phantom (here) or
 				" augmented tok (end of loop).
 				let sel_beg_found = 1
-				if empty(tok_info) || !s:Is_at_vsel_head()
+				" Note: nonzero cmp means not at head
+				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.sel_beg)
 					" Add empty for vsel beg
 					call add(toks, {
 						\'rgn': a:rgn,
@@ -2921,7 +2929,8 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				" Need to add something for tail: either a phantom (here) or
 				" augmented tok (end of loop).
 				let sel_end_found = 1
-				if empty(tok_info) || !s:Is_at_vsel_tail()
+				" Note: nonzero cmp means not at tail
+				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.sel_end)
 					" Add empty for vsel end
 					" TODO: Extra flags to denote head/tail?
 					call add(toks, {
@@ -3275,6 +3284,9 @@ fu! s:Vmap_apply_changes(toks, opt)
 				" support vsel delete.
 				" r can't affect end, even when lengths differ (since pos
 				" represents *beginning* of mb char)
+				" Design Decision: Caveat: It might seem odd that 'a' causes
+				" adjustment, but the current approach is to include { and }
+				" toks in the region.
 				if act == 'a' || act == 'i'
 					if tok_line == sel_end_line
 						" Expand to include the tok appended.
