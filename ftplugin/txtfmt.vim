@@ -2503,19 +2503,22 @@ endfu
 " Adjust visual selection to prevent splitting of escape/escapee pairs.
 " Return Note: This function modifies input positions in-place.
 fu! s:Adjust_sel_to_protect_escapes(opt)
-	echomsg "About to position on " . string(a:opt)
 	" TODO: Modify Is_escaped_tok to accept a pos (possibly optional) and use
 	" it without modifying cursor pos.
-	call cursor(a:opt.sel_beg)
+	call cursor(a:opt.rgn.beg)
+	" Assumption: beg/end_raw positions will *never* need adjustment here.
+	" Rationale: A linewise operation deals with beg/end of lines, and hence,
+	" cannot split escape/escapee pair; thus, the 'raw' pos variants shouldn't
+	" even be in the struct.
 	if s:Is_escaped_tok()
 		" Assumption: Because tok was escaped, we know there's a preceding char.
 		normal! h
-		let [a:opt.sel_beg[0], a:opt.sel_beg[1]] = [line('.'), col('.')] 
+		let [a:opt.rgn.beg[0], a:opt.rgn.beg[1]] = [line('.'), col('.')] 
 	endif
-	call cursor(a:opt.sel_end)
+	call cursor(a:opt.rgn.end)
 	if s:Is_escaping_tok()
 		normal! l
-		let [a:opt.sel_end[0], a:opt.sel_end[1]] = [line('.'), col('.')] 
+		let [a:opt.rgn.end[0], a:opt.rgn.end[1]] = [line('.'), col('.')] 
 	endif
 endfu
 " >>>
@@ -2815,8 +2818,8 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 " supersede the preceding 2.
 " TODO: Document inputs, etc...
 fu! s:Vmap_sync_start(rgn, opt)
-	let sel_beg_pos = a:opt.sel_beg
-	let sel_end_pos = a:opt.sel_end
+	let sel_beg_pos = a:opt.rgn.beg
+	let sel_end_pos = a:opt.rgn.end
 	let sync_beg_limit_pos = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)
 	let stoppos = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)
 	" Define zero-width assertions.
@@ -2896,7 +2899,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 	else
 		" No actual toks found before vsel: start at head of vsel and allow
 		" cur pos match.
-		call cursor(a:opt.sel_beg)
+		call cursor(a:opt.rgn.beg)
 		let allow_cmatch = 1
 	endif
 	let sel_cmp_prev = -1
@@ -2906,7 +2909,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		" Look for next tok within stopline range (not necessarily in vsel)
 		let tok_info = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stoppos_zwa)
 		let allow_cmatch = 0
-		let sel_cmp = empty(tok_info) ? 1 : s:Cmp_pos_to_rng(tok_info.pos, a:opt.sel_beg, a:opt.sel_end)
+		let sel_cmp = empty(tok_info) ? 1 : s:Cmp_pos_to_rng(tok_info.pos, a:opt.rgn.beg, a:opt.rgn.end)
 		if sel_cmp_prev < sel_cmp
 			" We've advanced w.r.t. vsel.
 			if !sel_beg_found
@@ -2914,11 +2917,11 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				" augmented tok (end of loop).
 				let sel_beg_found = 1
 				" Note: nonzero cmp means not at head
-				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.sel_beg)
+				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.rgn.beg)
 					" Add empty for vsel beg
 					call add(toks, {
 						\'rgn': a:rgn,
-						\'pos': a:opt.sel_beg,
+						\'pos': a:opt.rgn.beg,
 						\'idx': -1,
 						\'loc': '{',
 						\'action': 'i'
@@ -2930,12 +2933,12 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				" augmented tok (end of loop).
 				let sel_end_found = 1
 				" Note: nonzero cmp means not at tail
-				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.sel_end)
+				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.rgn.end)
 					" Add empty for vsel end
 					" TODO: Extra flags to denote head/tail?
 					call add(toks, {
 						\'rgn': a:rgn,
-						\'pos': a:opt.sel_end,
+						\'pos': a:opt.rgn.end,
 						\'idx': -1,
 						\'loc': '}',
 						\'action': 'a'
@@ -2947,8 +2950,8 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 			" Assumption: A real tok is always added here, never above.
 			" TODO: Perhaps have Cmp_vsel return symbols directly.
 			let tok_info.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
-				\: a:opt.sel_beg == tok_info.pos ? '{'
-				\: a:opt.sel_end == tok_info.pos ? '}' : '='
+				\: a:opt.rgn.beg == tok_info.pos ? '{'
+				\: a:opt.rgn.end == tok_info.pos ? '}' : '='
 			" Note: Could be actual (non-phantom) head or tail (no special
 			" distinction required).
 			let tok_info.action = ''
@@ -3180,8 +3183,118 @@ fu! s:Tok_nr_to_char(rgn, idx)
 	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
 endfu
 
+fu! s:Get_pos_past_rgn(opt)
+	let mark = a:opt.mode == 'visual' ? "'>" : "']"
+	let pos = getpos(mark)[1:2]
+	" Note: It's ok to return nonexistent (past end of line) col.
+	let pos[1] + len(s:Get_char(pos))
+	return pos
+endfu
+
+
+fu! s:Adjust_rgn_by_off(tok, tokstr, opt, eorp)
+	let [ln, col] = [a:tok.pos[0], a:tok.pos[1]]
+	let off = len(tokstr)
+	let linewise = has_key(opt.rgn, 'beg_raw')
+	let [bp, ep] = [a:opt.rgn.beg, a:opt.rgn.end]
+	if linewise
+		let [bpr, epr] = [a:opt.rgn.beg_raw, a:opt.rgn.end_raw]
+	endif
+	
+	" Assumptions:
+	" When linewise flag is set...
+	" 1. bp must be col 1 and ep must be col('$')
+	" 2. raw and non-raw positions are co-linear (because of the way the raw
+	"    positions are calculated).
+	if a:tok.action == 'd'
+		if l:ln == eorp[0] && a:tok.loc != '>' | let a:eorp[1] -= off | endif
+		" Determine impact of delete on offsets.
+		if a:tok.loc == '<'
+			if ln == bp[0]
+				" Assumption: Can't get here in 'linewise' case.
+				let bp[1] -= off
+				if ln == ep[0]
+					let ep[1] -= off
+				endif
+			endif
+		elseif a:tok.loc == '{'
+			" !!! UNDER CONSTRUCTION !!!
+			if bp[1] >= eorp[1] | let bp[1] -= off | endif
+			if linewise && bpr[1] > 1 | let bpr[1] -= off | endif
+			if ln == ep[0]
+				let ep[1] -= off
+				if linewise && epr[1] > 1 | let epr[1] -= off | endif
+			endif
+		elseif a:tok.loc == '='
+			if ln == ep[0]
+				let ep[1] -= off
+				if linewise && (col < epr[1] || epr[1] >= eorp[1]) | let epr[1] -= off | endif
+			endif
+		elseif a:tok.loc == '}'
+			" Note: No point in even checking eorp for a non-phantom tok with
+			" loc == '}'; we know pos should be pulled leftward. Of course, a
+			" 'raw' tok could be anywhere on the line, and hence, must be
+			" checked.
+			let ep[1] -= off
+			if epr[1] >= eorp[1] | let epr[1] -= off | endif
+		endif
+	else
+		if a:tok.action == 'r'
+			" Subtract len of tok being replaced.
+			let off -= len(s:Get_char(a:tok.pos))
+		endif
+		if l:ln == eorp[0] && a:tok.loc != '>' | let a:eorp[1] += off | endif
+		" Determine impact of insert/replace on offsets.
+		if a:a:tok.loc == '<'
+			" Must be r
+			if ln == bp[0]
+				let bp[1] += off
+				if ln == ep[0]
+					let ep[1] += off
+				endif
+			endif
+		elseif a:tok.loc == '{'
+			" Must be i or r
+			if linewise && bpr[1] > 1 | let	bpr[1] += off | endif
+			if ln == ep[0]
+				let ep[1] += off
+				if linewise && epr[1] > 1 | let epr[1] += off | endif
+			endif
+		elseif a:a:tok.loc == '='
+			" Must be r
+			if ln == ep[0]
+				let ep[1] += off
+				if linewise && col < epr[1] | let epr[1] += off | endif
+			endif
+		elseif a:a:tok.loc == '}'
+			" Must be i, a or r
+			" Note: 'i' was impossible before this function was extended to
+			" support vsel delete.
+			" r can't affect end, even when lengths differ (since pos
+			" represents *beginning* of mb char)
+			" i can't affect end because it's a special case for '}', needed
+			" only when there's no actual char on the line to append to.
+			" Design Decision: Caveat: It might seem odd that 'a' causes
+			" adjustment, but the current approach is to include { and }
+			" toks in the region.
+			if a:tok.action == 'a'
+				if ln == ep[0]
+					" Expand to include the tok appended.
+					if a:tok.action == 'a' | let ep[1] += off | endif
+					if linewise && col <= epr[1]
+						let epr[1] += off
+					endif
+				endif
+			endif
+		endif
+	endif
+endfu
+
 " Apply changes in input tok list, which contains all 3 tok types in a single
 " flat list, ordered from later in buffer to earlier.
+" Side-effects:
+" -Make changes specified by 'action' values.
+" -Adjust positions in input object to account for changes made.
 " toks: [{
 "     rgn: fmt|bgc|clr,
 "     idx: 0-N,
@@ -3189,51 +3302,24 @@ endfu
 "     action: '[iard]?',
 "     loc: <|{|=|}|>
 " }, ...]
-" Return: length-2 list containing the signed col offset adjustments for start and
-" end of visual selection (entailed by insertion/removal of tokens).
-" !!!!!!!!!!!UNDER CONSTRUCTION!!!!!!!!!!!
 fu! s:Vmap_apply_changes(toks, opt)
-	" Note: A change can affect only a start/end on the same line.
-	let [sel_beg_line, sel_end_line] = [a:opt.sel_beg[0], a:opt.sel_end[0]]
-	" Keep up with how changes affect vsel start/end as a list of signed byte
-	" offsets, which will be returned to caller (who is responsible for
-	" adjustment).
-	let offs = [0, 0]
+	" This array will be passed by ref for iterative update within
+	" Adjust_rgn_by_off.
+	let eorp = s:Get_pos_past_end(a:opt)
+	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
-		let act = tok.action
-		if empty(act)
+		if empty(tok.action)
 			" No change from what's in buffer.
 			continue
 		endif
-		if act == 'd'
+		" Set to actual tok being considered iff adjustments required.
+		" TODO: Consider carrying this on the tok object (since there's
+		" something odd about passing either tokstr or toklen to a function
+		" that's already receiving tok).
+		let tokstr = ''
+		if tok.action == 'd'
 			" Delete tok from buffer.
-			let delc = s:Delete_char(tok.pos)
-			let off = len(delc)
-			let tok_line = tok.pos[0]
-			"echo "pos: " . string(tok.pos) . " off=" . off . " delc=" . char2nr(delc)
-			" IMPORTANT TODO: Refactor this adjustment logic with the stuff in
-			" the else, possibly into a separate function.
-			" Determine impact of delete on offsets.
-			if tok.loc == '<'
-				if tok_line == sel_beg_line
-					let offs[0] -= off
-					if tok_line == sel_end_line
-						let offs[1] -= off
-					endif
-				endif
-			elseif tok.loc == '{'
-				if tok_line == sel_end_line
-					let offs[1] -= off
-				endif
-			elseif tok.loc == '='
-				if tok_line == sel_end_line
-					let offs[1] -= off
-				endif
-			elseif tok.loc == '}'
-				" TODO: Normally, a delete couldn't affect end, but what if
-				" last token in buffer? Should we pull back, or can Vim handle
-				" having '> point to char beyond end?
-			endif
+			let tokstr = s:Delete_char(tok.pos)
 		else " [iar]
 			" We're going to be inserting/replacing a tok.
 			" Special Case: If insert pos is past end of non-empty line, need to
@@ -3241,63 +3327,24 @@ fu! s:Vmap_apply_changes(toks, opt)
 			" line is ok).
 			" Assumption: Caller logic ensures no append past end of line, but
 			" even if it didn't, there's nothing we'd want to change here.
-			if act == 'i' && tok.pos[1] > 1 && tok.pos[1] >= col([tok.pos[0], '$'])
+			if tok.action == 'i' && tok.pos[1] > 1 && tok.pos[1] >= col([tok.pos[0], '$'])
 				" Note: Ok to leave pos as is: cursor() can handle pos past end
 				" of line.
-				let act = 'a'
+				let tok.action = 'a'
 			endif
 			" Note: pos could be just past end of line, in which case we simply
 			" position at end.
 			call cursor(tok.pos)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
-			let off = len(tokstr)
-			if act == 'r'
-				" Subtract len of tok being replaced.
-				let off -= len(s:Get_char(tok.pos))
-			endif
-			let tok_line = tok.pos[0]
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
 			exe 'normal! '.(act == 'r' ? 's' : act)."\<C-R>\<C-R>=l:tokstr\<CR>"
-			" Determine impact of insert/replace on offsets.
-			if tok.loc == '<'
-				" Must be r
-				if tok_line == sel_beg_line
-					let offs[0] += off
-					if tok_line == sel_end_line
-						let offs[1] += off
-					endif
-				endif
-			elseif tok.loc == '{'
-				" Must be i or r
-				if tok_line == sel_end_line
-					let offs[1] += off
-				endif
-			elseif tok.loc == '='
-				" Must be r
-				if tok_line == sel_end_line
-					let offs[1] += off
-				endif
-			elseif tok.loc == '}'
-				" Must be i, a or r
-				" Note: 'i' was impossible before this function was extended to
-				" support vsel delete.
-				" r can't affect end, even when lengths differ (since pos
-				" represents *beginning* of mb char)
-				" Design Decision: Caveat: It might seem odd that 'a' causes
-				" adjustment, but the current approach is to include { and }
-				" toks in the region.
-				if act == 'a' || act == 'i'
-					if tok_line == sel_end_line
-						" Expand to include the tok appended.
-						let offs[1] += off
-					endif
-				endif
-			endif
+		endif
+		" Are adjustments required?
+		if !empty(tokstr)
+			call s:Adjust_rgn_by_off(tok, tokstr, a:opt, eorp)
 		endif
 	endfor
-	" Return updated offsets so caller can adjust vsel.
-	return offs
 endfu
 
 " toks: [{
@@ -3404,8 +3451,8 @@ endfu
 fu! s:Vmap_get_region_info(opt)
 	" Calculate first pos deleted at head, and first pos not deleted at tail.
 	let [lb, cb, le, ce] = [
-		\a:opt.sel_beg[0], a:opt.sel_beg[1],
-		\a:opt.sel_end[0], a:opt.sel_end[1]]
+		\a:opt.rgn.beg[0], a:opt.rgn.beg[1],
+		\a:opt.rgn.end[0], a:opt.rgn.end[1]]
 	" Adjust end pos such that it points to first char pos *beyond* text to be
 	" deleted.
 	if ce == col([le, '$'])
@@ -3477,7 +3524,7 @@ fu! s:Vmap_delete(toks, ri)
 		if tok.loc == '{'
 			" TODO: Consider whether to skip adding this tok in the 'delete'
 			" case (since we know it will be deleted); in that case, phantom
-			" head pos would correspond to a:opt.sel_beg.
+			" head pos would correspond to a:opt.rgn.beg.
 			let idx_head = idx
 		elseif tok.loc == '}' || tok.loc == '>'
 			if tok.loc == '}'
@@ -3519,7 +3566,7 @@ fu! s:Vmap_delete(toks, ri)
 endfu
 
 fu! s:Vmap_protect_bslash(opt)
-	let [l, c] = [a:opt.sel_beg[0], a:opt.sel_beg[1]]
+	let [l, c] = [a:opt.rgn.beg[0], a:opt.rgn.beg[1]]
 	call cursor(l, c)
 	if !search('\%#' . b:re_no_bslash_esc, 'cn')
 		" Unescaped bslash just before region. Is it now escaping something it
@@ -3614,7 +3661,7 @@ fu! s:Operate_region(pspecs, opt)
 		call s:dbg_display_toks("Vmap_rev_and_merge " . rgn, mtoks)
 	endfor
 	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
-	let sel_offs = s:Vmap_apply_changes(mtoks, a:opt)
+	call s:Vmap_apply_changes(mtoks, a:opt)
 	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the delete.
@@ -3622,14 +3669,14 @@ fu! s:Operate_region(pspecs, opt)
 			let sel_offs[0] += 1
 			" Adjust end offset if it's on same line as start (always is for
 			" delete, though we don't really even need end offset for delete).
-			if a:opt['op'] == 'delete' || a:opt.sel_beg[0] == a:opt.sel_end[0]
+			if a:opt['op'] == 'delete' || a:opt.rgn.beg[0] == a:opt.rgn.end[0]
 				let sel_offs[1] += 1
 			endif
 		endif
 	endif
 	" Adjust and restore vsel (may be needed by caller).
-	let a:opt.sel_beg[1] += sel_offs[0]
-	let a:opt.sel_end[1] += sel_offs[1]
+	let a:opt.rgn.beg[1] += sel_offs[0]
+	let a:opt.rgn.end[1] += sel_offs[1]
 endfu
 
 " Adjust region bounds (if necessary) to avoid splitting an escape-escapee pair,
@@ -3642,36 +3689,34 @@ fu! s:Vmap_validate_region(opt)
 	call s:Adjust_sel_to_protect_escapes(a:opt)
 	" Note: Intentionally omitting optional tok_info arg.
 	" Rationale: We want non-aggressive hlable interpretation.
-	echomsg "Validating " . string(a:opt.sel_beg) . " -- " . string(a:opt.sel_end)
 	" BUG - Why does a \tok pair not pass validation?
-	if !s:Contains_hlable(a:opt.sel_beg, a:opt.sel_end, [1, 1])
-		echomsg "Ooops! " . string(a:opt.sel_beg) . " -- " . string(a:opt.sel_end)
+	" TODO: Is there still a bug here? I'm thinking it was fixed...
+	if !s:Contains_hlable(a:opt.rgn.beg, a:opt.rgn.end, [1, 1])
 		throw "Nothing hlable in specified region"
 	endif
 endfu
 
 fu! s:Get_opfunc_adjusted_pos(mode)
-	let [pos_beg, pos_end] = [getpos("'[")[1:2], getpos("']")[1:2]]
+	let rgn = {'beg': getpos("'[")[1:2], 'end': getpos("']")[1:2]}
 	if a:mode == 'line'
-		" TODO: Refactor this out of Delete/Highlight_operator?
 		" Adjust end positions to include full lines.
 		" (Vim provides the actual start/end pos of motion, regardless of mode.)
-		let pos_beg[1] = 1
-		let pos_end[1] = col([pos_end[0], '$']) - 1
+		let rgn.beg_raw = [rgn.beg[0], 1]
+		let rgn.end_raw = [rgn.end[0], col([rgn.end[0], '$']) - 1]
 	endif
-	return [pos_beg, pos_end]
+	return rgn
 endfu
 
-fu! s:Delete_region(pos_beg, pos_end)
-	let opt = {'sel_beg': a:pos_beg, 'sel_end': a:pos_end, 'op': 'delete'}
-	" Note: Validation may adjust cur pos, but never alters '< and '>.
+fu! s:Delete_region(rgn, mode)
+	let opt = {'rgn': a:rgn, 'op': 'delete', 'mode': a:mode}
+	" Note: Validation may adjust cur pos, but never alters '< '> or '[ '].
 	call s:Vmap_validate_region(opt)
 	" Perform the delete.
 	" TODO VMAPS: Check for active regions, or pass some sort of special
 	" indicator value. Don't hardcode like this...
 	call s:Operate_region({'fmt': 0, 'clr': 0, 'bgc': 0}, opt)
 	" Leave cursor at pos of first deleted char.
-	call cursor(opt.sel_beg)
+	call cursor(opt.rgn.beg)
 endfu
 
 fu! s:Delete_visual()
@@ -3680,7 +3725,7 @@ fu! s:Delete_visual()
 		throw "Delete_visual: blockwise-visual mode not supported"
 	endif
 	try
-		let opt = s:Delete_region(getpos("'<")[1:2], getpos("'>")[1:2])
+		let opt = s:Delete_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2]}, 'visual')
 	catch
 		throw "Delete_visual: Unable to delete selection: " . v:exception
 	finally
@@ -3694,17 +3739,17 @@ fu! s:Delete_operator()
 		" TODO: Can we constrain with mapping itself?
 		throw "Delete_operator: blockwise motions not supported"
 	endif
-	let [sel_beg, sel_end] = s:Get_opfunc_adjusted_pos(a:mode)
+	let rgn = s:Get_opfunc_adjusted_pos(a:mode)
 	try
-		let opt = s:Delete_region(sel_beg, sel_end)
+		let opt = s:Delete_region(rgn, 'operator')
 		" Adjust '[ and '] to account for any modifications.
 		" Important Note: Intentionally setting both '[ and '] to start pos, as
 		" this is what Vim does in deletion case.
 		" TODO: Ooops! Need to make '[ and '] correspond to the *input*
 		" positions, not the line-adjusted ones! (Justification: It's what Vim
 		" does.)
-		call setpos("'[", opt.sel_beg)
-		call setpos("']", opt.sel_beg)
+		call setpos("'[", opt.rgn.beg)
+		call setpos("']", opt.rgn.beg)
 	catch
 		" Restore cursor position to start of operated region.
 		call cursor(getpos("'[")[1:2])
@@ -3713,10 +3758,10 @@ fu! s:Delete_operator()
 	endtry
 endfu 
 
-fu! s:Highlight_region(pos_beg, pos_end)
+fu! s:Highlight_region(rgn, mode)
 	" TODO: Consider factoring the common stuff out of Delete/Highlight_region...
 	" Initialize a struct to hold r/w params passed to various functions.
-	let opt = {'sel_beg': a:pos_beg, 'sel_end': a:pos_end, 'op': 'highlight'}
+	let opt = {'rgn': a:rgn, 'op': 'highlight', 'mode': a:mode}
 	" Note: Validation may adjust cur pos, but never alters '< and '>.
 	call s:Vmap_validate_region(opt)
 	" Prompt user for desired highlighting
@@ -3739,16 +3784,16 @@ fu! s:Highlight_visual()
 		throw "Highlight_visual: blockwise-visual mode not supported"
 	endif
 	try
-		let opt = s:Highlight_region(getpos("'<")[1:2], getpos("'>")[1:2])
+		let opt = s:Highlight_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2], 'mode': 'visual'})
 		" Adjust '< and '> to account for any modifications.
-		call s:Restore_visual_mode(opt.sel_beg, opt.sel_end, 1)
+		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
 	catch
 		throw "Highlight_visual: Unable to highlight selection: " . v:exception
 	finally
 		" Leave cursor at start of selection (as Vim does).
 		call cursor(getpos("'<")[1:2])
 	endtry
-	call cursor(opt.sel_beg)
+	call cursor(opt.rgn.beg)
 endfu
 
 fu! s:Highlight_operator(mode)
@@ -3756,15 +3801,12 @@ fu! s:Highlight_operator(mode)
 		" TODO: Can we constrain with mapping itself?
 		throw "Highlight_operator: blockwise motions not supported"
 	endif
-	let [sel_beg, sel_end] = s:Get_opfunc_adjusted_pos(a:mode)
+	let rgn = s:Get_opfunc_adjusted_pos(a:mode)
 	try
-		let opt = s:Highlight_region(sel_beg, sel_end)
+		let opt = s:Highlight_region(rgn, 'operator')
 		" Adjust '[ and '] to account for any modifications.
-		" TODO: Ooops! Need to make '[ and '] correspond to the *input*
-		" positions, not the line-adjusted ones! (Justification: It's what Vim
-		" does.)
-		call setpos("'[", opt.sel_beg)
-		call setpos("']", opt.sel_end)
+		call setpos("'[", opt.rgn.beg_raw)
+		call setpos("']", opt.rgn.end_raw)
 	catch
 		throw "Highlight_operator: Unable to highlight operated region: " . v:exception
 	finally
