@@ -3183,6 +3183,7 @@ fu! s:Tok_nr_to_char(rgn, idx)
 	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
 endfu
 
+" TODO: Remove if this ends up not being needed.
 fu! s:Get_pos_past_rgn(opt)
 	let mark = a:opt.mode == 'visual' ? "'>" : "']"
 	let pos = getpos(mark)[1:2]
@@ -3192,98 +3193,120 @@ fu! s:Get_pos_past_rgn(opt)
 endfu
 
 
-fu! s:Adjust_rgn_by_off(tok, tokstr, opt, eorp)
-	let [ln, col] = [a:tok.pos[0], a:tok.pos[1]]
-	let off = len(tokstr)
-	let linewise = has_key(opt.rgn, 'beg_raw')
+" TODO: Probably pull this back into Vmap_apply_changes, as there doesn't appear
+" to be much value in the refactor...
+fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
+	let [line, col] = [a:tok.pos[0], a:tok.pos[1]]
+	" Get the size of the tok that's being inserted or deleted; it will be
+	" needed to calculate the signed adjustment offset (with neg. values
+	" corresponding to net byte removal).
+	let off = len(a:tokstr)
+	" Are we in 'linewise' mode?
+	" Linewise Mode Assumptions:
+	" 1. bp must be col 1 and ep must be col('$')
+	" 2. raw and non-raw positions are co-linear (because of the way the
+	"    operator positions are calculated).
+	let linewise = has_key(a:opt.rgn, 'beg_raw')
+	" Cache ref to the region boundary positions.
 	let [bp, ep] = [a:opt.rgn.beg, a:opt.rgn.end]
 	if linewise
+		" Cache ref to the 'operator' boundary positions.
 		let [bpr, epr] = [a:opt.rgn.beg_raw, a:opt.rgn.end_raw]
 	endif
 	
-	" Assumptions:
-	" When linewise flag is set...
-	" 1. bp must be col 1 and ep must be col('$')
-	" 2. raw and non-raw positions are co-linear (because of the way the raw
-	"    positions are calculated).
+	" TODO: Consider moving this logic back into Vmap_apply_changes... (It
+	" doesn't appear to simplify much to have factored it out.) If I end up
+	" keeping this function separate from Vmap_apply_changes, at least rework: I
+	" don't like the way tokstr is passed, and the refactor doesn't feel clean.
 	if a:tok.action == 'd'
-		if l:ln == eorp[0] && a:tok.loc != '>' | let a:eorp[1] -= off | endif
+		" Since offset is *added* unconditionally, negate to account for net
+		" byte removal.
+		let off = -off
 		" Determine impact of delete on offsets.
 		if a:tok.loc == '<'
-			if ln == bp[0]
+			if line == bp[0]
 				" Assumption: Can't get here in 'linewise' case.
-				let bp[1] -= off
-				if ln == ep[0]
-					let ep[1] -= off
-				endif
+				let bp[1] += off
+				if line == ep[0] | let ep[1] += off | endif
 			endif
 		elseif a:tok.loc == '{'
 			" !!! UNDER CONSTRUCTION !!!
-			if bp[1] >= eorp[1] | let bp[1] -= off | endif
-			if linewise && bpr[1] > 1 | let bpr[1] -= off | endif
-			if ln == ep[0]
-				let ep[1] -= off
-				if linewise && epr[1] > 1 | let epr[1] -= off | endif
+			" Note: relying on region constraints to obviate need to test end of
+			" region.
+			if linewise && bpr[1] > 1 | let bpr[1] += off | endif
+			if line == ep[0]
+				let ep[1] += off
+				if linewise && epr[1] > 1 | let epr[1] += off | endif
 			endif
 		elseif a:tok.loc == '='
-			if ln == ep[0]
-				let ep[1] -= off
-				if linewise && (col < epr[1] || epr[1] >= eorp[1]) | let epr[1] -= off | endif
+			if line == ep[0]
+				let ep[1] += off
+				" Never allow epr to drift to right of ep (recall that ep is
+				" always at end of line in 'linewise' case).
+				if linewise && (col < epr[1] || epr[1] >= ep[1])
+					let epr[1] += off
+				endif
 			endif
 		elseif a:tok.loc == '}'
-			" Note: No point in even checking eorp for a non-phantom tok with
-			" loc == '}'; we know pos should be pulled leftward. Of course, a
-			" 'raw' tok could be anywhere on the line, and hence, must be
-			" checked.
-			let ep[1] -= off
-			if epr[1] >= eorp[1] | let epr[1] -= off | endif
+			" Region end pos must be pulled leftward to avoid including first
+			" char beyond region.
+			let ep[1] += off
+			" Never allow epr to drift to right of ep.
+			if linewise && epr[1] >= ep[1] | let epr[1] += off | endif
 		endif
-	else
+	else " [iar]
 		if a:tok.action == 'r'
 			" Subtract len of tok being replaced.
 			let off -= len(s:Get_char(a:tok.pos))
 		endif
-		if l:ln == eorp[0] && a:tok.loc != '>' | let a:eorp[1] += off | endif
 		" Determine impact of insert/replace on offsets.
-		if a:a:tok.loc == '<'
+		if a:tok.loc == '<'
 			" Must be r
-			if ln == bp[0]
+			if line == bp[0]
+				" Assumption: Can't get here in 'linewise' case.
 				let bp[1] += off
-				if ln == ep[0]
-					let ep[1] += off
-				endif
+				if line == ep[0] | let ep[1] += off | endif
 			endif
 		elseif a:tok.loc == '{'
 			" Must be i or r
+			" Recall that bpr can lie to the right of bp.
+			" Design Decision: If operator pos was in col 1, don't let insertion
+			" of phantom at head change that.
+			" Rationale: Follows general approach of expansion to include
+			" inserted toks that 'wrap' the region.
 			if linewise && bpr[1] > 1 | let	bpr[1] += off | endif
-			if ln == ep[0]
+			if line == ep[0]
 				let ep[1] += off
+				" Note: linewise implies col == 1 here.
+				" Note: See earlier design note for rationale behind test.
 				if linewise && epr[1] > 1 | let epr[1] += off | endif
 			endif
-		elseif a:a:tok.loc == '='
+		elseif a:tok.loc == '='
 			" Must be r
-			if ln == ep[0]
+			if line == ep[0]
 				let ep[1] += off
 				if linewise && col < epr[1] | let epr[1] += off | endif
 			endif
-		elseif a:a:tok.loc == '}'
+		elseif a:tok.loc == '}'
 			" Must be i, a or r
 			" Note: 'i' was impossible before this function was extended to
 			" support vsel delete.
-			" r can't affect end, even when lengths differ (since pos
+			" action 'r' can't affect end, even when lengths differ (since pos
 			" represents *beginning* of mb char)
-			" i can't affect end because it's a special case for '}', needed
-			" only when there's no actual char on the line to append to.
-			" Design Decision: Caveat: It might seem odd that 'a' causes
-			" adjustment, but the current approach is to include { and }
-			" toks in the region.
+			" action 'i' can't affect end because it's a special case for '}',
+			" needed only when there's no actual char on the line to append to.
+			" Design Decision: It might seem odd that 'a' causes adjustment, but
+			" the current approach is to include { and } toks in the region.
+			" TODO: Note the similarities between this and { and } cases, and
+			" consider refactor. Look also at potentially including the 'delete'
+			" cases in the refactor...
 			if a:tok.action == 'a'
-				if ln == ep[0]
+				if line == ep[0]
 					" Expand to include the tok appended.
-					if a:tok.action == 'a' | let ep[1] += off | endif
-					if linewise && col <= epr[1]
-						let epr[1] += off
-					endif
+					" Note: Processing epr first because we need to know when
+					" it starts out collocated with ep.
+					if linewise && epr[1] >= ep[1] | let epr[1] += off | endif
+					let ep[1] += off
 				endif
 			endif
 		endif
@@ -3303,9 +3326,6 @@ endfu
 "     loc: <|{|=|}|>
 " }, ...]
 fu! s:Vmap_apply_changes(toks, opt)
-	" This array will be passed by ref for iterative update within
-	" Adjust_rgn_by_off.
-	let eorp = s:Get_pos_past_end(a:opt)
 	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
 		if empty(tok.action)
@@ -3338,11 +3358,12 @@ fu! s:Vmap_apply_changes(toks, opt)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
-			exe 'normal! '.(act == 'r' ? 's' : act)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			exe 'normal! '.(tok.action == 'r' ? 's' : tok.action)."\<C-R>\<C-R>=l:tokstr\<CR>"
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
-			call s:Adjust_rgn_by_off(tok, tokstr, a:opt, eorp)
+			" TODO: Reconsider this refactor...
+			call s:Adjust_rgn_by_off(tok, tokstr, a:opt)
 		endif
 	endfor
 endfu
@@ -3666,17 +3687,22 @@ fu! s:Operate_region(pspecs, opt)
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the delete.
 		if s:Vmap_protect_bslash(a:opt)
-			let sel_offs[0] += 1
+			" TODO: Consider pulling all this logic into Vmap_protect_bslash itself...
+			" Assumption: If linewise, any 'operator' positions will be
+			" affected because operator positions are always at or further to
+			" the inside of the lines than the corresponding non-operator
+			" positions, and the bslash is added prior to region start.
+			let linewise = has_key(a:opt.rgn, 'beg_raw')
+			let a:opt.rgn.beg[1] += 1
+			if linewise | let a:opt.rgn.beg_raw[1] += 1 | endif
 			" Adjust end offset if it's on same line as start (always is for
 			" delete, though we don't really even need end offset for delete).
 			if a:opt['op'] == 'delete' || a:opt.rgn.beg[0] == a:opt.rgn.end[0]
-				let sel_offs[1] += 1
+				let a:opt.rgn.end[1] += 1
+				if linewise | let a:opt.rgn.end_raw[1] += 1 | endif
 			endif
 		endif
 	endif
-	" Adjust and restore vsel (may be needed by caller).
-	let a:opt.rgn.beg[1] += sel_offs[0]
-	let a:opt.rgn.end[1] += sel_offs[1]
 endfu
 
 " Adjust region bounds (if necessary) to avoid splitting an escape-escapee pair,
@@ -3784,7 +3810,7 @@ fu! s:Highlight_visual()
 		throw "Highlight_visual: blockwise-visual mode not supported"
 	endif
 	try
-		let opt = s:Highlight_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2], 'mode': 'visual'})
+		let opt = s:Highlight_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2]}, 'visual')
 		" Adjust '< and '> to account for any modifications.
 		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
 	catch
