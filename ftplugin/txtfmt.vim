@@ -2503,6 +2503,12 @@ endfu
 " Adjust visual selection to prevent splitting of escape/escapee pairs.
 " Return Note: This function modifies input positions in-place.
 fu! s:Adjust_sel_to_protect_escapes(opt)
+	" Note: No point in continuing in the 'linewise' case.
+	" Rationale: In 'linewise' case, head of region corresponds to head of
+	" line, which renders split of escape/escapee pair impossible.
+	if has_key(a:opt.rgn, 'beg_raw') && a:opt.rgn.beg isnot a:opt.rgn.beg_raw
+		return
+	endif
 	" TODO: Modify Is_escaped_tok to accept a pos (possibly optional) and use
 	" it without modifying cursor pos.
 	call cursor(a:opt.rgn.beg)
@@ -3206,7 +3212,7 @@ fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 	" 1. bp must be col 1 and ep must be col('$')
 	" 2. raw and non-raw positions are co-linear (because of the way the
 	"    operator positions are calculated).
-	let linewise = has_key(a:opt.rgn, 'beg_raw')
+	let linewise = has_key(a:opt.rgn, 'beg_raw') && a:opt.rgn.beg isnot a:opt.rgn.beg_raw
 	" Cache ref to the region boundary positions.
 	let [bp, ep] = [a:opt.rgn.beg, a:opt.rgn.end]
 	if linewise
@@ -3591,7 +3597,9 @@ fu! s:Vmap_protect_bslash(opt)
 	" Rationale: In 'linewise' case, there can be nothing (including unescaped
 	" bslash) just before head of region (and on same line as region head),
 	" since region begins (by definition) at beginning of line.
-	if has_key(a:opt.rgn, 'beg_raw') | return | endif
+	if has_key(a:opt.rgn, 'beg_raw') && a:opt.rgn.beg isnot a:opt.rgn.beg_raw
+		return
+	endif
 	let [l, c] = [a:opt.rgn.beg[0], a:opt.rgn.beg[1]]
 	call cursor(l, c)
 	if !search('\%#' . b:re_no_bslash_esc, 'cn')
@@ -3716,16 +3724,21 @@ endfu
 
 fu! s:Get_opfunc_adjusted_pos(mode)
 	" Note: Vim provides the actual start/end pos of motion, regardless of mode.
-	" The raw positions may or may not be what txtfmt operation will use. We
-	" need to ensure that beg/end contain the positions txtfmt operation will
-	" use, and if this differs from the raw positions (because we're in
-	" 'linewise' mode), we store the latter in special keys (since we'll need
-	" them for cursor restoration later).
-	let [bk, ek] = a:mode == 'line' ? ['beg_raw', 'end_raw'] : ['beg', 'end']
-	let rgn = {bk : getpos("'[")[1:2], ek : getpos("']")[1:2]}
-	if a:mode == 'line'
-		" We've already set raw (operator) positions; now set the positions used
-		" by the txtfmt operation.
+	" The raw positions may or may not be what txtfmt operation will use. Ensure
+	" that beg/end contain the positions txtfmt operation will use.
+	" Design Decision: Set the '_raw' positions unconditionally, but make them
+	" simple aliases to non-raw in the non-linewise case. An alternative would
+	" be to leave '_raw' positions undefined if they're not needed. Note that
+	" positioning cursor after operation is simpler when '_raw' positions are
+	" always defined, and always represent where we'd want cursor to end up.
+	let rgn = {'beg_raw': getpos("'[")[1:2], 'end_raw': getpos("']")[1:2]}
+	if a:mode != 'line'
+		" Important Note: raw and non-raw positions are simply aliases.
+		" Downstream code is expected to rely upon this for differentiating
+		" linewise case from non-linewise.
+		let [rgn.beg, rgn.end] = [rgn.beg_raw, rgn.end_raw]
+	else
+		" Set the positions used by the txtfmt operation.
 		let rgn.beg = [rgn.beg_raw[0], 1]
 		let rgn.end = [rgn.end_raw[0], col([rgn.end_raw[0], '$']) - 1]
 	endif
@@ -3770,11 +3783,11 @@ fu! s:Delete_operator()
 		" Adjust '[ and '] to account for any modifications.
 		" Important Note: Intentionally setting both '[ and '] to start pos, as
 		" this is what Vim does in deletion case.
-		" TODO: Ooops! Need to make '[ and '] correspond to the *input*
-		" positions, not the line-adjusted ones! (Justification: It's what Vim
-		" does.)
-		call setpos("'[", opt.rgn.beg)
-		call setpos("']", opt.rgn.beg)
+		" Note: Shouldn't be any difference between raw and non-raw positions in
+		" 'linewise' case.
+		" Caveat: setpos fails if given an array with fewer than 3 elements.
+		call setpos("'[", [0] + opt.rgn.beg_raw)
+		call setpos("']", [0] + opt.rgn.beg_raw)
 	catch
 		" Restore cursor position to start of operated region.
 		call cursor(getpos("'[")[1:2])
@@ -3829,12 +3842,18 @@ fu! s:Highlight_operator(mode)
 	let rgn = s:Get_opfunc_adjusted_pos(a:mode)
 	try
 		let opt = s:Highlight_region(rgn, 'operator')
+		echomsg string(opt)
 		" Adjust '[ and '] to account for any modifications.
-		call setpos("'[", opt.rgn.beg_raw)
-		call setpos("']", opt.rgn.end_raw)
+		" Design Decision: Currently, '_raw' positions always set, though they
+		" may be simple aliases to the non-raw versions (in non-linewise case).
+		" Caveat: setpos fails if given an array with fewer than 3 elements.
+		call setpos("'[", [0] + opt.rgn.beg_raw)
+		call setpos("']", [0] + opt.rgn.end_raw)
 	catch
-		throw "Highlight_operator: Unable to highlight operated region: " . v:exception
+		throw "Highlight_operator: Unable to highlight operated region: exception "
+			\. v:exception . " occurred at " . v:throwpoint
 	finally
+		echomsg 'Positioning at: ' . string(getpos("'[")[1:2])
 		" Restore cursor position to start of operated region.
 		" Note: Do so whether termination was normal or abnormal.
 		call cursor(getpos("'[")[1:2])
@@ -4169,6 +4188,10 @@ fu! s:Def_map(mode, lhs1, lhs2, rhs2)
 		return 1
 	endif
 	" Do first map level <<<
+	" TODO: Design Decision Needed: Noticed that this guard can prevent map
+	" changes from taking effect when changes are made and :Refresh is run
+	" without first quitting Vim. When sessions are involved, the problem can be
+	" even more insidious.
 	if !hasmapto(a:lhs2, a:mode)
 		" User hasn't overridden the default level 1 mapping
 		" Make sure there's no conflict or ambiguity between an existing map
@@ -5768,7 +5791,7 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 " Note: The following will work for either visual or select mode
 call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
 			\":<C-U>call <SID>Highlight_visual()<CR>")
-call s:Def_map('v', '<C-\>d', '<Plug>TxtfmtVmapDelete',
+call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
 " Operator-pending mode mappings <<<
