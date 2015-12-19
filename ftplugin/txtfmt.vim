@@ -3587,6 +3587,11 @@ fu! s:Vmap_delete(toks, ri)
 endfu
 
 fu! s:Vmap_protect_bslash(opt)
+	" Note: No point in continuing in the 'linewise' case.
+	" Rationale: In 'linewise' case, there can be nothing (including unescaped
+	" bslash) just before head of region (and on same line as region head),
+	" since region begins (by definition) at beginning of line.
+	if has_key(a:opt.rgn, 'beg_raw') | return | endif
 	let [l, c] = [a:opt.rgn.beg[0], a:opt.rgn.beg[1]]
 	call cursor(l, c)
 	if !search('\%#' . b:re_no_bslash_esc, 'cn')
@@ -3609,18 +3614,11 @@ fu! s:Vmap_protect_bslash(opt)
 			if search('\%#\\*[' . b:txtfmt_re_any_tok_atom . ']', 'cn')
 				" Escape the preceding bslash and adjust offsets.
 				normal! hi\
-				" Assumption: If linewise, any 'operator' positions will be
-				" affected because operator positions are always at or further to
-				" the inside of the lines than the corresponding non-operator
-				" positions, and the bslash is added prior to region start.
-				let linewise = has_key(a:opt.rgn, 'beg_raw')
 				let a:opt.rgn.beg[1] += 1
-				if linewise | let a:opt.rgn.beg_raw[1] += 1 | endif
 				" Adjust end offset if it's on same line as start (always is for
 				" delete, though we don't really even need end offset for delete).
 				if a:opt['op'] == 'delete' || a:opt.rgn.beg[0] == a:opt.rgn.end[0]
 					let a:opt.rgn.end[1] += 1
-					if linewise | let a:opt.rgn.end_raw[1] += 1 | endif
 				endif
 			endif
 		endif
@@ -3696,8 +3694,6 @@ fu! s:Operate_region(pspecs, opt)
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the operation.
 		call s:Vmap_protect_bslash(a:opt)
-		if s:Vmap_protect_bslash(a:opt)
-		endif
 	endif
 endfu
 
@@ -3844,9 +3840,6 @@ fu! s:Highlight_operator(mode)
 		call cursor(getpos("'[")[1:2])
 	endtry
 endfu
-
-
-
 
 " >>>
 " Function: s:Jump_to_tok() <<<
