@@ -3194,7 +3194,7 @@ endfu
 
 
 " TODO: Probably pull this back into Vmap_apply_changes, as there doesn't appear
-" to be much value in the refactor...
+" to be much value in the refactor (see commit ce94a9).
 fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 	let [line, col] = [a:tok.pos[0], a:tok.pos[1]]
 	" Get the size of the tok that's being inserted or deleted; it will be
@@ -3607,15 +3607,24 @@ fu! s:Vmap_protect_bslash(opt)
 			" TODO: Consider adding regex vars for the character class (to
 			" obviate need for wrapping with [ ... ].
 			if search('\%#\\*[' . b:txtfmt_re_any_tok_atom . ']', 'cn')
-				" Escape the preceding bslash and return flag indicating we have
-				" so that caller can adjust offsets.
+				" Escape the preceding bslash and adjust offsets.
 				normal! hi\
-				return 1
+				" Assumption: If linewise, any 'operator' positions will be
+				" affected because operator positions are always at or further to
+				" the inside of the lines than the corresponding non-operator
+				" positions, and the bslash is added prior to region start.
+				let linewise = has_key(a:opt.rgn, 'beg_raw')
+				let a:opt.rgn.beg[1] += 1
+				if linewise | let a:opt.rgn.beg_raw[1] += 1 | endif
+				" Adjust end offset if it's on same line as start (always is for
+				" delete, though we don't really even need end offset for delete).
+				if a:opt['op'] == 'delete' || a:opt.rgn.beg[0] == a:opt.rgn.end[0]
+					let a:opt.rgn.end[1] += 1
+					if linewise | let a:opt.rgn.end_raw[1] += 1 | endif
+				endif
 			endif
 		endif
 	endif
-	" Nothing escaped
-	return 0
 endfu
 
 " Debug only!
@@ -3685,22 +3694,9 @@ fu! s:Operate_region(pspecs, opt)
 	call s:Vmap_apply_changes(mtoks, a:opt)
 	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
-		" types are involved in the delete.
+		" types are involved in the operation.
+		call s:Vmap_protect_bslash(a:opt)
 		if s:Vmap_protect_bslash(a:opt)
-			" TODO: Consider pulling all this logic into Vmap_protect_bslash itself...
-			" Assumption: If linewise, any 'operator' positions will be
-			" affected because operator positions are always at or further to
-			" the inside of the lines than the corresponding non-operator
-			" positions, and the bslash is added prior to region start.
-			let linewise = has_key(a:opt.rgn, 'beg_raw')
-			let a:opt.rgn.beg[1] += 1
-			if linewise | let a:opt.rgn.beg_raw[1] += 1 | endif
-			" Adjust end offset if it's on same line as start (always is for
-			" delete, though we don't really even need end offset for delete).
-			if a:opt['op'] == 'delete' || a:opt.rgn.beg[0] == a:opt.rgn.end[0]
-				let a:opt.rgn.end[1] += 1
-				if linewise | let a:opt.rgn.end_raw[1] += 1 | endif
-			endif
 		endif
 	endif
 endfu
@@ -3723,12 +3719,19 @@ fu! s:Vmap_validate_region(opt)
 endfu
 
 fu! s:Get_opfunc_adjusted_pos(mode)
-	let rgn = {'beg': getpos("'[")[1:2], 'end': getpos("']")[1:2]}
+	" Note: Vim provides the actual start/end pos of motion, regardless of mode.
+	" The raw positions may or may not be what txtfmt operation will use. We
+	" need to ensure that beg/end contain the positions txtfmt operation will
+	" use, and if this differs from the raw positions (because we're in
+	" 'linewise' mode), we store the latter in special keys (since we'll need
+	" them for cursor restoration later).
+	let [bk, ek] = a:mode == 'line' ? ['beg_raw', 'end_raw'] : ['beg', 'end']
+	let rgn = {bk : getpos("'[")[1:2], ek : getpos("']")[1:2]}
 	if a:mode == 'line'
-		" Adjust end positions to include full lines.
-		" (Vim provides the actual start/end pos of motion, regardless of mode.)
-		let rgn.beg_raw = [rgn.beg[0], 1]
-		let rgn.end_raw = [rgn.end[0], col([rgn.end[0], '$']) - 1]
+		" We've already set raw (operator) positions; now set the positions used
+		" by the txtfmt operation.
+		let rgn.beg = [rgn.beg_raw[0], 1]
+		let rgn.end = [rgn.end_raw[0], col([rgn.end_raw[0], '$']) - 1]
 	endif
 	return rgn
 endfu
@@ -3795,12 +3798,12 @@ fu! s:Highlight_region(rgn, mode)
 	" Parse and validate fmt/clr transformer spec
 	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
 	" Check for Cancel request
-	if empty(tokinfo)
-		" Note that nothing about position or mode has changed at this point.
-		return
+	" Note: Nothing about position or mode has changed at this point.
+	" TODO: In event of cancel, should we return {} as a signal to caller who may wish take advantage?
+	if !empty(tokinfo)
+		" Perform the highlighting.
+		call s:Operate_region(tokinfo, opt)
 	endif
-	" Perform the highlighting.
-	call s:Operate_region(tokinfo, opt)
 	return opt
 endfu
 
