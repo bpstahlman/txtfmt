@@ -570,16 +570,6 @@ fu! s:Delete_region_text(pos_beg, pos_end, inc)
 	return del_bytes
 endfu
 " >>>
-" Function: s:Get_cur_char() <<<
-" Purpose: Get and return the character under the cursor
-" Return: Character under the cursor or empty string if ga would display NUL
-" Assumption: Caller saves and restores @z, which is used by this function
-fu! s:Get_cur_char()
-	normal! "zyl
-	" Return the character
-	return @z
-endfu
-" >>>
 " Function: s:Restore_visual_mode() <<<
 " Purpose: Visually select the range indicated by the input positions, using
 " the visual mode command returned by visualmode().
@@ -679,7 +669,7 @@ fu! s:Can_delete_tok()
 	else
 		" Cache cursor column position
 		let tok_col = col('.')
-		if tok_col == 1 || tok_col + strlen(s:Get_cur_char()) >= col('$')
+		if tok_col == 1 || tok_col + strlen(s:Get_char()) >= col('$')
 			" We can always delete a token at the beginning or end of the line
 			let ret_val = 1
 		else
@@ -1065,7 +1055,7 @@ fu! Cleanup_tokens_working(startline, stopline)
 		call cursor(a:startline, 1)
 		let tok_line = line('.')
 		let tok_col = col('.')
-		let tok = s:Get_cur_char()
+		let tok = s:Get_char()
 		if tok =~ re_tok
 			" Process this token first time through loop
 			" Don't search for hlable, which won't be used this time through
@@ -1103,7 +1093,7 @@ fu! Cleanup_tokens_working(startline, stopline)
 				let tok_line = search(re_tok, 'W', a:stopline)
 				if tok_line
 					let tok_col = col('.')
-					let tok = s:Get_cur_char()
+					let tok = s:Get_char()
 				endif
 			endif
 
@@ -1385,7 +1375,7 @@ fu! Cleanup_tokens(startline, stopline, adj_vsel)
 		call cursor(a:startline, 1)
 		let tok_line = line('.')
 		let tok_col = col('.')
-		let tok = s:Get_cur_char()
+		let tok = s:Get_char()
 		" Note: Some of the complexity associated with the '_overrides' could
 		" go away if we refactored using Vim 7 capabilities: specifically, the
 		" ability to find a match at the cursor position.
@@ -1428,7 +1418,7 @@ fu! Cleanup_tokens(startline, stopline, adj_vsel)
 				let tok_line = search(re_tok, 'W', a:stopline)
 				if tok_line
 					let tok_col = col('.')
-					let tok = s:Get_cur_char()
+					let tok = s:Get_char()
 				endif
 			endif
 
@@ -2450,34 +2440,179 @@ endfu
 " }
 " Post Condition: Unless 'n' flag supplied, will be positioned on any found
 " token.
-fu! s:Search_tok(rgn, flags, ...)
-	let ret = {}
-	" Process optional zero-width-assertion.
-	let zwa = a:0 > 0 ? a:1 : ''
+" EXPERMINENTAL!!!!!
+fu! s:Search_tok(rgn, sflags, ...)
+	" Note: For search(), stopline of 0 works like omitting arg.
+	let stopline = a:0 ? a:1 : 0
+	" TODO: Consider adding 'loc' somewhere in return struct.
+	let fwd = a:sflags !~ 'b'
+	" TODO: Some of these flags are no longer necessary; removing them can
+	" simplify the algorithm...
+	let flags = {'tok': 0, 'lin': 0, 'cur': 0, 'adj': 0, 'hla': 0, 'eob': 0, 'fwd': fwd}
+	let cpos = getpos(".")[1:2]
 	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
-	" BUG TODO: Apply_zwa puts \%-1l into pattern when near end of buf.
-	" Note: Apply_zwa can handle empty zwa.
-	let [lnum, col] = searchpos(s:Apply_zwa(zwa, re_tok), a:flags . 'W')
+	" TODO: Decide about aggressive vs non-aggressive: there's really no way to
+	" do aggressive, even if configured, without passing an idx. I'm thinking
+	" maybe do away with that option anyways...
+	" TODO: Consider doing away with sflags, in favor of distinct args.
+	let re_hlable = s:Get_hlable_patt({})
+	let [lnum, col] = searchpos(re_tok, a:sflags . 'W', stopline)
 	if lnum
-		" Found a tok.
-		" TODO: Any advantage to omitting pos list when it's cursor?
-		let tok_info = s:Get_tok_info(s:Get_char([lnum, col]))
-		let ret = {'pos': [lnum, col], 'rgn': tok_info.rgn, 'idx': tok_info.idx}
+		" Found tok.
+		let flags.tok = 1
+		" Is found tok on same line as start pos?
+		let flags.lin = lnum == cpos[0]
+		" Assumption: stopline guarantees this to be the only case in which
+		" found tok could be adjacent to (and on same line as) start pos.
+		if lnum == cpos[0] && col == cpos[1]
+			let flags.cur = 1
+		else
+			" Match not at cursor pos; check for adjacency.
+			call s:{fwd ? 'Backward' : 'Forward'}_char()
+			if line('.') == cpos[0] && col('.') == cpos[1]
+				let flags.adj = 1
+			endif
+		endif
+		" Check for hlable between start pos and found tok.
+		call cursor(cpos)
+		let [l, c] = searchpos(re_hlable, a:sflags . 'W', lnum)
+		" Note: Since stopline alone can't constrain match to near side of tok,
+		" we must check line/col pos as well.
+		" Note: Test must take search direction into account.
+		if l && (fwd
+			\? (l < lnum || l == lnum && c < col)
+			\: (l > lnum || l == lnum && c > col))
+			let flags.hla = 1
+			let pos_hla = [l, c]
+		endif
+		" Reposition on found tok.
+		call cursor(lnum, col)
+	else
+		" No tok within stopline distance; try unbounded search that stops at
+		" tok or hlable, whichever comes first.
+		" Rationale: If user has such an inordinate number of consecutive toks
+		" that this unbounded search takes noticeably long, he deserves it...
+		" TODO: Make sure this submatch usage isn't affected by Vim's 'p' flag
+		" idiosyncrasies (documented in correspondence with Bram on list)...
+		let re = '\(' . re_tok . '\)\|\(' . re_hlable . '\)'
+		let [lnum, col, submatch] = searchpos(re, a:sflags . 'Wpn')
+		if lnum
+			" Found either tok or hlable
+			" TODO: Decide what to set when we find hlable, but not tok. Think
+			" about expected use-cases...
+			" Design Decision: 'hla' indicates whether hlable was found; it does
+			" not imply existence of tok.
+			" Don't move cursor unless tok was found. If caller wants position
+			" of hla, it will be in pos_hla.
+			" TODO: Consider making this function respect an 'n' flag in search
+			" flags: i.e., call cursor() only to restore position after we've
+			" moved it apart from a search... (We'd need to handle hla pattern
+			" specially if we don't ever want it positioned there. Note that I'm
+			" thinking we should just break search flags into distinct args...
+			if submatch == 2
+				let flags.tok = 1
+				let pos = [lnum, col]
+				call cursor(lnum, col)
+			else
+				let flags.hla = 1
+				let pos_hla = [lnum, col]
+			endif
+		endif
 	endif
+
+	" If we didn't find anything at all, must have hit end of buffer looking.
+	" Rationale: Even if no toks within stopline distance, we'll settle for an
+	" hlable past it.
+	let flags.eob = !lnum
+
+	" Design Decision: If anything (even just hlable) was found, return the
+	" location. Flags will tell the full story.
+	let ret = {'flags': flags}
+	if flags.tok
+		" Parse the tok and store in denormalized form.
+		let tok = s:Get_char([lnum, col])
+		let ti = s:Get_tok_info(tok)
+		let ret.tok = tok
+		let ret.rgn = ti.rgn
+		let ret.idx = ti.idx
+		let ret.pos = [lnum, col]
+	endif
+	if flags.hla
+		let ret.pos_hla = pos_hla
+	endif
+
 	return ret
 endfu
 " >>>
 " Function: s:Get_char <<<
-" TODO: Decide whether to replace s:Get_cur_char with this.
+" TODO: Get rid of this one in favor of Get_char? Consider pros/cons of each
+" approach.
 " Note: Advantage of this one is that it doesn't use any registers and can
 " get char at arbitrary position.
 " Disadvantage (if any) is that it's (at least conceptually) less efficient.
-fu! s:Get_char(...)
+fu! s:Get_char_unused(...)
 	let [lnum, col] = a:0 ? a:1 : getpos('.')[1:2]
 	" Note: Vim can handle col not falling at start of mb char.
 	let line = getline(lnum)[col - 1 : ]
 	return line[0 : byteidx(line, 1) - 1]
 endfu
+" >>>
+" Function: s:Get_char() <<<
+" Purpose: Get and return the character under the cursor
+" Return: Character under the cursor or empty string if ga would display NUL
+" Assumption: Caller saves and restores @z, which is used by this function
+fu! s:Get_char(...)
+	let need_move = !!a:0
+	let z_save = @z
+	if need_move
+		let save_pos = getpos('.')
+		call cursor(a:1)
+	endif
+	normal! "zyl
+	if need_move
+		call cursor(save_pos)
+	endif
+	let ret = @z
+	let @z = z_save
+	" Return the character
+	return ret
+endfu
+" >>>
+" Move back 1 char and return pos list representing old position (empty list
+" if we're already at beginning of buffer).
+fu! s:Backward_char()
+	let save_pos = getpos('.')
+	if save_pos[2] == 1
+		" Beginning of line
+		if save_pos[1] == 1
+			" Already at beginning of buffer
+			return []
+		else
+			" To end of previous line
+			normal! k$
+		endif
+	else
+		" Back a char
+		normal! h
+	endif
+	return save_pos
+endfu
+fu! s:Forward_char()
+	let save_pos = getpos('.')
+	" Attempt to move forward 1 char
+	normal! l
+	if col('.') == save_pos[2]
+		" Couldn't move forward on current line.
+		if save_pos[1] < line('$')
+			normal! j0
+		else
+			" Already at end of buffer
+			return {}
+		endif
+	endif
+	return save_pos
+endfu
+
 " Delete the specified char from buffer (default char under cursor) and return
 " it.
 " TODO: Cleaner than s:Delete_cur_char (doesn't require caller to save/restore
@@ -2528,41 +2663,6 @@ fu! s:Adjust_sel_to_protect_escapes(opt)
 	endif
 endfu
 " >>>
-
-" Move back 1 char and return pos list representing old position (empty list
-" if we're already at beginning of buffer).
-fu! s:Backward_char()
-	let save_pos = getpos('.')
-	if save_pos[2] == 1
-		" Beginning of line
-		if save_pos[1] == 1
-			" Already at beginning of buffer
-			return []
-		else
-			" To end of previous line
-			normal! k$
-		endif
-	else
-		" Back a char
-		normal! h
-	endif
-	return save_pos
-endfu
-fu! s:Forward_char()
-	let save_pos = getpos('.')
-	" Attempt to move forward 1 char
-	normal! l
-	if col('.') == save_pos[2]
-		" Couldn't move forward on current line.
-		if save_pos[1] < line('$')
-			normal! j0
-		else
-			" Already at end of buffer
-			return {}
-		endif
-	endif
-	return save_pos
-endfu
 
 " TODO: Figure out where to put this, or whether it's even needed.
 " TODO: Consider combining rgn and idx into a simple datatype.
@@ -2636,7 +2736,8 @@ endfu
 " }
 " TODO: Should this be a function, or perhaps just a Dict?
 fu! s:Get_hlable_patt(tok_info)
-	" VMAPS TODO: Make this a configurable option.
+	" VMAPS TODO: Make this a configurable option. Alternatively, get rid of
+	" aggressive cleanup (as I'm thinking non-aggressive should be default).
 	let aggressive = exists('g:txtfmt_aggressive_cleanup') && g:txtfmt_aggressive_cleanup
 
 	" Logic: A non-tok, non-whitespace character is always hlable. When we're
@@ -2706,7 +2807,7 @@ fu! s:Contains_hlable(pos1, pos2, inc, ...)
 	let zwa = s:Make_pos_zwa({'end': {'pos': a:pos2, 'inc': inc[1]}})
 	" Since cursor is positioned at start, inc[0] determines 'c' flag.
 	let re = s:Apply_zwa(zwa, hlable)
-	echomsg "re: " . re . " at pos=" . string(getpos('.'))
+	"echomsg "re: " . re . " at pos=" . string(getpos('.'))
 	let ret = !!search(s:Apply_zwa(zwa, hlable), 'n' . (inc[0] ? 'c' : ''))
 	" Restore cursor pos.
 	call cursor(savepos)
@@ -2826,11 +2927,9 @@ let s:SYNC_DIST_BYTES_EXTRA = 250
 fu! s:Vmap_sync_start(rgn, opt)
 	let sel_beg_pos = a:opt.rgn.beg
 	let sel_end_pos = a:opt.rgn.end
-	let sync_beg_limit_pos = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)
-	let stoppos = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)
-	" Define zero-width assertions.
-	let stoppos_zwa = s:Make_pos_zwa({'end': {'pos': stoppos}})
-	let pre_sync_limit_zwa = s:Make_pos_zwa({'beg': {'pos': sync_beg_limit_pos}})
+	let stopline_beg = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)[0]
+	" TODO: May not need the end stoppos any more...
+	let stopline = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)[0]
 	" Start looking at head of vsel.
 	call cursor(sel_beg_pos)
 	" Look backward for an ss_safe tok if we can find it.
@@ -2839,17 +2938,18 @@ fu! s:Vmap_sync_start(rgn, opt)
 	while !ss_safe
 		" Cache last tok encountered (if any).
 		let prev_pos = empty(tok_infos) ? [] : ti.pos
-		let ti = s:Search_tok(a:rgn, 'b', pre_sync_limit_zwa)
-		if empty(ti) | break | endif
+		" TODO: Change some of the syncing constraint stuff now that the zwa's
+		" are no longer used...
+		let ti = s:Search_tok(a:rgn, 'b', stopline_beg)
+		echomsg "Syncing... ti = " . string(ti)
+		if !ti.flags.tok
+			" Couldn't find ss safe tok within stop distance.
+			break
+		endif
 		" Add found tok, whether supersedence constraint satisfied or not.
 		call insert(tok_infos, ti)
 		" Has this tok satisfied supersedence constraint?
-		" Question: Should we be using Contains_hlable for this? Consider any
-		" assumptions it makes regarding cursor pos.
-		let hlable = s:Get_hlable_patt(ti)
-		" Look only up to next tok (if one was found) or head of vsel.
-		let hlable_zwa = s:Make_pos_zwa({'end': {'pos': empty(prev_pos) ? sel_beg_pos : prev_pos}})
-		if search(hlable_zwa . hlable, 'nW')
+		if ti.flags.hla
 			let ss_safe = 1
 		endif
 	endwhile
@@ -2857,6 +2957,8 @@ fu! s:Vmap_sync_start(rgn, opt)
 	if !ss_safe
 		" Note: We're going to have to prepend a virtual tok to satisfy
 		" supersedence constraint.
+		" TODO: Make sure the virtual tok doesn't need more of the stuff
+		" Search_tok normally returns.
 		let tok_info = {'pos': [], 'rgn': a:rgn}
 		" Assumption: We're either on earliest tok found or vsel head.
 		if empty(s:Backward_char())
@@ -2875,8 +2977,7 @@ fu! s:Vmap_sync_start(rgn, opt)
 	" getting it at point of use. Shouldn't be expensive...
 	" Currently, stoppos isn't used, but stoppos_zwa is.
 	return {
-		\'stoppos': stoppos,
-		\'stoppos_zwa': stoppos_zwa,
+		\'stopline': stopline,
 		\'tok_infos': tok_infos
 	\}
 endfu
@@ -2892,6 +2993,7 @@ endfu
 fu! s:Vmap_collect(rgn, sync_info, opt)
 	let toks = a:sync_info.tok_infos
 	" Mark toks added during sync as being prior to vsel.
+	" TODO: Consider doing this in Search_tok itself...
 	for tok in toks
 		let tok.loc = '<'
 		let tok.action = ''
@@ -2910,21 +3012,29 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 	endif
 	let sel_cmp_prev = -1
 	let [sel_beg_found, sel_end_found] = [0, 0]
+	echomsg "Before collecting, we have " . len(toks) . " toks."
+	echomsg string(toks)
+	" Ref used to facilitate delayed add (primarily for eob special case).
 	while 1
-		" IN FLUX!!!!!!!!!!!!!!!!!!!!! TODO
-		" Look for next tok within stopline range (not necessarily in vsel)
-		let tok_info = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stoppos_zwa)
+		" Look for next tok (or hla) within stopline range (not necessarily in vsel)
+		let ti = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stopline)
+		echomsg "Searched with allow_cmatch=" allow_cmatch . " and stopline=" . a:sync_info.stopline . ", found: " . string(ti)
 		let allow_cmatch = 0
-		let sel_cmp = empty(tok_info) ? 1 : s:Cmp_pos_to_rng(tok_info.pos, a:opt.rgn.beg, a:opt.rgn.end)
+		let sel_cmp = !ti.flags.tok
+			\? 1
+			\: s:Cmp_pos_to_rng(ti.pos, a:opt.rgn.beg, a:opt.rgn.end)
 		if sel_cmp_prev < sel_cmp
 			" We've advanced w.r.t. vsel.
 			if !sel_beg_found
 				" Need to add something for head: either a phantom (here) or
 				" augmented tok (end of loop).
 				let sel_beg_found = 1
-				" Note: nonzero cmp means not at head
-				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.rgn.beg)
-					" Add empty for vsel beg
+				" If we didn't find tok at all, or found one not at vsel head,
+				" add phantom.
+				if !ti.flags.tok || ti.pos != a:opt.rgn.beg
+					" Add phantom tok for vsel beg
+					" TODO: Figure out what's really needed in a phantom/virtual
+					" tok.
 					call add(toks, {
 						\'rgn': a:rgn,
 						\'pos': a:opt.rgn.beg,
@@ -2935,37 +3045,39 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				endif
 			endif
 			if !sel_end_found && sel_cmp == 1
-				" Need to add something for tail: either a phantom (here) or
-				" augmented tok (end of loop).
 				let sel_end_found = 1
-				" Note: nonzero cmp means not at tail
-				if empty(tok_info) || s:Cmp_pos_to_pos(tok_info.pos, a:opt.rgn.end)
-					" Add empty for vsel end
-					" TODO: Extra flags to denote head/tail?
-					call add(toks, {
-						\'rgn': a:rgn,
-						\'pos': a:opt.rgn.end,
-						\'idx': -1,
-						\'loc': '}',
-						\'action': 'a'
-					\})
-				endif
+				" Add phantom tail.
+				" Note: sel_cmp == 1 precludes actual } tok.
+				call add(toks, {
+					\'rgn': a:rgn,
+					\'pos': a:opt.rgn.end,
+					\'idx': -1,
+					\'loc': '}',
+					\'action': 'a'
+				\})
+				" TODO: Need to add hla_pos here as above...
 			endif
 		endif
-		if !empty(tok_info)
+		if !empty(ti)
 			" Assumption: A real tok is always added here, never above.
-			" TODO: Perhaps have Cmp_vsel return symbols directly.
-			let tok_info.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
-				\: a:opt.rgn.beg == tok_info.pos ? '{'
-				\: a:opt.rgn.end == tok_info.pos ? '}' : '='
-			" Note: Could be actual (non-phantom) head or tail (no special
-			" distinction required).
-			let tok_info.action = ''
+			if !has_key(ti, 'loc')
+				let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
+					\: a:opt.rgn.beg == ti.pos ? '{'
+					\: a:opt.rgn.end == ti.pos ? '}' : '='
+			endif
+			if ti.loc == '}' | let sel_end_found = 1 | endif
+			if ti.loc == '{' | let sel_beg_found = 1 | endif
+			let ti.action = ''
+			call add(toks, ti)
 			" Update for next iteration...
 			let sel_cmp_prev = sel_cmp
-			call add(toks, tok_info)
-		else
+		endif
+		if empty(ti) || ti.loc == '$'
 			" No more tokens in range.
+			" Special Case: If we hit end of buffer without even an hlable, add
+			" a special <eob> tok; what's special about this virtual tok is that
+			" it *always* supersedes. Actually, we could add <eob> regardless of
+			" hla and let cleanup check it.
 			break
 		endif
 	endwhile
@@ -3083,6 +3195,18 @@ endfu
 " Compare input tokens, considering first pos, then action iff necessary to
 " break tie.
 fu! s:Vmap_cmp_tok(t_a, t_b)
+	" TODO: Do we need to consider virtual <eob> toks? Keep in mind that this
+	" comparison is used for merging (which eventually is going away), and the
+	" relative positioning of <eob> toks shouldn't matter, since we won't even
+	" be doing anything with them after the merge.
+	" For now, just make sure we don't blow up...
+	if a:t_a.loc == '$'
+		echomsg "FIXME!!!!"
+		return 1
+	else if a:t_b.loc == '$'
+		echomsg "FIXME!!!!"
+		return -1
+	endif
 	let cmp = s:Vmap_cmp_pos(a:t_a.pos, a:t_b.pos)
 	if cmp
 		" Position decides.
@@ -3334,6 +3458,8 @@ endfu
 fu! s:Vmap_apply_changes(toks, opt)
 	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
+		" Note: This empty test catches virtual <eob> tok, but perhaps testing
+		" for tok.flags.tok would be safer?
 		if empty(tok.action)
 			" No change from what's in buffer.
 			continue
@@ -3410,15 +3536,20 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		" TODO: Perhaps an tok_is_phantom() predicate?
 		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to remove, keep head or tail.
 
-		" Perform 1st redundancy check using tip if it exists, else ti_safe.
-		" Design Decision: When both superseding and redundant toks exist,
-		" prefer to delete redundant.
-		if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
-			"echomsg "Removing in 1st red test: " . string(ti)
-			let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
-			let idx += 1
-			" Note: Leave tip unchanged, but don't make safe.
-			continue
+		" Special <eob> tok can supersede, but can't be redundant.
+		echomsg "Processing ti = " . string(ti)
+		" TODO: Perhaps add a tok/non-tok indicator instead... Or a "virtual" flag.
+		if ti.loc != '$'
+			" Perform 1st redundancy check using tip if it exists, else ti_safe.
+			" Design Decision: When both superseding and redundant toks exist,
+			" prefer to delete redundant.
+			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
+				echomsg "Removing in 1st red test: " . string(ti)
+				let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+				let idx += 1
+				" Note: Leave tip unchanged, but don't make safe.
+				continue
+			endif
 		endif
 
 		" If here, we have a tok that is not *currently* redundant, but
@@ -3429,21 +3560,23 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		" tok is not supersedable (i.e., if it becomes redundant due to
 		" supersedence).
 		let tip_next = ti
+		" TODO: Do we need to test tip.flags or anything else?
 		if !empty(tip)
 			" Need check for supersedence.
-			"echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
-			if !s:Contains_hlable(tip.pos, ti.pos,
-					\[tip.action == 'i', ti.action == 'a'], tip)
-				"echomsg "Not hlable between " . string(tip.pos) . ' and ' . string(ti.pos)
+			echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
+			" TODO: No longer considering tip means I should probably just move
+			" away from the aggressive cleanup altogether...
+			if ti.loc == '$' || !s:Contains_hlable(tip.pos, ti.pos,
+				\[tip.action == 'i', ti.action == 'a'], tip)
+				echomsg "Not hlable between " . string(tip.pos) . ' and ' . string(ti.pos)
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
 				" TODO: Reword to reflect new meaning of bleed-through.
 				" Special Case: If bleed-through is from default tok,
 				" superseded tok can be deleted.
-				if ti_safe.idx && s:Contains_hlable(tip.pos, ti.pos,
-					\[tip.action == 'i', ti.action == 'a'])
+				if ti_safe.idx
 					" Cap non-default region to prevent bleed through.
-					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
+					echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
 					let tip.idx = 0
 					" Design Decision: Once we decide to cap, the decision is
@@ -3458,7 +3591,8 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" Supersedence test complete.
 				" Do 2nd redundancy check (necessitated by tok
 				" removal/replacement).
-				if ti_safe.idx == ti.idx
+				echomsg "Printing safe and other: " . string(ti_safe) . " - " . string(ti)
+				if ti.flags.tok && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
 					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
 					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
@@ -3641,10 +3775,14 @@ fu! s:dbg_display_toks(context, toks)
 	echo "\r"
 	echo a:context
 	for ti in a:toks
-		echo printf('(%3d, %3d): %s(%2d): => %s'
-			\, empty(ti.pos) ? -1 : ti.pos[0]
-			\, empty(ti.pos) ? -1 : ti.pos[1]
-			\, ti.rgn, ti.idx, ti.action)
+		if ti.loc == '$'
+			echo ti.rgn . ' ' . '<eob> virtual tok'
+		else
+			echo printf('(%3d, %3d): %s(%2d): => %s'
+				\, empty(ti.pos) ? -1 : ti.pos[0]
+				\, empty(ti.pos) ? -1 : ti.pos[1]
+				\, ti.rgn, ti.idx, ti.action)
+		endif
 	endfor
 	echo "\r"
 endfu
@@ -3720,6 +3858,9 @@ fu! s:Vmap_validate_region(opt)
 	if !s:Contains_hlable(a:opt.rgn.beg, a:opt.rgn.end, [1, 1])
 		throw "Nothing hlable in specified region"
 	endif
+	" Check for special case: nothing but toks followed by optional newline
+	" between '> and end of buffer. If special case exists, expand region to
+	" include the toks adjacent to region.
 endfu
 
 fu! s:Get_opfunc_adjusted_pos(mode)
@@ -3826,7 +3967,8 @@ fu! s:Highlight_visual()
 		" Adjust '< and '> to account for any modifications.
 		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
 	catch
-		throw "Highlight_visual: Unable to highlight selection: " . v:exception
+		throw "Highlight_visual: Unable to highlight selection: exception "
+			\. v:exception . " occurred at " . v:throwpoint
 	finally
 		" Leave cursor at start of selection (as Vim does).
 		call cursor(getpos("'<")[1:2])
@@ -3842,7 +3984,6 @@ fu! s:Highlight_operator(mode)
 	let rgn = s:Get_opfunc_adjusted_pos(a:mode)
 	try
 		let opt = s:Highlight_region(rgn, 'operator')
-		echomsg string(opt)
 		" Adjust '[ and '] to account for any modifications.
 		" Design Decision: Currently, '_raw' positions always set, though they
 		" may be simple aliases to the non-raw versions (in non-linewise case).
@@ -3853,7 +3994,6 @@ fu! s:Highlight_operator(mode)
 		throw "Highlight_operator: Unable to highlight operated region: exception "
 			\. v:exception . " occurred at " . v:throwpoint
 	finally
-		echomsg 'Positioning at: ' . string(getpos("'[")[1:2])
 		" Restore cursor position to start of operated region.
 		" Note: Do so whether termination was normal or abnormal.
 		call cursor(getpos("'[")[1:2])
@@ -4188,10 +4328,11 @@ fu! s:Def_map(mode, lhs1, lhs2, rhs2)
 		return 1
 	endif
 	" Do first map level <<<
-	" TODO: Design Decision Needed: Noticed that this guard can prevent map
-	" changes from taking effect when changes are made and :Refresh is run
-	" without first quitting Vim. When sessions are involved, the problem can be
-	" even more insidious.
+	" Caveat: This guard can prevent map changes from taking effect when changes
+	" are made and :Refresh is run without first quitting Vim. When sessions are
+	" involved, the problem can be even more insidious. The guard is important,
+	" though, to prevent creation of default map if user has already defined his
+	" own. Perhaps a warning in help, or some way of mitigating the issue?
 	if !hasmapto(a:lhs2, a:mode)
 		" User hasn't overridden the default level 1 mapping
 		" Make sure there's no conflict or ambiguity between an existing map
