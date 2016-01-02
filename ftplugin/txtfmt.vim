@@ -2472,21 +2472,34 @@ fu! s:Search_tok(rgn, sflags, ...)
 	if lnum
 		" Cursor is on found tok (unless 'n' flag was input).
 		let ret.typ = 'tok'
+		" Parse the tok and store in denormalized form.
+		" TODO: Consider nesting all this within a sub-object.
+		" Rationale: Cleaner division between the object returned by this
+		" function (which could be non-tok) and an actual tok object.
+		" TODO: Make this change a separate refactor. There's already a lot on
+		" this one...
+		let ret.chr = s:Get_char([lnum, col])
+		let ti = s:Get_tok_info(ret.chr)
+		let ret.rgn = ti.rgn
+		let ret.idx = ti.idx
+		let ret.pos = [lnum, col]
 	else
 		" No tok within stopline distance; try unbounded search that stops at
 		" tok or hlable, whichever comes first.
-		" Rationale: If user has such an inordinate number of consecutive toks
-		" that this unbounded search takes noticeably long, he deserves it...
+		" Note: If user has such an inordinate number of consecutive toks that
+		" this unbounded search takes noticeably long, something is pathological
+		" with his buffer, and he should expect problems...
 		" TODO: Make sure this submatch usage isn't affected by Vim's 'p' flag
 		" idiosyncrasies/bugs (documented in correspondence with Bram on
 		" list)...
 		" TODO: Decide about aggressive vs non-aggressive: there's really no way to
 		" do aggressive, even if configured, without passing an idx. I'm thinking
-		" maybe do away with that option anyways...
+		" maybe do away with that option/distinction anyways, keeping only the
+		" non-aggressive...
 		let re_hlable = s:Get_hlable_patt({})
 		let re = '\(' . re_tok . '\)\|\(' . re_hlable . '\)'
-		" Note: Cursor cannot have moved; inhibit move on this search as well,
-		" since a non-tok is a valid match.
+		" Note: Cursor has not moved; inhibit move for now; if flags don't
+		" inhibit, we'll move to a tok if we find one.
 		let [lnum, col, submatch] = searchpos(re, a:sflags . 'Wpn')
 		if lnum
 			" Found either tok or hlable (but haven't moved cursor to it).
@@ -2503,20 +2516,6 @@ fu! s:Search_tok(rgn, sflags, ...)
 				let ret.typ = 'hla'
 			endif
 		endif
-	endif
-
-	if ret.typ == 'tok'
-		" Parse the tok and store in denormalized form.
-		" TODO: Consider nesting all this within a sub-object.
-		" Rationale: Cleaner division between the object returned by this
-		" function (which could be non-tok) and an actual tok object.
-		" TODO: Make this change a separate refactor. There's already a lot on
-		" this one...
-		let ret.chr = s:Get_char([lnum, col])
-		let ti = s:Get_tok_info(ret.chr)
-		let ret.rgn = ti.rgn
-		let ret.idx = ti.idx
-		let ret.pos = [lnum, col]
 	endif
 
 	return ret
@@ -2540,7 +2539,8 @@ endfu
 " Return: Character under the cursor or empty string if ga would display NUL
 " Assumption: Caller saves and restores @z, which is used by this function
 fu! s:Get_char(...)
-	let need_move = !!a:0
+	" Design Decision: Empty [] works like omitting position.
+	let need_move = !!a:0 && !empty(a:1)
 	let z_save = @z
 	if need_move
 		let save_pos = getpos('.')
@@ -2998,10 +2998,9 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		call cursor(a:opt.rgn.beg)
 		let allow_cmatch = 1
 	endif
+	let ti_last = {}
 	let sel_cmp_prev = -1
 	let [sel_beg_found, sel_end_found] = [0, 0]
-	echomsg "Before collecting, we have " . len(toks) . " toks."
-	echomsg string(toks)
 	" Ref used to facilitate delayed add (primarily for eob special case).
 	while 1
 		" Look for next tok (or hla) within stopline range (not necessarily in vsel)
@@ -3051,12 +3050,27 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				\})
 			endif
 		endif
-		" TODO: Need to break out earlier...
 		if ti.typ == 'tok'
-			" Assumption: Non-phantom toks are always added here, never above.
+			" We have an actual (non-phantom) tok; add it unless preceding tok
+			" was past region end and hlable lies between it and this one (in
+			" which case, we already have sufficient toks for cleanup at tail).
+			" Note: Phantom toks are always added above.
 			let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
 				\: a:opt.rgn.beg == ti.pos ? '{'
 				\: a:opt.rgn.end == ti.pos ? '}' : '='
+			if ti.loc == '>'
+				" Do we already have a candidate 'last tok'?
+				if !empty(ti_last)
+					" Any hlable between ti_last and this one? If so, current
+					" tok is unnecessary.
+					if s:Contains_hlable(ti_last.pos, ti.pos, [0, 0])
+						break
+					endif
+				endif
+				" Current tok is needed, and becomes candidate for 'last tok'.
+				let ti_last = ti
+			endif
+			" Finish updating and add the current tok.
 			let ti.action = ''
 			" TODO: We could skip next iteration update if we know we're leaving
 			" loop (e.g. in eob case).
@@ -3066,14 +3080,15 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 			" Update for next iteration...
 			let sel_cmp_prev = sel_cmp
 		else
-			" No more tokens in range.
+			" No more tokens in range (and hit hlable or end of buffer before
+			" finding one past range).
 			" Special Case: If we hit end of buffer without even an hlable, add
 			" a special <eob> tok; what's special about this virtual tok is that
-			" it *always* supersedes. Actually, we could add <eob> regardless of
-			" hla and let cleanup check it.
+			" it *always* supersedes.
 			" TODO: Decide whether <eob> virtual tok should be handled specially
-			" (e.g., built entirely or not at all by Search_tok). Consider
-			" having separate object types...
+			" (e.g., built entirely or not at all by Search_tok). Could use a
+			" sentinel as simple as an empty object for <eob>. Also, consider
+			" changing the 'typ' field to a pair of flags: tok and hla.
 			if ti.typ == 'eob'
 				call add(toks, ti)
 			endif
