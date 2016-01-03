@@ -720,8 +720,7 @@ fu! s:Can_delete_tok()
 				let re_eoc = '[,;:]\%($\|\s\)'
 				if search(
 					\ '\%(' . re_lcc . '.\)\@<=\%(' . b:txtfmt_re_any_tok
-					\ . '\|\s\|' . re_eos . '\|' . re_eoc . '\)', 'W', tok_line
-					\ )
+					\ . '\|\s\|' . re_eos . '\|' . re_eoc . '\)', 'W', tok_line)
 					let ret_val = 1
 					" Restore cursor pos after successful search
 					normal! h
@@ -2369,13 +2368,13 @@ fu! s:Is_escaping_tok()
 			" TODO: Assuming the \%#=1 was for Vim bug workaround; confirm and
 			" document (also for Is_escaped_tok)...
 			return search('\%#=1\%#\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
-				\.'\\\\*[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
+				\.'\\\\*[' . b:txtfmt_re_any_tok_atom . ']', 'ncW')
 		else
 			" Are we on a tok preceded by even # (possibly 0) of itself, and
 			" followed by *any* # of itself (once again, odd/even simply
 			" determines whether the tok at end of seq is escaped).
 			return search('\%#=1\%#\([' . b:txtfmt_re_any_tok_atom . ']\)'
-				\.'\%(\%(^\|\1\@!.\)\1\%(\1\1\)*\)\@<=\1', 'nc')
+				\.'\%(\%(^\|\1\@!.\)\1\%(\1\1\)*\)\@<=\1', 'ncW')
 		endif
 	endif
 	" Can't be on an escaped tok if we're not even on a tok char.
@@ -2396,16 +2395,12 @@ fu! s:Is_escaped_tok()
 			" number of bslashes (possibly 0) terminated with any tok?
 			" Note: See note regarding even/odd distinction in Is_escaping_tok.
 			return search('\%#=1\%#\%(\%(^\|[^\\]\)\\\%(\\\\\)*\)\@<='
-				\.'\\*[' . b:txtfmt_re_any_tok_atom . ']', 'nc')
+				\.'\\*[' . b:txtfmt_re_any_tok_atom . ']', 'ncW')
 		else
 			" Differentiate between escape and escapee.
-			let re = '\%#=1\%#\([' . b:txtfmt_re_any_tok_atom
-				\. ']\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\%(\1\1\)*\1\)\)\@<='
-			let g:dbg = re
-			return search(re, 'nc')
 			" Are we on a tok preceded by odd # of itself?
-			return search('\%#=1\%#\([' . b:txtfmt_re_any_tok_atom . ']\)'
-				\.'\%(\%(^\|\1\@!.\)\%(\1\1\)\+\)\@<=', 'nc')
+			return search('\%#=1\%#\([' . b:txtfmt_re_any_tok_atom
+				\. ']\)\@=\%(\%(^\|\%(\1\)\@!.\)\%(\%(\1\1\)*\1\)\)\@<=', 'ncW')
 		endif
 	endif
 	" Can't be on an escaped tok if we're not even on a tok char.
@@ -2658,8 +2653,9 @@ fu! s:Is_empty(v)
 		return empty(a:v)
 	endif
 endfu
+" TODO: !!! UNUSED - REMOVE !!!
 fu! s:At_buf_end()
-	return !!search('\%#.\?\%$', 'nc')
+	return !!search('\%#.\?\%$', 'ncW')
 endfu
 
 " TODO: A couple of these may now be unnecessary.
@@ -2784,14 +2780,13 @@ fu! s:Contains_hlable(pos1, pos2, inc, ...)
 	" Generate the end of region constraint.
 	let zwa = s:Make_pos_zwa({'end': {'pos': a:pos2, 'inc': inc[1]}})
 	" Since cursor is positioned at start, inc[0] determines 'c' flag.
-	let re = s:Apply_zwa(zwa, hlable)
-	"echomsg "re: " . re . " at pos=" . string(getpos('.'))
 	" Note: Vim does not use line/col zwa's to constrain search - only match;
 	" thus, might make sense to abandon Make_pos_zwa and friends in favor of
-	" approach that uses stopline and a post-search line/col test. This
-	" approach should be just as fast though...
+	" approach that uses stopline and a post-search line/col test. Either way,
+	" need to use an actual stopline, rather than relying upon line/col
+	" constraints to short-circuit search.
 	let ret =
-		\!!search(s:Apply_zwa(zwa, hlable), 'n' . (inc[0] ? 'c' : ''),
+		\!!search(s:Apply_zwa(zwa, hlable), 'nW' . (inc[0] ? 'c' : ''),
 		\a:pos2[0])
 	" Restore cursor pos.
 	call cursor(savepos)
@@ -3755,7 +3750,7 @@ fu! s:Vmap_protect_bslash(opt)
 	endif
 	let [l, c] = [a:opt.rgn.beg[0], a:opt.rgn.beg[1]]
 	call cursor(l, c)
-	if !search('\%#' . b:re_no_bslash_esc, 'cn')
+	if !search('\%#' . b:re_no_bslash_esc, 'cnW')
 		" Unescaped bslash just before region. Is it now escaping something it
 		" shouldn't?
 		" Assumption: Bslash fixup prior to operation precludes possibility that
@@ -3772,7 +3767,7 @@ fu! s:Vmap_protect_bslash(opt)
 			" would preclude a match with b:txtfmt_re_any_tok.
 			" TODO: Consider adding regex vars for the character class (to
 			" obviate need for wrapping with [ ... ].
-			if search('\%#\\*[' . b:txtfmt_re_any_tok_atom . ']', 'cn')
+			if search('\%#\\*[' . b:txtfmt_re_any_tok_atom . ']', 'cnW')
 				" Escape the preceding bslash and adjust offsets.
 				normal! hi\
 				let a:opt.rgn.beg[1] += 1
