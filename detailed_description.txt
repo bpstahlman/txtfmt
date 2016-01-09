@@ -1,0 +1,219 @@
+USER FEEDBACK NEEDED: I would greatly appreciate feedback email: 
+brettstahlman AT gmail DOT com
+
+=== !!! IMPORTANT NOTE TO NEW USERS !!! ===
+The Txtfmt help file is large; for a quick (and gentle) introduction, please see the "QUICK-START TUTORIAL" further down on this page...
+
+=== SCREENSHOTS ===
+Check out the following link for screenshots showing Txtfmt used...
+    -as a standalone filetype for journal entries, notes, documents, etc...
+    -in conjunction with the .otl filetype used by Ned Konz' TVO (The Vim
+     Outliner) plugin
+    -to spruce up a circuit diagram created with the aid of Dr. Charles
+     Campbell's drawit plugin
+    -to spruce up comments in various programming languages
+
+    http://www.txtfmt.webs.com
+
+=== MOTIVATION ===
+Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are simply using Vim to edit text that doesn't fall into any particular language category: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
+
+=== OVERVIEW ===
+Txtfmt (The Vim Highlighter) is a combination syntax/filetype plugin that allows you to highlight plain text in Vim. The highlighting mechanism uses invisible tokens that are inserted into a Txtfmt buffer with the aid of easy to use mappings provided by the filetype plugin. Each token affects either the color or formatting of subsequent text. The plugin supports up to 8 configurable foreground colors, up to 8 configurable background colors, and all combinations of the following formatting attributes: bold, underline, italic, standout, reverse and undercurl.
+
+Nearly everything in this plugin is configurable, with defaults that should work for most users "right out of the box". The following is a *partial* list of things that can be configured:
+    mappings
+    colors
+    range of character codes used as highlighting tokens
+
+Everything is documented in an extensive Vim help file. Additionally, there is a "Quick-Start Tutorial" at the bottom of this page, designed to help you get up and running quickly with Txtfmt.
+
+=== USAGE EXAMPLE ===
+Suppose you wish to enter some green text...
+You execute one of Txtfmt's "insert-token" mappings and enter the following at the prompt:
+    cg
+(mnemonic: color green)
+Now, the text you type is green.
+
+While typing green text, you wish to emphasize a phrase by making it bold-italic. You execute another mapping and enter "fbi" or "fib" at the prompt.
+(mnemonic: format bold italic)
+Now, the text you type is green bold-italic.
+Note: Inserting the bold-italic token did not affect the text color, because the color and format regions are completely "orthogonal".
+
+Now you wish to switch to a blue background. Execute another mapping and enter "kb" at the prompt.
+(mnemonic: bac_k_ground blue)
+Now, the text you type is green bold-italic on a blue background. Notice that, as before, the preceding highight regions are unaffected by the start of the new one.
+
+At some point, you may wish to return to default (unhighlighted) text. You can terminate the 3 active regions by executing the insert-token mapping one last time and entering the following at the prompt:
+    c-,f-,k-
+(mnemonic: remove color, remove format, remove bac_k_ground color)
+Now, the text you type should be plain, unhighlighted text. Notice how multiple format/color specifiers can be concatenated in a comma-separated list, thereby reducing the number of times you have to execute the mapping.
+
+=== FEEDBACK ===
+I would greatly appreciate your feedback on this plugin. Contact me either at...
+
+brettstahlman AT comcast DOT net
+
+...or by posting to the Vim list with Txtfmt somewhere in the subject or body. 
+Also, please rate this plugin!
+
+=== SUGGESTED USES ===
+The following applications represent a few of the many possible uses of the Txtfmt plugin:
+    -For taking notes
+     (e.g., notes taken while reviewing large programming projects)
+    -As part of a personal journaling system
+    -For highlighting .otl files created with Ned Konz' TVO (The Vim Outliner)
+     plugin
+    -For highlighting files created with 'Notes' (Hari Krishna Dara's
+     lightweight note management plugin)
+    -For highlighting text files created with Yongping Guo's TxtBrowser plugin
+    -For beautifying block diagrams created with Dr. Charles Campbell's drawit
+     plugin
+    -For sprucing up programming language comments
+     Don't laugh! You can embed Txtfmt formatting regions within other syntax
+     regions (e.g., C comments)
+     :help txtfmt-'nested'
+    -etc. etc...
+Note: If you wish to make your formatted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
+
+
+====================
+QUICK-START TUTORIAL
+====================
+After you have installed the plugin, you may wish to generate a "test page", both to ensure that you have installed the plugin properly, and as a quick and easy way to create a Txtfmt buffer containing actual formatting regions that you can view and play around with. You may create a "test page" with default options by executing the MakeTestPage command at the command line:
+
+    :MakeTestPage<Enter>
+
+Be sure to scroll down and/or enlarge the window to view all sections. Although the primary purpose of the test page is to allow you to visualize the effects of a particular set of option values, the text of the page has been carefully chosen to give the new user an overview of some of the more important Txtfmt options. For information on how to use MakeTestPage to visualize different sets of options,
+
+    :help txtfmt-:MakeTestPage
+
+After you have viewed formatting regions in a test page, you will probably want to try creating your own formatting regions. The simplest way to begin is as follows:
+
+    :new<Enter>
+    :set ft=txtfmt<Enter>
+
+Assuming you have installed the plugin properly, you now have access to all the Txtfmt mappings for working with the special Txtfmt tokens discussed earlier. There are a large number of mappings provided for inserting and jumping to Txtfmt tokens. Note that while intuitive key-sequences are used by default, Txtfmt provides a way for you to customize the {lhs} of any or all mappings.
+
+For a detailed description of mapping customization,
+    :help txtfmt-map-config
+
+For a detailed description of the token insertion mappings,
+    :help txtfmt-ins-tok-maps
+
+For a detailed description of the jump-to-token mappings,
+    :help txtfmt-jump-to-tok
+
+To keep this "quick-start tutorial" quick, I'll demonstrate the use of only a few of the available mappings...
+
+In your newly-created Txtfmt buffer, execute the following normal mode command:
+    \i
+
+Note: The remainder of the tutorial assumes that your <LocalLeader> is at the default value (i.e., backslash). If you have set <LocalLeader> to something other than the default, replace the backslash in the examples with the appropriate character.
+    :help <LocalLeader>
+
+At this point, you will be presented with the following prompt:
+    Enter a fmt / clr string. (Enter to cancel):
+
+At the prompt, type the following string and hit <Enter>:
+    fbui
+
+Now, begin typing some text. The text should be highlighted with the bold, underline, and italic attributes. Note that the results would have been the same if you had typed fbiu, fibu, fubi, etc... As you have probably surmised, the letters 'b', 'u', and 'i' are flags indicating bold, underline, and italic, respectively. The leading 'f' indicates that the subsequent flags comprise a "format specification".
+    :help txtfmt-fmt-spec
+
+To terminate the underline, bold, italic region, execute the following keystroke sequence while still in insert mode:
+    <CTRL-\><CTRL-\>
+
+Hint: Hold the Control key down while hitting backslash twice in quick succession.
+
+Once again, you should be presented with the prompt asking for a fmt / clr string. This time, enter the following:
+    f-
+
+The dash character indicates "no format"; i.e., a return to the normal (unhighlighted) text. If you continue typing text, you will see that it no longer has any format attributes.
+
+Now let's see what happens when we bring color into the mix... If you're still in insert mode, hit <Esc> to return to normal mode. Now execute the following normal mode command to insert a token on the line below:
+    \o
+
+At the resulting prompt, enter the following:
+    cblue
+
+The 'c' is analogous to the 'f' in the preceding "format specifications"; it
+indicates that the following text is a "color specification".
+    :help txtfmt-clr-spec
+
+Since in this case the color specified is "blue", the text you type after hitting <Enter> will be blue. Although I specified the color as "blue", I could just as well have abbreviated it to "b". As discussed in the Txtfmt help, color names are actually defined as regular expression patterns. The default patterns permit you to abbreviate color names to uniqueness. In practice, this means that for all colors but black, you needn't specify more than the first letter of the color name. (The single letter abbreviation for black is 'k', which permits it to be disambiguated with blue.) Txtfmt provides you with 8 distinct colors, each with its own default color name pattern and RGB value. You can view these definitions with the :ShowTokenMap command. Go ahead and try it now... After hitting <Esc> to return to normal mode, execute the following at the command line:
+    :ShowTokenMap<Enter>
+    
+You may have to page down to see all of the output. The first section shows foreground color definitions, and the last section shows similar definitions for background colors. If you are not happy with either the color name or the RGB value of any of the 8 default colors, Txtfmt provides a very flexible mechanism for overriding the defaults with your own color preferences. The details may be found in the help, but if you're short on time, here's a quick example that shows how easy it is...
+Note: You don't need to try this now.
+
+Suppose the GUI's default red color (RGB: #FF0000) is too bright for your eyes. You wish to replace this color with a dark brown (RGB: #804000). You see from the output of :ShowTokenMap that red corresponds to index 5 in the default color array. Thus, you could make the desired change by overriding txtfmtColor{5} with the following line in your .vimrc:
+    :let txtfmtColor5='^br\\%[own]$,c:DarkRed,g:#804000'
+
+With this definition, you could specify the new color with the abbreviation "br". Of course, you would no longer be able to use the color red in the GUI, and any red highlighting in your existing file(s) would change to dark brown when viewed in the GUI. (Since the "c:DarkRed" is unchanged, color #5 will still be red in a color terminal.)
+    :help txtfmt-color-config
+    :help txtfmt-:ShowTokenMap
+
+Now suppose you wish to continue typing blue text, but would like the text you are about to type to have the bold and italic attributes as well. Assuming you are in normal mode, hit \a to bring up the familiar prompt. (Note that \a differs from \i in that the former will insert the Txtfmt token(s) *after* the cursor location instead of before it.) Now enter the following at the prompt:
+    fbi
+
+The text you type after hitting <Enter> will be blue, bold-italic. Notice that it wasn't necessary to do anything special to ensure that the bold-italic text would also be blue. It is blue because the effects of the "blue" foreground color token you entered earlier are not affected in any way by the introduction of a format token. This behavior is a direct consequence of the orthogonality of Txtfmt's various token types. A format token supercedes the preceding format token, but has no effect upon any preceding color regions. Similarly, a foreground color token supercedes the preceding foreground color token, but has no effect upon any preceding format or background color regions.
+
+Important Note: The fact that format/color tokens "supercede" preceding tokens of the same type means that the "no format"/"no color" tokens are required only when you wish to turn off format or colors completely for subsequent text. To change from one format to another format, or from one color to another color, simply insert the token for the new region.
+
+To verify that we can supercede the blue foreground color token entered earlier, let's enter a red foreground color token by hitting <CTRL-\><CTRL-\> once more (still in insert mode) and entering the following at the prompt:
+    cr
+
+Observe that the text you type after hitting <Enter> still possesses the bold-italic attribute, though its color is red.
+Note: You may have noticed that I used the convenient single letter abbreviation for "red". I will use such abbreviations exclusively for the remainder of the tutorial.
+
+Up until now, you have been applying colors only to text; i.e., you have been working exclusively with foreground colors. Txtfmt 2.0 introduced support for background colors as well. For performance reasons, the default configuration enables only 4 background colors: red, green, blue and yellow. It is quite easy, however, to tailor the set of colors enabled via independent foreground and background color mask options.
+    :help txtfmt-'fgcolormask'
+    :help txtfmt-'bgcolormask'
+
+You insert a background color token just as you would a foreground color token, except that the character introducing the color spec is 'k' instead of 'c' (since 'c' was already taken, and the word "background" contains a 'k'). You can try it out by hitting <CTRL-\><CTRL-\> (still in insert mode) and entering the following at the prompt:
+    kb
+
+Hit <Enter> and type some text. As you might expect, the text you type now is red bold-italic on a blue background.
+
+To revert to default format and color, hit <CTRL-\><CTRL-\> and enter the following at the prompt:
+    f-,c-,k-
+
+You may recognize the "f-" as the special "no format" token we inserted earlier to end the first format region we created. Similarly, the "c-" and "k-" are the special "no fg color" and "no bg color" tokens, respectively . Note that it was not necessary to enter these three tokens with separate mappings and separate prompts. We simply concatenated the token specs together, separating them with a comma. This is an example of a format/color specification list.
+    :help txtfmt-fmt-clr-spec-list
+
+Note that such lists may contain any number of format/color specifications. Ordinarily, the cursor will be left at the end of the sequence of tokens inserted via such a list. You can, however, specify a different cursor position by replacing one of the commas in the list with a single dot ('.'). This is actually a very useful feature. Recall that in our previous example, we inserted the "no format" and "no color" tokens used to terminate our format/color regions only after we had finished typing all the text within them. In the common case, however, you know when you begin a region that you will eventually want to end it. Thus, you can save yourself a mapping invocation by entering both the start and end tokens at the same prompt.
+
+To see how it works, hit <Esc> to return to normal mode, then hit \o and enter the following at the prompt:
+    cr,fi.c-,f-
+
+This format/color specification list comprises both the start and end tokens for a red, italic region. The advantage of using a dot to separate the "italic" format spec from the "no color" spec is that it allows you to begin typing red, italic text immediately after hitting <Enter>. (Go ahead and type a bit of text...) If a comma had been used instead, the cursor would have ended up after the "no format" token, which means you would have had to move the cursor back 2 character positions to get it inside the region before beginning to type the formatted text.
+
+Now suppose after typing some red, italic text, you decide that green, underline would have been a better choice. The change is accomplished fairly easily, and will give us an opportunity to introduce the "jump-to-token" mappings...
+
+After hitting <Esc> to return to normal mode, Execute the following "jump-to-token" command:
+    [c
+
+This command positions the cursor on the previous color token (i.e., the red color token beginning the region). Note that there are many variations of the jump-to-token commands: the one to use depends upon desired search direction, the type of token sought, whether you wish to land "on" or "next to" the sought token, etc...
+    :help txtfmt-jump-to-tok
+
+IMPORTANT NOTE: As of Vim 7.3, the default configuration causes tokens to disappear completely as soon as they are inserted. The "jump-to-token" maps provide the best way to locate hidden tokens (for example, when you wish to remove one). If you prefer that tokens remain visible as long as the cursor is in their line, you can add the `i' and `n' flags to the txtfmt-'concealcursor' option.
+    :help txtfmt-'concealcursor'
+
+Now type the following (still in normal mode):
+    2\s
+
+This is the "substitute" variant of the insert-token command. The numeric argument indicates that we wish to replace 2 characters at the cursor (i.e., the red color and italic format tokens) with the tokens we are about to specify at the prompt:
+    fu,cg
+
+Upon hitting <Enter>, you should observe that the red, italic text has changed to green, underline.
+
+You may have noticed a similarity between several of the normal mode insert-token mappings used above and the native Vim normal mode commands for entering insert mode. This similarity was not by chance, but by design. In addition to the \i, \a, \o, and \s commands that were demonstrated above, Txtfmt also provides the following:
+    \I, \O, \A
+
+Although all these commands are described in the help, a regular Vim user can easily intuit where they will insert the Txtfmt tokens relative to the cursor, by analogy with the corresponding enter insert mode commands.
+
+Also note that if you insert a 'v' between the backslash and the subsequent character (e.g., \vI), Txtfmt will exit insert mode after inserting the Txtfmt tokens. This is useful when you are simply highlighting existing text.
+
+This concludes the tutorial. No attempt was made to discuss all of the many Txtfmt options. Detailed information on all options may be found in the Txtfmt help file.
+    :help txtfmt
