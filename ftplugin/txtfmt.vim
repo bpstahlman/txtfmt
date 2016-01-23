@@ -2175,7 +2175,8 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			let spec = substitute(spec, '\s\+', '', 'g')
 			if empty(spec)
 				" TODO: Decide on this, noting that `f' is actually a
-				" degenerate form that means add/remove nothing. Allow it?
+				" degenerate (and arguably ambiguous) form that means add/remove
+				" nothing. Allow it?
 				throw "Parse_fmt_clr_transformer: empty fmt specs not permitted"
 			elseif spec == '-' || spec == '='
 				" f- special case: return to default (mask all attributes)
@@ -2191,8 +2192,9 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				let re_set = '^=[ubisrc]*$'
 				" Design Decision: Defer checks for fmt tok active status till
 				" overall form has been validated.
-				" Assumption: This regex allows completely empty spec; if
-				" check necessary, perform elsewhere.
+				" Assumption: This regex allows completely empty spec;
+				" currently, that case is caught by the earlier empty(spec)
+				" test.
 				let re_add = '^+\?\([ubisrc]*\)\(-\([ubisrc]*\)\)\?$'
 				if spec =~ re_set
 					let add = spec[1:]
@@ -2205,14 +2207,11 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				else
 					throw "Invalid fmt transformer spec: `f" . spec . "'"
 				endif
-				" Design Decision: Either add or sub can be empty, but not
-				" both.
-				" TODO: Now that I check for empty above, consider removing
-				" this: e.g., allow something like `f+-' but not `f'
-				if empty(add) && empty(sub)
-					throw "Parse_fmt_clr_transformer: useless fmt specs not permitted"
-				endif
-				" Add to list to facilitate processing.
+				" Decision: Permit add and/or sub to be empty.
+				" Rationale: Something like f+- is pointless, but not ambiguous.
+				" Add to list to facilitate processing. Could short-circuit the
+				" loop processing, but no need to optimize for such an unusual
+				" use-case.
 				let cmasks = additive ? [add, sub] : [add]
 				let mask_prev = 0
 				let masks = []
@@ -3214,7 +3213,7 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 	if a:t_a.typ == 'eob'
 		echomsg "FIXME!!!!"
 		return 1
-	else if a:t_b.typ == 'eob'
+	elseif a:t_b.typ == 'eob'
 		echomsg "FIXME!!!!"
 		return -1
 	endif
