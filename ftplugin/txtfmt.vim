@@ -288,7 +288,9 @@ fu! s:Insert_tokstr(tokstr, cmd, literal, end_in_norm, ...)
 			" Strip surrounding whitespace, which is ignored.
 			" Note: Only surrounding whitespace is ignored! Whitespace not
 			" permitted within fmt/clr spec list.
-			let tokstr = substitute(tokstr, '^\s*\(.\{-}\)\s*$', '\1', 'g')
+			" AUTO_MAPS TODO: Revisit this: I permit freer format in auto map
+			" specs.
+			let tokstr = TxtfmtUtil_strip(tokstr)
 			" Check for Cancel request
 			if tokstr == ''
 				" Note that nothing about position or mode has changed at this point
@@ -1771,14 +1773,15 @@ endfu
 " Purpose: Convert the input fmt/clr spec string to the corresponding fmt/clr
 " token.
 " How: The input fmt/clr spec string will be in one of the following formats:
-" "f-"
-" "c-"
-" "k-"                      if background colors are active
-" "f[u][b][i][[s][r][[c]]]" Note that s, r and c values must be disallowed for
-"                           certain permutations of b:txtfmt_cfg_longformats
-"                           and b:txtfmt_cfg_undercurl
-" "c<clr_patt>"
-" "k<clr_patt>"             if background colors are active
+" f-
+" c-
+" k-                       if background colors are active
+" Change Note: As of version introducing auto maps, the `-' is now optional.
+" f[u][b][i][[s][r][[c]]]  Note that s, r and c values must be disallowed for
+"                          certain permutations of b:txtfmt_cfg_longformats and
+"                          b:txtfmt_cfg_undercurl
+" c<clr_patt>
+" k<clr_patt>             if background colors are active
 " Note: <clr_patt> must match one of the color definitions specified by user
 " (or default if user hasn't overriden).
 " Note: Specification of an inactive color is considered to be an error.
@@ -1792,120 +1795,104 @@ endfu
 " string offset bracket notation (s[i]) allow indices past end of string, in
 " which case, they return empty strings.
 fu! s:Translate_fmt_clr_spec(s)
-	" Declare modifiable version of input parameter
-	let s = a:s
-	" Check for empty string (all whitespace considered empty string, as it
-	" should have been detected as 'Cancel' request by caller).
-	if s =~ '^\s*$'
-		" Caller should validate this, but just in case
-		let s:err_str = "Empty fmt/clr spec"
+	let s = TxtfmtUtil_strip(a:s)
+	if empty(s)
+		let s:err_str = "Empty component in fmt/clr spec"
 		return ''
 	endif
-	let len = strlen(s)
-	let ret_str = ''
-	if s[0] ==? 'f'
-		" fmt string
-		if s[1] == '-'
-			if strlen(s) == 2
-				" default format
-				let ret_str = ret_str.nr2char(b:txtfmt_fmt_first_tok)
-			else
-				" Shouldn't be anything after f-
-				let s:err_str = 'Unexpected chars after "f-"'
-				return ''
-			endif
-		else
-			" Not a default fmt request - remainder of string should match
-			" [ubi[sr[c]]]
-			let s = strpart(s, 1)
-			if s =~ '[^'.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']'
-				" s contains illegal (but not necessarily invalid) char
-				if s !~ '[^ubisrc]'
-					" Illegal (but not invalid) char
-					" User has mistakenly used s, r or c with one of the
-					" 'short' formats or c with a version of Vim that doesn't
-					" support undercurl. Give an appropriate warning.
-					if !b:txtfmt_cfg_longformats
-						let s:err_str = "Only 'u', 'b' and 'i' attributes are permitted when one of the 'short' formats is in effect"
-					else
-						" Long formats are in use; hence, we can get here only
-						" if user attempted to use undercurl in version of Vim
-						" that doesn't support it.
-						let s:err_str = "Undercurl attribute supported only in Vim 7 or later"
-					endif
-				else
-					let s:err_str = 'Invalid chars in fmt spec after "f"'
-				endif
-				return ''
-			else
-				" Convert the entered chars to a binary val used to get token
-				" Note: Validation has already been performed; hence, we know
-				" that s represents both a valid and active token.
-				let bin_val = 0
-				if s=~'u' | let bin_val = bin_val + 1 | endif
-				if s=~'b' | let bin_val = bin_val + 2 | endif
-				if s=~'i' | let bin_val = bin_val + 4 | endif
-				if s=~'s' | let bin_val = bin_val + 8  | endif
-				if s=~'r' | let bin_val = bin_val + 16 | endif
-				if s=~'c' | let bin_val = bin_val + 32 | endif
-				let ret_str = ret_str.nr2char(b:txtfmt_fmt_first_tok + bin_val)
-			endif
-		endif
-	elseif s[0] ==? 'c' || s[0] ==? 'k'
-		if s[0] ==? 'k' && !b:txtfmt_cfg_bgcolor
+	" Split into type and spec, discarding any whitespace uncovered by removal
+	" of type.
+	let [t, s] = [s[0], TxtfmtUtil_lstrip(s[1:])]
+	" Ensure valid component type.
+	if t !~? '[fc' . (b:txtfmt_cfg_bgcolor ? 'k' : '') . ']'
+		if t ==? 'k'
 			" Oops! Background colors aren't active.
 			let s:err_str = "The current 'tokrange' setting does not support background colors."
-						\." (:help txtfmt-formats)"
-			return ''
-		endif
-		" clr or bgc string
-		if s[1] == '-'
-			if strlen(s) == 2
-				" default format
-				let ret_str = ret_str.nr2char(
-							\ s[0] ==? 'c'
-								\ ? b:txtfmt_clr_first_tok
-								\ : b:txtfmt_bgc_first_tok
-				\)
-			else
-				" Shouldn't be anything after c- or k-
-				let s:err_str = 'Unexpected chars after "'.s[0].'-"'
-				return ''
-			endif
+				\." (:help txtfmt-formats)"
 		else
-			" Not a default clr/bgc request - remainder of string denotes a
-			" color
-			let typ = s[0]
-			let s = strpart(s, 1)
-			" Determine which color index corresponds to color pattern
-			let clr_ind = s:Lookup_clr_namepat(typ, s)
-			if clr_ind == 0
-				let s:err_str = "Invalid color name pattern: '".s."'"
-				return ''
-			elseif clr_ind < 0
-				" TODO_BG: Make sure the help note below is still valid after
-				" help has been updated.
-				let s:err_str = "Color ".(-1 * clr_ind)." is not an active "
-							\.(typ ==? 'c' ? "foreground" : "background")
-							\." color. (:help "
-							\.(typ ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
-				return ''
-			endif
-			" IMPORTANT NOTE: clr_ind is 1-based index (1 corresponds to first
-			" non-default color)
-			let ret_str = ret_str.nr2char(
-						\(typ ==? 'c'
-							\ ? b:txtfmt_clr_first_tok
-							\ : b:txtfmt_bgc_first_tok)
-						\ + clr_ind)
+			let s:err_str = 'Invalid fmt/clr spec. Must begin with '
+				\.(b:txtfmt_cfg_bgcolor ? '"f", "c" or "k"' : '"f" or "c"')
 		endif
-	else
-		let s:err_str = 'Invalid fmt/clr spec. Must begin with '
-			\.(b:txtfmt_cfg_bgcolor ? '"f", "c" or "k"' : '"f" or "c"')
 		return ''
 	endif
-	" Return the token as a string
-	return ret_str
+	" Check for default (no fmt/clr)
+	" Design Decision: As of version introducing auto maps, treat (e.g.) f- and
+	" f identically.
+	if s[0] == '' || s[0] == '-'
+		" Maybe valid default; make sure nothing follows a `-'.
+		if empty(s[1])
+			" valid default format
+			return nr2char(
+				\b:txtfmt_{b:txtfmt_rgn_typ_abbrevs[t]}_first_tok)
+
+		else
+			" Shouldn't be anything after [fck]-
+			let s:err_str = 'Unexpected chars after "' . t . '-"'
+			return ''
+		endif
+	endif
+	" We have a non-default (but not necessarily valid) spec.
+	if t ==? 'f'
+		" fmt string
+		" Design Decision: As of version introducing auto maps, ignore all
+		" whitespace in fmt spec.
+		let s = substitute(s, '\s\+', '', 'g')
+		" Since not default fmt request, spec must match [ubi[sr[c]]]
+		if s =~ '[^'.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']'
+			" s contains illegal (but not necessarily invalid) char
+			if s !~ '[^ubisrc]'
+				" Illegal (but not invalid) char
+				" User has mistakenly used s, r or c with one of the
+				" 'short' formats or c with a version of Vim that doesn't
+				" support undercurl. Give an appropriate warning.
+				if !b:txtfmt_cfg_longformats
+					let s:err_str = "Only 'u', 'b' and 'i' attributes are permitted when one of the 'short' formats is in effect"
+				else
+					" Long formats are in use; hence, we can get here only
+					" if user attempted to use undercurl in version of Vim
+					" that doesn't support it.
+					let s:err_str = "Undercurl attribute supported only in Vim 7 or later"
+				endif
+			else
+				let s:err_str = 'Invalid chars in fmt spec after "f"'
+			endif
+			return ''
+		else
+			" Spec contains only legal (active) and valid fmt attrs.
+			" Convert the attr chars to a binary val used to get token.
+			" TODO: Perhaps use Vim's or() function now that it's available.
+			let bin_val = 0
+			if s=~'u' | let bin_val = bin_val + 1 | endif
+			if s=~'b' | let bin_val = bin_val + 2 | endif
+			if s=~'i' | let bin_val = bin_val + 4 | endif
+			if s=~'s' | let bin_val = bin_val + 8  | endif
+			if s=~'r' | let bin_val = bin_val + 16 | endif
+			if s=~'c' | let bin_val = bin_val + 32 | endif
+			return nr2char(b:txtfmt_fmt_first_tok + bin_val)
+		endif
+	elseif t ==? 'c' || t ==? 'k'
+		" Assumption: Type has already been validated.
+		" clr or bgc string
+		" Since not default fmt request, spec must match color pattern.
+		" Determine which color index corresponds to color pattern.
+		let clr_ind = s:Lookup_clr_namepat(t, s)
+		if clr_ind == 0
+			let s:err_str = "Invalid color name pattern: '".s."'"
+			return ''
+		elseif clr_ind < 0
+			" TODO_BG: Make sure the help note below is still valid after
+			" help has been updated.
+			let s:err_str = "Color ".(-1 * clr_ind)." is not an active "
+				\.(t ==? 'c' ? "foreground" : "background")
+				\." color. (:help "
+				\.(t ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
+			return ''
+		endif
+		" IMPORTANT NOTE: clr_ind is 1-based index (1 corresponds to first
+		" non-default color)
+		return nr2char(
+			\clr_ind + b:txtfmt_{b:txtfmt_rgn_typ_abbrevs[t]}_first_tok)
+	endif
 endfu
 " >>>
 " Function: s:Translate_fmt_clr_list() <<<
@@ -1938,6 +1925,7 @@ fu! s:Translate_fmt_clr_list(s)
 		" (Commas and dots not allowed except as field sep)
 		" NOTE: Match with '$' returns strlen (even for empty string)
 		let ie = match(s, '[,.]\|$', i)
+		echomsg "ie=" . ie
 		" Extract field sep and text
 		let sep = ie<len ? s[ie] : ''
 		" TODO - See about consolidating the if's below...
@@ -2023,6 +2011,7 @@ fu! s:Translate_fmt_clr_list(s)
 		" >>>
 	endwhile
 	" Return the special format string
+	echomsg "Special string: " . offset.','.tokstr
 	return offset.','.tokstr
 endfu
 " >>>
@@ -2101,18 +2090,27 @@ endfu
 "   Same as previous (+ is the default).
 " fub-is
 "   Add bold-underline, remove italic-standout
+" fub-isb
+"   Add underline, remove italic-standout-bold
+"   Explanation: When same attr is given more than once, all but last ignored
 " f-ubi
 "   Remove bold-underline-italic
+" fb-i+u-s
+"   Add bold-underline, remove italic-standout
+" f+b-i+u-s
+"   Same as previous
 " f-
-"   Special Case: Remove all formats
-" f=
-"   Same as f- (and not even really a special case)
+"   NOP (literally, remove nothing)
 " f=ubi
 "   Set formats to exactly bold-underline-italic
+" f=
+"   Clear formatting (literally, set to empty fmt attrs)
 " cr
 "   Set fg color to red
-" k-
+" k
 "   Remove bg color
+" k-
+"   Same as previous (this was actually the only way pre-vmap Txtfmt)
 " Output Format:
 " {
 "   fmt:
@@ -2125,21 +2123,136 @@ endfu
 "   clr: 0-{max-active-clr-num}
 "   bgc: 0-{max-active-bgc-num}
 " }
-" Note: In masks, 0 means `-'; in color numbers, -1 means `-' (both by
-" convention, and naturally, since its 2's complement is an all 1's mask).
-" TODO: I believe the concept of 'mask' no longer applies - remove above note.
-" TODO: Rework the exception messages.
-" TODO: Perhaps move these strip methods into TxtfmtUtil_...
+" Note: The value 0 in an additive mode fmt mask is a NOP. In non-additive
+" (prescriptive) mode, it clears existing fmts. For colors, 0 means 'no color'.
 fu! s:Parse_fmt_clr_transformer(specs)
-	fu! l:strip(s)
-		return substitute(a:s, '^\s\+\|\s\+$', '', 'g')
-	endfu
-	fu! l:lstrip(s)
-		return substitute(a:s, '^\s\+', '', '')
-	endfu
+	" ALPHA_TODO: Defer decision on a few aspects of format, possibly till
+	" feedback from alpha users received..
+	let cfg = {'allow_empty': 0, 'allow_override': 0, 'strict_fmts': 0, 'dash_special': 0}
 	" Initalize return object.
 	let ret = {}
-	let specs = l:strip(a:specs)
+	let specs = TxtfmtUtil_strip(a:specs)
+	if empty(specs)
+		" Effectively empty spec. Return NOP object.
+		return ret
+	endif
+	" Split the comma-separated f/c/k components
+	" Note: Docs forbid both commas and whitespace in color names, and we're
+	" going to ignore them in fmt specs.
+	" Design Decision: Keepempty won't get empties at head or tail because we've
+	" already stripped; it will, however, allow us to detect empty components.
+	let fcks = split(specs, '\s*,\s*', 1)
+	" Loop over the f/c/k components
+	for spec in fcks
+		if empty(spec)
+			if cfg.allow_empty
+				continue
+			else
+				throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
+			endif
+		endif
+		" Extract token type and remainder of spec
+		let [t, spec] = [spec[0], spec[1:]]
+		" Validate the type
+		if t !~ '[fck]'
+			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
+		endif
+		if has_key(ret, b:txtfmt_rgn_typ_abbrevs[t])
+			" We've already processed a component of this type.
+			if cfg.allow_override
+				call remove(ret, b:txtfmt_rgn_typ_abbrevs[t])
+			else
+				throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
+			endif
+		endif
+		" Discard any whitespace between type and subsequent spec. (Necessary to
+		" ensure spec itself is 'stripped'.)
+		let spec = TxtfmtUtil_lstrip(spec)
+		" Switch on type
+		if t == 'f'
+			" ALPHA_TODO: Should we treat f- as special case meaning clear
+			" formats, or keep things logical (i.e., remove nothing)? For now,
+			" let cfg object decide.
+			" Note: Special case '+' could just as well be handled in loop, as
+			" could '-' when dash not special, but why not short-circuit here?
+			if empty(spec) || spec == '+' || (!cfg.dash_special && spec == '-')
+				" No change
+				let ret.fmt = [0, 0]
+			elseif spec == '=' || (cfg.dash_special && spec == '-')
+				" Clear all fmt attrs
+				let ret.fmt = 0
+			else
+				" Note: Special cases have all been handled.
+				" Design Decision: Discard spaces (even interior), which have no
+				" meaning in fmt specs.
+				let spec = substitute(spec, '\s\+', '', 'g')
+				" Additive or prescriptive mode?
+				let additive = spec[0] != '='
+				let attrs = additive ? spec : spec[1:]
+				" Validate form of the fmt attr list.
+				" Assumption: attrs cannot be simply `-' at this point.
+				if additive && cfg.strict_fmts && attrs !~ '^+\?\([ubisrc]*\)\(-\([ubisrc]*\)\)\?$'
+					\ || attrs =~ '[^' . (additive ? '-+' : '') . b:ubisrc_fmt{b:txtfmt_num_formats-1} . ']'
+					throw "Invalid fmt transformer spec: `f" . spec . "'"
+				endif
+				" Initialize mask(s) to be built in loop.
+				let masks = additive ? {'+': 0, '-': 0}  : {'=': 0}
+				" Initialize default (or only) op.
+				let op = additive ? '+' : '='
+				" Loop over individual chars.
+				for atom in split(attrs, '\zs')
+					if atom == '+'
+						let op = '+'
+					elseif atom == '-'
+						let op = '-'
+					else
+						" Check for ambiguity.
+						if additive && and(masks[op == '+' ? '-' : '+'], s:ubisrc_mask[atom])
+							throw "Ambiguous use of fmt attr " . atom . " in both add/sub parts of spec: `f" . spec . "'"
+						endif
+						let masks[op] = or(masks[op], s:ubisrc_mask[atom])
+					endif
+				endfor
+				if additive
+					" Save list of add/sub masks.
+					let ret.fmt = [masks['+'], masks['-']]
+				else
+					" Save scalar 'set' mask
+					let ret.fmt = masks['=']
+				endif
+			endif
+		elseif t == 'c' || t == 'k'
+			" Note: Unlike fmts, dash is always special for colors.
+			" Rationale: Out of respect for legacy usage, coupled with fact that
+			" there is no other meaning for `-' in color context.
+			if empty(spec) || spec == '-'
+				" Return to default.
+				let clr_num = 0
+			else
+				let clr_num = s:Lookup_clr_namepat(t, spec)
+				if clr_num <= 0
+					if clr_num == 0
+						throw "Invalid color name pattern in fmt/clr transformer spec: `" . spec . "'"
+					else
+						throw "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . spec . "'"
+					endif
+				endif
+			endif
+			let ret[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
+		else
+			throw "Invalid type specifier in fmt/clr transformer spec: " . t
+		endif
+	endfor
+	return ret
+endfu
+
+" This version enforced the simpler (Perl regex flag style) format for the fmt
+" spec: i.e., fxxx-xxx with f- by itself meaning clear formats.
+" TODO: Remove after commit, perhaps moving to 'code graveyard' first.
+fu! s:Parse_fmt_clr_transformer_obsolete(specs)
+	" Initalize return object.
+	let ret = {}
+	let specs = TxtfmtUtil_strip(a:specs)
 	if empty(specs)
 		" Effectively empty spec.
 		return ret
@@ -2151,7 +2264,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	endif
 	" Loop over the f/c/k components
 	for spec in fcks
-		let spec = l:strip(spec)
+		let spec = TxtfmtUtil_strip(spec)
 		if empty(spec)
 			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
 		endif
@@ -2161,7 +2274,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 		if tt !~ '[fck]'
 			throw "Invalid type specifier in fmt/clr transformer spec: `" . tt . "'"
 		endif
-		let spec = l:lstrip(spec)
+		let spec = TxtfmtUtil_lstrip(spec)
 		if empty(spec)
 			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc specs not permitted"
 		endif
@@ -4526,7 +4639,7 @@ fu! s:ShowTokenMap()
 				endif
 			else
 				" Output line
-				let line = line.(col1_text.s:MakeString(' ', cw1 + 2 - strlen(col1_text)))
+				let line = line . (col1_text.s:MakeString(' ', cw1 + 2 - strlen(col1_text)))
 			endif
 			" Column 2
 			if iFmt == -1

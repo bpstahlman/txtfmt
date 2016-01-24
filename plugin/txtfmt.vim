@@ -210,6 +210,9 @@ let b:txtfmt_const_tokrange_limit_{'u'} = 0xFFFF
 " are permitted.
 let b:txtfmt_re_number_atom = '\([1-9]\d*\|0x\x\+\)'
 
+" Map the single-char fmt spec types to their 3-char equivalents.
+let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc'}
+
 " >>>
 " General utility functions <<<
 " Function: s:Repeat() <<<
@@ -2562,6 +2565,16 @@ fu! TxtfmtUtil_num_to_hex_str(num)
 	" Prepend '0x' to hex string built in loop
 	" Note: If string is empty, it should be '0'
 	return '0x' . (strlen(str) == 0 ? '0' : str)
+endfu
+" >>>
+" Function: TxtfmtUtil_strip <<<
+fu! TxtfmtUtil_strip(s)
+	return substitute(a:s, '^\s\+\|\s\+$', '', 'g')
+endfu
+" >>>
+" Function: TxtfmtUtil_lstrip <<<
+fu! TxtfmtUtil_lstrip(s)
+	return substitute(a:s, '^\s\+', '', '')
 endfu
 " >>>
 " >>>
