@@ -402,7 +402,7 @@ fu! s:Insert_tokstr(tokstr, cmd, literal, end_in_norm, ...)
 		exe 'normal! '.l:count.a:cmd."\<C-R>\<C-R>=l:tokstr\<CR>"
 		"IMPORTANT: Return empty string so that default return of 0 is not
 		"inserted by the "<C-R>=" used to invoke this function from insert
-		"mode !
+		"mode!
 		return ''
 	else
 		" Return the token string to be inserted via expression register
@@ -1247,7 +1247,6 @@ fu! Cleanup_tokens_working(startline, stopline)
 					" End tok preceded by end tok. The second one is unnecessary.
 					" Delete it.
 					let del_line = tok_line | let del_col = tok_col
-					echomsg "Deleting 2nd of 2 etoks"
 					if hlable
 						" The first etok can never be deleted now
 						" Note: No need to save ptok to pptok since we're not
@@ -1258,7 +1257,6 @@ fu! Cleanup_tokens_working(startline, stopline)
 				elseif tok =~ re_stok && ptok =~ re_etok
 					" Start tok preceded by end tok
 					if hlable
-						echomsg "etok not useless"
 						" End tok can never be deleted now but start tok
 						" eventually could be, so save end tok
 						let pptok = ptok
@@ -1267,7 +1265,6 @@ fu! Cleanup_tokens_working(startline, stopline)
 						let ptok_line = tok_line
 						let ptok_col = tok_col
 					else
-						echomsg "Deleting useless etok"
 						" Delete the useless etok
 						call cursor(ptok_line, ptok_col)
 						let len = s:Delete_cur_char()
@@ -1925,7 +1922,6 @@ fu! s:Translate_fmt_clr_list(s)
 		" (Commas and dots not allowed except as field sep)
 		" NOTE: Match with '$' returns strlen (even for empty string)
 		let ie = match(s, '[,.]\|$', i)
-		echomsg "ie=" . ie
 		" Extract field sep and text
 		let sep = ie<len ? s[ie] : ''
 		" TODO - See about consolidating the if's below...
@@ -2011,7 +2007,6 @@ fu! s:Translate_fmt_clr_list(s)
 		" >>>
 	endwhile
 	" Return the special format string
-	echomsg "Special string: " . offset.','.tokstr
 	return offset.','.tokstr
 endfu
 " >>>
@@ -3033,7 +3028,6 @@ fu! s:Vmap_sync_start(rgn, opt)
 		" TODO: Change some of the syncing constraint stuff now that the zwa's
 		" are no longer used...
 		let ti = s:Search_tok(a:rgn, 'b', stopline_beg)
-		echomsg "Syncing... ti = " . string(ti)
 		if ti.typ != 'tok'
 			" Couldn't find ss safe tok within stop distance.
 			break
@@ -3112,7 +3106,6 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 	while 1
 		" Look for next tok (or hla) within stopline range (not necessarily in vsel)
 		let ti = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stopline)
-		echomsg "Searched with allow_cmatch=" allow_cmatch . " and stopline=" . a:sync_info.stopline . ", found: " . string(ti)
 		let allow_cmatch = 0
 		" TODO: Consider using different test for <eob>.
 		let sel_cmp = ti.typ != 'tok'
@@ -3324,10 +3317,10 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 	" be doing anything with them after the merge.
 	" For now, just make sure we don't blow up...
 	if a:t_a.typ == 'eob'
-		echomsg "FIXME!!!!"
+		"echomsg "FIXME!!!! Internal Error"
 		return 1
 	elseif a:t_b.typ == 'eob'
-		echomsg "FIXME!!!!"
+		"echomsg "FIXME!!!! Internal Error""
 		return -1
 	endif
 	let cmp = s:Vmap_cmp_pos(a:t_a.pos, a:t_b.pos)
@@ -3659,14 +3652,14 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to remove, keep head or tail.
 
 		" Special <eob> tok can supersede, but can't be redundant.
-		echomsg "Processing ti = " . string(ti)
+		"echomsg "Processing ti = " . string(ti)
 		" TODO: Perhaps add a tok/non-tok indicator instead... Or a "virtual" flag.
 		if ti.typ == 'tok'
 			" Perform 1st redundancy check using tip if it exists, else ti_safe.
 			" Design Decision: When both superseding and redundant toks exist,
 			" prefer to delete redundant.
 			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
-				echomsg "Removing in 1st red test: " . string(ti)
+				"echomsg "Removing in 1st red test: " . string(ti)
 				let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 				let idx += 1
 				" Note: Leave tip unchanged, but don't make safe.
@@ -3685,13 +3678,13 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 		" TODO: Do we need to test tip.flags or anything else?
 		if !empty(tip)
 			" Need check for supersedence.
-			echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
+			"echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
 			" TODO: No longer considering tip means I should probably just move
 			" away from the aggressive cleanup altogether...
 			" Caveat: ti.typ == 'eob' implies no actual tok pos.
 			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
 				\[tip.action == 'i', ti.action == 'a'], tip)
-				echomsg "Not hlable between " . string(tip.pos)
+				"echomsg "Not hlable between " . string(tip.pos)
 					\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
@@ -3702,7 +3695,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" onto end of buffer.
 				if ti.typ != 'eob' && ti_safe.idx
 					" Cap non-default region to prevent bleed through.
-					echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
+					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
 					let tip.idx = 0
 					" Design Decision: Once we decide to cap, the decision is
@@ -3717,7 +3710,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" Supersedence test complete.
 				" Do 2nd redundancy check (necessitated by tok
 				" removal/replacement).
-				echomsg "Printing safe and other: " . string(ti_safe) . " - " . string(ti)
+				"echomsg "Printing safe and other: " . string(ti_safe) . " - " . string(ti)
 				if ti.typ == 'tok' && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
 					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
