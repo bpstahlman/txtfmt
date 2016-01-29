@@ -4,6 +4,14 @@ brettstahlman AT gmail DOT com
 === !!! IMPORTANT NOTE TO NEW USERS !!! ===
 The Txtfmt help file is large; for a quick (and gentle) introduction, please see the "QUICK-START TUTORIAL" further down on this page...
 
+=== !!! AUTO MAPS - Alpha Release !!! ===
+Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight visually-selected regions. Accordingly, I have added several new types of mappings for highlighting existing regions of text. These mappings are collectively known as "auto maps", with the original mappings now known as "manual maps". Although the feature is not quite complete, I wanted to make an "alpha release" at this point for 2 reasons:
+1. The feature is already quite usable, and will be considered much more convenient than manual maps by many users.
+2. I wanted users to have the opportunity to provide feedback on the UI before it's completely frozen.
+
+The new mappings have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started.
+
+
 === SCREENSHOTS ===
 Check out the following link for screenshots showing Txtfmt used...
     -as a standalone filetype for journal entries, notes, documents, etc...
