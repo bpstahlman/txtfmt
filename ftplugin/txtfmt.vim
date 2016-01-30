@@ -4019,6 +4019,7 @@ fu! s:Delete_region(rgn, mode)
 	call s:Operate_region({'fmt': 0, 'clr': 0, 'bgc': 0}, opt)
 	" Leave cursor at pos of first deleted char.
 	call cursor(opt.rgn.beg)
+	return opt
 endfu
 
 fu! s:Delete_visual()
@@ -4027,16 +4028,18 @@ fu! s:Delete_visual()
 		throw "Delete_visual: blockwise-visual mode not supported"
 	endif
 	try
+		" TODO: Perhaps switch to call form, since return not used.
 		let opt = s:Delete_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2]}, 'visual')
 	catch
-		throw "Delete_visual: Unable to delete selection: " . v:exception
+		throw "Delete_visual: Unable to delete selection: "
+			\. v:exception . " occurred at " . v:throwpoint
 	finally
 		" Leave cursor just past deleted text (as Vim does).
 		call cursor(getpos("'<")[1:2])
 	endtry
 endfu 
 
-fu! s:Delete_operator()
+fu! s:Delete_operator(mode)
 	if a:mode == 'block'
 		" TODO: Can we constrain with mapping itself?
 		throw "Delete_operator: blockwise motions not supported"
@@ -4055,7 +4058,8 @@ fu! s:Delete_operator()
 	catch
 		" Restore cursor position to start of operated region.
 		call cursor(getpos("'[")[1:2])
-		throw "Delete_operator: Unable to delete selection: " . v:exception
+		throw "Delete_operator: Unable to delete selection: "
+			\. v:exception . " occurred at " . v:throwpoint
 	finally
 	endtry
 endfu 
