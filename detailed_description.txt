@@ -20,7 +20,7 @@ Since the initial release of Txtfmt, a significant number of users have requeste
 1. The auto-maps feature is already quite usable, and will be preferred over manual maps by many users.
 2. I wanted users to have the opportunity to provide feedback on the UI before it's frozen.
 
-Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started.
+Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started. However, users who prefer to work with the latest stable release, and don't require the convenience of auto maps, may download version 2.4.
 
 === MOTIVATION ===
 Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are simply using Vim to edit text that doesn't fall into any particular language category: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
