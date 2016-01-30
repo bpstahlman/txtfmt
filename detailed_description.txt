@@ -2,15 +2,7 @@ USER FEEDBACK NEEDED: I would greatly appreciate feedback email, especially on t
 brettstahlman AT gmail DOT com
 
 === !!! IMPORTANT NOTE TO NEW USERS !!! ===
-The Txtfmt help file is large; for a quick (and gentle) introduction, please see the "QUICK-START TUTORIAL" further down on this page...
-
-=== !!! AUTO MAPS - Alpha Release !!! ===
-Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight visually-selected regions. Accordingly, I have added several new types of mappings for highlighting existing regions of text. These mappings are collectively known as "auto maps", with the original mappings now known as "manual maps". Although the feature is not quite complete, I wanted to make an "alpha release" at this point for 2 reasons:
-1. The feature is already quite usable, and will be considered much more convenient than manual maps by many users.
-2. I wanted users to have the opportunity to provide feedback on the UI before it's completely frozen.
-
-The new mappings have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started.
-
+The Txtfmt help file is large; for a quick (and gentle) introduction, please see the "USAGE EXAMPLE" sections and the "QUICK-START TUTORIAL" further down on this page...
 
 === SCREENSHOTS ===
 Check out the following link for screenshots showing Txtfmt used...
@@ -22,6 +14,13 @@ Check out the following link for screenshots showing Txtfmt used...
     -to spruce up comments in various programming languages
 
     http://www.txtfmt.webs.com
+
+=== !!! AUTO MAPS - ALPHA RELEASE !!! ===
+Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight visually-selected regions. Accordingly, I have added several new types of mappings for highlighting existing regions of text. These mappings are collectively known as "auto maps" (with the original mappings now known as "manual maps"). Although the feature is not quite complete, I wanted to make an "alpha release" at this point for 2 reasons:
+1. The auto-maps feature is already quite usable, and will be preferred over manual maps by many users.
+2. I wanted users to have the opportunity to provide feedback on the UI before it's frozen. (See especially the note on 
+
+The new mappings have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started.
 
 === MOTIVATION ===
 Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are simply using Vim to edit text that doesn't fall into any particular language category: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
@@ -36,12 +35,11 @@ Nearly everything in this plugin is configurable, with defaults that should work
 
 Everything is documented in an extensive Vim help file. Additionally, there is a "Quick-Start Tutorial" at the bottom of this page, designed to help you get up and running quickly with Txtfmt.
 
-!!! Auto Maps - NEW in Version 3.0 !!!
-
 === MANUAL VS AUTO MAPS ===
-Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new token or replace an existing one at the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. Manual maps are still the best choice when you know before entering a piece of text how you want it to be highlighted, but to simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Auto maps fall into 2 basic categories:
-1. Visual maps: highlight the visually selected text
-2. Operator maps: highlight the text moved over by operator-pending map
+Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. Manual maps are still the best choice when you know before entering a piece of text how you want it to be highlighted, but to simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Curently, auto maps fall into 2 basic categories:
+	1. Visual maps: highlight the visually selected text
+	2. Operator maps: highlight the text moved over by operator-pending map
+Note: I'm also planning to add linewise normal mode maps, which would operate on a range of lines, but the same basic functionality can be achieved today with operator-pending maps.
 
 The following 3 sections give usage examples of visual auto maps, operator-pending auto maps, and manual maps...
 
@@ -261,7 +259,7 @@ Now that you know how to manipulate Txtfmt highlighting tokens directly, it's ti
 
 Select a block of text (either using mouse or visual mode) and type the following:
 	\h
-At the prompt, enter the following:
+At the prompt, enter the following and hit <Enter>:
 	fbi
 Notice that the selected text is now highlighted bold-italic.
 
@@ -269,7 +267,7 @@ Now suppose you wish to change the highlighting of just one word within the bloc
 	-Remove italic
 	-Add underline
 	-Change color to blue
-Of course, you could accomplish this with manual mappings by inserting a bold-italic format token and a blue fg color token at the start of the word, and a bold-italic format token and default fg color token at the end of the word. But this is a bit tedious. Note, for instance, that you would have to think about the current highlighting *after* the region to know what sort of tokens should be inserted at the end of the word. Also, there is no way with manual maps to say "remove italic" and "add underline". You have to think about the existing highlighting to know what sort of token to insert. This is the exactly the sort of use-case for which Txtfmt's visual and operator-pending maps were designed...
+Of course, you could accomplish this with manual mappings by inserting a bold-italic format token and a blue fg color token at the start of the word, and a bold-italic format token and default fg color token at the end of the word. But this is a bit tedious. Note, for instance, that you would have to think about the current highlighting *after* the region to know what sort of tokens should be inserted at the end of the word. Also, there is no way with manual maps to say "remove italic" and "add underline". You have to think about the existing highlighting to know what sort of token to insert. This is exactly the sort of use-case for which Txtfmt's auto maps were designed...
 
 To accomplish the desired highlighting with an operator-pending map, simply position yourself at the start of the word to be changed and type the following:
 	\h
@@ -277,7 +275,7 @@ Vim is now waiting for you to execute a motion to define the region you wish to 
 	fu-i,cb
 Notice that the word at cursor is now blue bold-underline, and the containing region is unchanged.
 
-The fmt/clr spec you just entered used "additive mode" to add underline and subtract italic. Note that there's a subtle difference between the use of `-' in manual and auto maps: in manual maps, `-' is used to turn off formats altogether; with auto maps, it is used to "subtract", or remove, specific attributes. Although an explicit `+' can be used to "add" fmt attributes, it is generally not needed, since attributes are added by default. The following examples should give the idea:
+The fmt/clr spec you just entered used "additive mode" to add underline and subtract italic. Note that there's a subtle difference between the use of `-' in manual and auto maps: in manual maps, `-' is used to turn off formats altogether (i.e., to return to the "default" format or color); with auto maps, it is used to "subtract", or remove, specific attributes. Although an explicit `+' can be used to "add" fmt attributes, it is generally not needed, since attributes are added by default. The following examples should give the idea:
 	fbi       (add bold and italic)
 	f+bi      (same as above: leading `+' is optional)
 	fbi-us    (add bold and italic / remove underline and standout)
@@ -285,9 +283,14 @@ The fmt/clr spec you just entered used "additive mode" to add underline and subt
 	fb-u+i-s  (same as above)
 	f-bi      (remove bold and italic)
 
+*** Note to Alpha testers ***
+I have considered (and have not completely ruled out) the following, stricter format...
+	f<ADD>-<SUB>
+...which would not permit add/sub components to be interspersed in any order as they were in the examples. With this more limited format, an explicit `+' would never be needed (and would probably not even be allowed). Feedback welcome on this UI choice, as design is not completely frozen.
+
 Tip: Additive mode is particularly useful when you want to add certain attributes to an entire region, without affecting any existing attributes. Imagine you had a paragraph with lots of words highlighted differently, and you wished to italicize the entire paragraph (without otherwise changing the individual word highlighting). With manual maps, you would have to visit each of the highlighted words and replace the token before it with a new token containing the original attribute(s) *and* italic. This would be rather tedious. But with additive mode, you can simply select the entire paragraph (or move over it with an operator-pending map) and specify...
 	fi
-...and Txtfmt will do everything necessary to italicize the paragraph without affecting existing highlighting. Even in simpler cases, additive mode can reduce the mental burden on the user by obviating the need for him to think about the existing highlighting.
+...and Txtfmt will do everything necessary to italicize the paragraph without affecting existing highlighting.
 
 But what if you know exactly how you want an entire region formatted? I.e., instead of adding to any existing sub-regions, you want to wipe out the existing highlighting and replace it with something new. In that case, you should use "prescriptive" or "equals" mode, which is specified by prepending an equals sign to the format spec: E.g.,
 	f=i       (set region to italic)
@@ -295,19 +298,26 @@ But what if you know exactly how you want an entire region formatted? I.e., inst
 Caveat: You cannot mix additive and equals mode within a single format spec: i.e., the following is an error (and wouldn't really make much sense):
 	f=i-b     (ERROR)
 	f=        (set to "no formats" - i.e., remove all fmt attributes)
+Note: Additive and equals modes are for formats only: explicit `=' and `+' characters are never needed in an fg/bg color spec. Since colors support *only* equals mode, no special characters are required for disambiguation.
 
 ** Note to Alpha testers **
-My original thought was to use `f-' (rather than, or in addition to, `f='), to remove all format attributes, as this seemed the most natural extension of `f-' from manual to auto maps. From a purely logical standpoint, however, `f=' makes more sense than `f-'. Consider that `f-' is simply a degenerate additive mode spec that removes nothing (i.e., leaves formatting as-is); `f=', on the other hand, is a degenerate prescriptive mode spec that sets formatting to nothing (i.e., clears formatting). Finally, `f' by itself would be a degenerate additive mode spec that adds nothing (i.e., leaves formatting as-is). For these reasons, I have opted for the following interpretations:
+My original thought was to use `f-' (rather than, or in addition to, `f='), to remove all format attributes, as this seemed the most natural extension of `f-' from manual to auto maps. From a purely logical standpoint, however, `f=' makes more sense than `f-'. Consider that `f-' is simply a degenerate additive mode spec that removes nothing (i.e., leaves formatting as-is); `f=', on the other hand, is a degenerate prescriptive mode spec that sets formatting to nothing (i.e., clears formatting). Finally, `f' by itself would be a degenerate additive mode spec that adds nothing (i.e., leaves formatting as-is). For these reasons, I have opted for the following interpretations (but am open to feedback from users with opinions on the matter):
 	f-    no change
 	f     no change
 	f=    clear all format attributes
-Since "additive mode" applies only to fmt specs, the `-' is not special in color specs: thus, you can use either a `-' or an empty color name to remove fg/bg colors: E.g.,
+As already mentioned, the `-' is not special in color specs: thus, you can use either a `-' or an empty color name to remove fg/bg colors: E.g.,
 	c-    remove fg color
 	c     same
 	k-    remove bg color
 	k     same
-It has occurred to me, however, that users accustomed only to manual maps might expect `f-' to clear format attributes. I welcome feedback on this point, as I haven't completely ruled out making `f-' a special case that violates consistency in order to avoid surprising some users...
+It has occurred to me that users accustomed only to manual maps might expect `f-' to clear format attributes. I welcome feedback on this point, as I haven't completely ruled out making `f-' a special case that violates consistency in order to avoid surprising some users...
 
+*** Smart Text Deletion Maps ***
+Although Txtfmt tokens are invisible, they are characters in your buffer like any other: deleting text can delete tokens, which in turn, can affect the highlighting of text beyond the deletion. To see how this could be problematic, consider the following line of bold text (Txtfmt tokens shown as <fb> and <f->):
+
+<fb>This is some bold text.<f->
+
+You hit 0 in normal mode to go to the start of the line, then hit d2w in normal mode to delete the first two words. But note that this also deletes the <fb> token, with the result that the remaining portion of the line is no longer bold! In other words, the deletion had a visible effect on the text beyond the deletion. This is probably not what you wanted. To solve this problem, Txtfmt also provides a smart delete command, which is aware of Txtfmt highlighting. Like the auto maps highlighting commands, it can be used in both visual and operator-pending modes. The default mapping is \d. To use it with the previous example, you could simply have hit \d2w instead of d2w. Alternatively, you could have highlighted the first two words, then hit \d. The difference between Vim's and Txtfmt's delete commands is that, whereas Vim makes no distinction between text and Txtfmt tokens, Txtfmt's delete assumes your objective is to delete text only, and will do whatever is necessary (possibly inserting new tokens), to preserve the highlighting of text beyond the deletion.
 
 This concludes the tutorial. No attempt was made to discuss all of the many Txtfmt options. Detailed information on all options may be found in the Txtfmt help file.
     :help txtfmt
