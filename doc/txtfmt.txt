@@ -1,7 +1,10 @@
 *txtfmt.txt*	Syntax/Filetype plugin for formatting plain text
 
 Author:  Brett Pershing Stahlman  <brettstahlman@comcast.net>
-Version: 2.4
+Version: 3.0 **ALPHA**
+
+Note: This document has not yet been updated to reflect the "auto maps"
+feature (new in 3.0 alpha). See download page for an overview...
 
 ==============================================================================
 1. Contents					*txtfmt* *txtfmt-contents*
