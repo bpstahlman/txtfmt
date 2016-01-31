@@ -4127,6 +4127,86 @@ fu! s:Highlight_operator(mode)
 	endtry
 endfu
 
+" EBNF Grammar
+" or_expr = and_expr , { "|" , and_expr }
+" and_expr = term , { "&" , term }
+" term = f_term
+" 	 | ck_term
+" 	 | "(" , or_expr , ")"
+" 	 | "!" , term
+" f_term = "f" , ("=" | "&" | "|") , f_attrs
+" ck_term = ("c" | "k") , color_name
+" 		| ("c" | "k") , [ "-" ]
+" Get next token
+fu! S_Parse_sel_tok_init(sel)
+	let ps = {'sel': a:sel, 'idx': 0}
+	let ps.tok = S_Parse_sel_tok_curr(ps)
+	return ps
+endfu
+fu! S_Parse_sel_tok_curr(ps)
+	if has_key(a:ps, 'tok')
+		" Return previously gotten tok (or empty string on end-of-input).
+		return a:ps.tok
+	endif
+	" Get another tok if possible.
+	let meta = '-=&|!()'
+	let re_meta = '[' . re_meta . ']'
+	let re_non_meta = '[^' . re_meta . ']*'
+	let re_tok = re_meta . '\|' . re_non_meta
+	" Discard whitespace at point.
+	let si = matchend(a:ps.sel, '\s*', a:ps.idx)
+	let ei = matchend(a:ps.sel, re_tok, si)
+	if si >= 0
+		" Advance input and cache the tok.
+		" Assumption: This match is guaranteed.
+		let a:ps.idx = matchend(a:ps.sel, re_tok, si)
+		let a:ps.tok = a:ps.sel[si : a:ps.idx - 1]
+	else
+		let a:ps.tok = ''
+	endif
+	return a:ps.tok
+endfu
+fu! S_Parse_sel_tok_eof(ps)
+	" Invariant: Nonexistent property means we need to get another; empty tok
+	" means end-of-input.
+	return has_key(a:ps, 'tok') && empty(a:ps.tok)
+endfu
+fu! S_Parse_sel_tok_next(ps)
+	if S_Parse_sel_tok_eof(a:ps)
+		return ''
+	endif
+	unlet! a:ps.tok
+	return S_Parse_sel_tok_curr(a:ps)
+endfu
+fu! S_Parse_sel_tok_accept(ps, what)
+	let nt = S_Parse_sel_tok_curr()
+	if nt == a:what
+		" We're done with this one.
+		unlet! a:ps.tok
+		return 1
+	endif
+	return 0
+endfu
+fu! S_Parse_sel_or_expr(ps, expr)
+	while 1
+		call S_Parse_sel_and_expr(ps, expr)
+		if S_Parse_sel_next_tok
+	endwhile
+endfu
+fu! s:Parse_sel_and_expr()
+endfu
+fu! s:Parse_sel_term()
+endfu
+fu! s:Parse_sel_f_term()
+endfu
+fu! s:Parse_sel_ck_term()
+endfu
+fu! S_Parse_selector(sel)
+	let ps = S_Parse_sel_tok_init(a:sel)
+	let expr = {}
+	call Parse_or_expr(ps, expr)
+endfu
+
 " >>>
 " Function: s:Jump_to_tok() <<<
 " Purpose: Jumps forward or backwards (as determined by a:dir), to the
