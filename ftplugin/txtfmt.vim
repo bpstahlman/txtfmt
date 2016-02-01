@@ -4138,73 +4138,95 @@ endfu
 " ck_term = ("c" | "k") , color_name
 " 		| ("c" | "k") , [ "-" ]
 " Get next token
-fu! S_Parse_sel_tok_init(sel)
+fu! Sps_tok_init(sel)
 	let ps = {'sel': a:sel, 'idx': 0}
-	let ps.tok = S_Parse_sel_tok_curr(ps)
 	return ps
 endfu
-fu! S_Parse_sel_tok_curr(ps)
-	if has_key(a:ps, 'tok')
-		" Return previously gotten tok (or empty string on end-of-input).
-		return a:ps.tok
-	endif
-	" Get another tok if possible.
-	let meta = '-=&|!()'
-	let re_meta = '[' . re_meta . ']'
-	let re_non_meta = '[^' . re_meta . ']*'
-	let re_tok = re_meta . '\|' . re_non_meta
-	" Discard whitespace at point.
-	let si = matchend(a:ps.sel, '\s*', a:ps.idx)
-	let ei = matchend(a:ps.sel, re_tok, si)
+fu! Sps_match(ps, re)
+	" Start (actually anchor) search at first non-whitespace char.
+	let si = match(a:ps.sel, '\S', a:ps.idx)
 	if si >= 0
-		" Advance input and cache the tok.
-		" Assumption: This match is guaranteed.
-		let a:ps.idx = matchend(a:ps.sel, re_tok, si)
-		let a:ps.tok = a:ps.sel[si : a:ps.idx - 1]
-	else
-		let a:ps.tok = ''
+		" Anchor the match at point.
+		let ms = matchlist('^' . a:ps.sel, a:re, si)
+		if !empty(ms)
+			" Adjust parse state to consume the match.
+			let a:ps.idx = si + len(ms[0])
+			" Return match and all submatches.
+			return ms
+		endif
 	endif
-	return a:ps.tok
+	" No match.
+	return {}
 endfu
-fu! S_Parse_sel_tok_eof(ps)
-	" Invariant: Nonexistent property means we need to get another; empty tok
-	" means end-of-input.
-	return has_key(a:ps, 'tok') && empty(a:ps.tok)
+fu! Sps_accept(ps, re)
+	" Determine success/failure and adjust parse state as necessary.
+	return !empty(Sps_match(a:ps, a:re))
 endfu
-fu! S_Parse_sel_tok_next(ps)
-	if S_Parse_sel_tok_eof(a:ps)
-		return ''
-	endif
-	unlet! a:ps.tok
-	return S_Parse_sel_tok_curr(a:ps)
-endfu
-fu! S_Parse_sel_tok_accept(ps, what)
-	let nt = S_Parse_sel_tok_curr()
-	if nt == a:what
-		" We're done with this one.
-		unlet! a:ps.tok
-		return 1
-	endif
-	return 0
-endfu
-fu! S_Parse_sel_or_expr(ps, expr)
+" Handle both & and | bool expressions.
+fu! Sps_bool_expr(ps, op)
+	let expr = {'op': a:op, 'expr': []}
 	while 1
-		call S_Parse_sel_and_expr(ps, expr)
-		if S_Parse_sel_next_tok
+		let expr = a:op == '|' ? Sps_bool_expr(a:ps, '&') : Sps_term(a:ps)
+		call add(expr.expr, expr)
+		" TODO: Decide whether to use assertion after & or |
+		if !Sps_accept(a:ps, a:op)
+			" No more terms at this precedence level.
+			break
+		endif
 	endwhile
+	" TODO: How to remove extra layer? E.g.,
+	" [or [and ]]
+	" Do we want to allow a term to stand by itself, or always be part of a
+	" (possibly unit-length and/or expression)?
+	if len(expr.expr) == 1
+		" Remove useless layer.
+		let expr.op = a:op == '|' ? '&' : '|'
+		let expr.expr = expr.expr[0]
+	endif
 endfu
-fu! s:Parse_sel_and_expr()
-endfu
-fu! s:Parse_sel_term()
-endfu
-fu! s:Parse_sel_f_term()
-endfu
-fu! s:Parse_sel_ck_term()
+fu! Sps_term(ps)
+	if Sps_accept(a:ps, 'f')
+		let m = Sps_match(a:ps, '\([=&|]\)\s*\([ubisrc]*\)')
+		if empty(m)
+			throw "f can't be empty!"
+		endif
+		return {'op': 'f' . m[1], 'attrs': substitute(m[2], '\s\+', '', 'g')}
+	endif
+	" Not f-term
+	let m = Sps_match(a:ps, '[ck]')
+	if !empty(m)
+		" Looks like fg/bg color.
+		let term = {'op': m[0]}
+		" TODO: Regex for color name chars would simplify things.
+		let m = Sps_match(a:ps, '-\|[a-zA-Z_]\+')
+		let term.cname = empty(m) ? '-' : m[0]
+		return term
+	endif
+	" Neither f nor ck
+	if Sps_accept(a:ps, '!')
+		let term = Sps_term(a:ps)
+		let term.neg = !has_key(term, 'neg') || !term.neg
+		return term
+	endif
+	" Neither f nor ck nor !term
+	if Sps_accept(a:ps, '(')
+		let term = Sps_bool_expr(a:ps, '|')
+		if !Sps_accept(a:ps, ')')
+			throw "Missing closing )"
+		endif
+		return term
+	endif
+	throw "Unexpected term input"
+	return {}
 endfu
 fu! S_Parse_selector(sel)
-	let ps = S_Parse_sel_tok_init(a:sel)
-	let expr = {}
-	call Parse_or_expr(ps, expr)
+	let sel = g:TxtfmtUtil_strip(a:sel)
+	if empty(sel)
+		return {'op': 'const', 'val': 1}
+	endif
+	let ps = Sps_tok_init(sel)
+	let expr = Sps_bool_expr(ps, '|')
+	echomsg "Parsed expr: " . string(expr)
 endfu
 
 " >>>
