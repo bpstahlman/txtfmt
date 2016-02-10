@@ -4128,26 +4128,56 @@ fu! s:Highlight_operator(mode)
 endfu
 
 " EBNF Grammar
-" or_expr = and_expr , { "|" , and_expr }
-" and_expr = term , { "&" , term }
+" or_expr = and_expr , { ("||" | "|") , and_expr }
+" and_expr = term , { ("&&" | "&") , term }
+"     Note: && and || may be used instead of & and | for visual disambiguation.
 " term = f_term
-" 	 | ck_term
-" 	 | "(" , or_expr , ")"
-" 	 | "!" , term
-" f_term = "f" , ("=" | "&" | "|") , f_attrs
+"      | ck_term
+"      | "(" , or_expr , ")"
+"      | "!" , term
+"   #if fop_atomic
+" f_term(1) = ("f&" | "f|" | "f=" | "f") , f_attrs
+"   #else
+" f_term(2) = "f" , ("&" | "|" | "=" | "") , f_attrs
+"   #endif
+"     Note: An f_term will *never* be recognized when the & or | following the
+"     'f' is the first in a pair: i.e., '&&' is *always* logical AND.
+"     Configuration Note: The 1 & 2 in the rule above refer to 2 distinct
+"     strategies; I'll probably introduce a config var for now to select between
+"     them.
+" f_attrs = ("-" | { [[:space:]ubisrc] })
 " ck_term = ("c" | "k") , color_name
-" 		| ("c" | "k") , [ "-" ]
-" Get next token
+"         | ("c" | "k") , [ "-" ]
+"
+" Note: "No format" can be spelled in any of the following ways:
+"   f=, f-, f
+" Caveat: In the final case, there could be ambiguity if the following token
+" is a logical AND: e.g...
+"   f&cbus
+" Is that...
+"     f& undercurl-bold-underline-standout
+" ...or...
+"     f- & fg-color 'bus'
+" Ways to resolve...
+" 1. f& (with no separating whitespace, and no subsequent '&') is always a
+"    single token, and hence, always means `f- &'
+" 2. Put explicit `-' or `=' after f
+" 3. Use `&&' (always means logical AND)
 fu! Sps_tok_init(sel)
 	let ps = {'sel': a:sel, 'idx': 0}
 	return ps
 endfu
-fu! Sps_match(ps, re)
-	" Start (actually anchor) search at first non-whitespace char.
-	let si = match(a:ps.sel, '\S', a:ps.idx)
+fu! Sps_match(ps, re, ...)
+	if a:0 ? a:1 : 0
+		" Whitespace matched only explicitly.
+		let si = 0
+	else
+		" Start (actually anchor) search at first non-whitespace char.
+		let si = match(a:ps.sel, '\S', a:ps.idx)
+	endif
 	if si >= 0
 		" Anchor the match at point.
-		let ms = matchlist('^' . a:ps.sel, a:re, si)
+		let ms = matchlist(a:ps.sel, '^' . a:re, si)
 		if !empty(ms)
 			" Adjust parse state to consume the match.
 			let a:ps.idx = si + len(ms[0])
@@ -4158,41 +4188,60 @@ fu! Sps_match(ps, re)
 	" No match.
 	return {}
 endfu
-fu! Sps_accept(ps, re)
-	" Determine success/failure and adjust parse state as necessary.
-	return !empty(Sps_match(a:ps, a:re))
+" Convenience method used when only boolean success/failure is desired from
+" Sps_match. Optional explicit_ws arg defaults to false, but may be overridden.
+fu! Sps_accept(ps, re, ...)
+	return !empty(Sps_match(a:ps, a:re, a:0 ? a:1 : 0))
 endfu
-" Handle both & and | bool expressions.
+" Handle both &[&] and |[|] bool expressions.
 fu! Sps_bool_expr(ps, op)
 	let expr = {'op': a:op, 'expr': []}
+	" Need to check for both &/| and &&/||
+	let opop = a:op . a:op
 	while 1
-		let expr = a:op == '|' ? Sps_bool_expr(a:ps, '&') : Sps_term(a:ps)
-		call add(expr.expr, expr)
-		" TODO: Decide whether to use assertion after & or |
-		if !Sps_accept(a:ps, a:op)
+		let subexpr = a:op == '|' ? Sps_bool_expr(a:ps, '&') : Sps_term(a:ps)
+		call add(expr.expr, subexpr)
+		if !Sps_accept(a:ps, opop) && !Sps_accept(a:ps, a:op)
 			" No more terms at this precedence level.
+			echo "Breaking out: " . string(a:ps)
 			break
 		endif
 	endwhile
-	" TODO: How to remove extra layer? E.g.,
-	" [or [and ]]
-	" Do we want to allow a term to stand by itself, or always be part of a
-	" (possibly unit-length and/or expression)?
 	if len(expr.expr) == 1
-		" Remove useless layer.
-		let expr.op = a:op == '|' ? '&' : '|'
-		let expr.expr = expr.expr[0]
+		" Remove useless layer (e.g., don't maintain an OR expression whose only
+		" purpose is to contain an AND expression).
+		let expr = expr.expr[0]
 	endif
+	return expr
 endfu
-fu! Sps_term(ps)
+let s:cfg_selector_fop_atomic = 1
+fu! Sps_try_fterm(ps)
 	if Sps_accept(a:ps, 'f')
-		let m = Sps_match(a:ps, '\([=&|]\)\s*\([ubisrc]*\)')
-		if empty(m)
-			throw "f can't be empty!"
+		let term = {}
+		" Pattern note: extra & or | disambiguates between (e.g.) 'f&' and 'f- &'
+		" Also Note: Currently, `-' not considered inseparable from 'f'. Unlike
+		" &, | and =, it's part of attrs.
+		" TODO: Should it be?
+		" Caveat: Don't let the pattern consume the 1st in pair of &'s or |'s
+		" TODO: Perhaps use negative lookbehind instead of the lookahead?
+		let m = Sps_match(a:ps, '\%(\s*\(||\|&&\)\)\@=\|'
+			\. (s:cfg_selector_fop_atomic ? '' : '\s*')
+			\. '\([&|]\|=\?\)\s*\(-\|[ubisrc[:space:]]*\)', 1)
+		if !empty(m[1])
+			" Logical operator follows 'f'; i.e., this is effectively f-
+			let term.op = 'f='
+			let term.attrs = ''
+		else
+			" Could have matched nothing.
+			let term.op = 'f' . (empty(m[2]) ? '=' : m[2])
+			let term.attrs = substitute(m[3], '\s\+', '', 'g')
 		endif
-		return {'op': 'f' . m[1], 'attrs': substitute(m[2], '\s\+', '', 'g')}
+		return term
 	endif
-	" Not f-term
+	" No fterm
+	return {}
+endfu
+fu! Sps_try_ckterm(ps)
 	let m = Sps_match(a:ps, '[ck]')
 	if !empty(m)
 		" Looks like fg/bg color.
@@ -4202,6 +4251,15 @@ fu! Sps_term(ps)
 		let term.cname = empty(m) ? '-' : m[0]
 		return term
 	endif
+	" No clr/bgc term
+	return {}
+endfu
+fu! Sps_term(ps)
+	let term = Sps_try_fterm(a:ps)
+	if !empty(term) | return term | endif
+	" Not f-term
+	let term = Sps_try_ckterm(a:ps)
+	if !empty(term) | return term | endif
 	" Neither f nor ck
 	if Sps_accept(a:ps, '!')
 		let term = Sps_term(a:ps)
@@ -4216,17 +4274,41 @@ fu! Sps_term(ps)
 		endif
 		return term
 	endif
-	throw "Unexpected term input"
+	throw "Unexpected term input at ps=" . string(a:ps)
 	return {}
 endfu
+fu! S_Sps_expr_to_string(expr, indent)
+	let sw = 2
+	let s = ''
+	" Print recursively.
+	if has_key(a:expr, 'neg') && a:expr.neg
+		let s .= "!"
+	endif
+	if a:expr.op =~ 'f[=&|]'
+		let s .= a:expr.op . '{' . a:expr.attrs . '}'
+	elseif a:expr.op =~ '[ck]'
+		let s .= a:expr.op . '{' . a:expr.cname . '}'
+	elseif a:expr.op =~ '[&|]'
+		let s .= "(\n" . (repeat(' ', (a:indent + 1) * sw))
+		let first_expr = 1
+		for sexpr in a:expr.expr
+			let sep = first_expr ? '' : (' ' . (a:expr.op[0] =~ '&' ? '&&' : '||') . ' ')
+			let s .= sep . S_Sps_expr_to_string(sexpr, a:indent + 1)
+			let first_expr = 0
+		endfor
+		let s .= "\n" . repeat(' ', a:indent * sw) . ")"
+	endif
+	return s
+endfu
 fu! S_Parse_selector(sel)
-	let sel = g:TxtfmtUtil_strip(a:sel)
+	let sel = TxtfmtUtil_strip(a:sel)
 	if empty(sel)
 		return {'op': 'const', 'val': 1}
 	endif
 	let ps = Sps_tok_init(sel)
 	let expr = Sps_bool_expr(ps, '|')
-	echomsg "Parsed expr: " . string(expr)
+	echo "Expression: " . ps.sel
+	echo S_Sps_expr_to_string(expr, 0)
 endfu
 
 " >>>
