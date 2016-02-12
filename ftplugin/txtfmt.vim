@@ -4127,27 +4127,42 @@ fu! s:Highlight_operator(mode)
 	endtry
 endfu
 
+" Prior to v3.0, a color name was permitted to contain whitespace; disallowing
+" it permits us to use whitespace, rather than comma, to separate terms in
+" fmt/clr spec list. It's unlikely anyone is relying upon this, but provide an
+" option just in case.
+" TODO: Need to go back and make Translate_fmt_clr_list handle this.
+let s:cfg_color_name_compat = 0
+
 " EBNF Grammar
-" or_expr = and_expr , { ("||" | "|") , and_expr }
-" and_expr = term , { ("&&" | "&") , term }
-"     Note: && and || may be used instead of & and | for visual disambiguation.
+" Whitespace Handling: Within a production rule, 'opt_ws' indicates where
+" whitespace is permitted (but not required).
+"
+" or_expr = and_expr , opt_ws , { ("||" | "|") , opt_ws , and_expr }
+" and_expr = term , opt_ws , { ("&&" | "&") , opt_ws , term }
+"     Note: && and || may be used instead of & and | for visual (unnecessary)
+"     disambiguation.
 " term = f_term
 "      | ck_term
-"      | "(" , or_expr , ")"
-"      | "!" , term
-"   #if fop_atomic
-" f_term(1) = ("f&" | "f|" | "f=" | "f") , f_attrs
-"   #else
-" f_term(2) = "f" , ("&" | "|" | "=" | "") , f_attrs
-"   #endif
+"      | "(" , opt_ws , or_expr , opt_ws , ")"
+"      | "!" , opt_ws , term
+" f_term = "f" , opt_ws , ( "&" | "|" | [ "=" ] ) , f_attrs
+"        | "f" , opt_ws , [ "=" ] [ "-" ]
 "     Note: An f_term will *never* be recognized when the & or | following the
 "     'f' is the first in a pair: i.e., '&&' is *always* logical AND.
-"     Configuration Note: The 1 & 2 in the rule above refer to 2 distinct
-"     strategies; I'll probably introduce a config var for now to select between
-"     them.
-" f_attrs = ("-" | { [[:space:]ubisrc] })
-" ck_term = ("c" | "k") , color_name
-"         | ("c" | "k") , [ "-" ]
+"     Note: Support all combinations of '=' , '-', even those that seem
+"     silly/rendundant (e.g., `=-')
+" f_attrs = f_attr , { f_attr }
+" f_attr = "u" | "b" | "i" | "s" | "r" | "c"
+" ck_term = ("c" | "k") , opt_ws , color_name
+"         | ("c" | "k")
+" color_name = color_name_char , { opt_ws (* see note *) , color_name_char }
+"     Note: opt_ws applies only when cfg_color_name_compat is set.
+" color_name_char = (? regex: [-_a-zA-Z0-9] ?)
+"     Note: Currently no restrictions on - in name: i.e., `-' means default, and
+"     `--' is an actual color name. Should it be? Or should we require alpha?
+" opt_ws = { ws }
+" ws = ? sequence of 1 or more whitespace chars ?
 "
 " Note: "No format" can be spelled in any of the following ways:
 "   f=, f-, f
@@ -4159,10 +4174,10 @@ endfu
 " ...or...
 "     f- & fg-color 'bus'
 " Ways to resolve...
-" 1. f& (with no separating whitespace, and no subsequent '&') is always a
-"    single token, and hence, always means `f- &'
-" 2. Put explicit `-' or `=' after f
-" 3. Use `&&' (always means logical AND)
+" 1. Put space between the `&' and subsequent chars to prevent attempt to
+"    interpret the latter as f_attrs.
+" 2. Put explicit `-' or `=' after f.
+" 3. Use `&&' (always means logical AND).
 fu! Sps_tok_init(sel)
 	let ps = {'sel': a:sel, 'idx': 0}
 	return ps
@@ -4170,7 +4185,7 @@ endfu
 fu! Sps_match(ps, re, ...)
 	if a:0 ? a:1 : 0
 		" Whitespace matched only explicitly.
-		let si = 0
+		let si = a:ps.idx
 	else
 		" Start (actually anchor) search at first non-whitespace char.
 		let si = match(a:ps.sel, '\S', a:ps.idx)
@@ -4198,14 +4213,20 @@ fu! Sps_bool_expr(ps, op)
 	let expr = {'op': a:op, 'expr': []}
 	" Need to check for both &/| and &&/||
 	let opop = a:op . a:op
-	while 1
-		let subexpr = a:op == '|' ? Sps_bool_expr(a:ps, '&') : Sps_term(a:ps)
-		call add(expr.expr, subexpr)
-		if !Sps_accept(a:ps, opop) && !Sps_accept(a:ps, a:op)
-			" No more terms at this precedence level.
-			echo "Breaking out: " . string(a:ps)
-			break
+	while !exists('l:got_op') || !empty(got_op)
+		let sexpr = a:op == '|' ? Sps_bool_expr(a:ps, '&') : Sps_term(a:ps)
+		if empty(sexpr)
+			if exists('l:got_op') && !empty(got_op)
+				throw "Expected term following " . got_op
+			else
+				" Let caller decide whether no term at this position is error.
+				return {}
+			endif
 		endif
+		" Accumulate the sub-expression.
+		call add(expr.expr, sexpr)
+		" Check for logical operator.
+		let got_op = Sps_accept(a:ps, opop) ? opop : Sps_accept(a:ps, a:op) ? a:op : ''
 	endwhile
 	if len(expr.expr) == 1
 		" Remove useless layer (e.g., don't maintain an OR expression whose only
@@ -4214,27 +4235,21 @@ fu! Sps_bool_expr(ps, op)
 	endif
 	return expr
 endfu
-let s:cfg_selector_fop_atomic = 1
 fu! Sps_try_fterm(ps)
 	if Sps_accept(a:ps, 'f')
 		let term = {}
-		" Pattern note: extra & or | disambiguates between (e.g.) 'f&' and 'f- &'
-		" Also Note: Currently, `-' not considered inseparable from 'f'. Unlike
-		" &, | and =, it's part of attrs.
-		" TODO: Should it be?
 		" Caveat: Don't let the pattern consume the 1st in pair of &'s or |'s
-		" TODO: Perhaps use negative lookbehind instead of the lookahead?
-		let m = Sps_match(a:ps, '\%(\s*\(||\|&&\)\)\@=\|'
-			\. (s:cfg_selector_fop_atomic ? '' : '\s*')
-			\. '\([&|]\|=\?\)\s*\(-\|[ubisrc[:space:]]*\)', 1)
-		if !empty(m[1])
-			" Logical operator follows 'f'; i.e., this is effectively f-
+		" Allow =- though it makes little sense.
+		let m = Sps_match(a:ps, '\s*\%(\%(||\|&&\)\)\@!'
+			\. '\%(\([&|]\|=\?\)\([ubisrc]\+\)\|\(=-\|[-=]\)\?\)', 1)
+		if empty(m) || empty(m[2])
+			" Literally or effectively f-
 			let term.op = 'f='
 			let term.attrs = ''
 		else
-			" Could have matched nothing.
-			let term.op = 'f' . (empty(m[2]) ? '=' : m[2])
-			let term.attrs = substitute(m[3], '\s\+', '', 'g')
+			" Non-default attrs
+			let term.op = 'f' . (empty(m[1]) ? '=' : m[1])
+			let term.attrs = m[2]
 		endif
 		return term
 	endif
@@ -4247,7 +4262,10 @@ fu! Sps_try_ckterm(ps)
 		" Looks like fg/bg color.
 		let term = {'op': m[0]}
 		" TODO: Regex for color name chars would simplify things.
-		let m = Sps_match(a:ps, '-\|[a-zA-Z_]\+')
+		let re_cname_char = '[-_a-zA-Z0-9]'
+		" Note: Permit interior whitespace in name if cfg_color_name_compat set.
+		let m = Sps_match(a:ps, re_cname_char
+			\. '\%(' . (s:cfg_color_name_compat ? '\s*' : '') . re_cname_char . '\)*')
 		let term.cname = empty(m) ? '-' : m[0]
 		return term
 	endif
@@ -4269,14 +4287,17 @@ fu! Sps_term(ps)
 	" Neither f nor ck nor !term
 	if Sps_accept(a:ps, '(')
 		let term = Sps_bool_expr(a:ps, '|')
+		if empty(term)
+			throw "Expected term following `('"
+		endif
 		if !Sps_accept(a:ps, ')')
-			throw "Missing closing )"
+			throw "Expected `&', `|' or `)'"
 		endif
 		return term
 	endif
-	throw "Unexpected term input at ps=" . string(a:ps)
 	return {}
 endfu
+" Debug function
 fu! S_Sps_expr_to_string(expr, indent)
 	let sw = 2
 	let s = ''
@@ -4301,14 +4322,23 @@ fu! S_Sps_expr_to_string(expr, indent)
 	return s
 endfu
 fu! S_Parse_selector(sel)
-	let sel = TxtfmtUtil_strip(a:sel)
-	if empty(sel)
-		return {'op': 'const', 'val': 1}
-	endif
-	let ps = Sps_tok_init(sel)
-	let expr = Sps_bool_expr(ps, '|')
-	echo "Expression: " . ps.sel
-	echo S_Sps_expr_to_string(expr, 0)
+	let ps = Sps_tok_init(a:sel)
+	try
+		let expr = Sps_bool_expr(ps, '|')
+		if !empty(expr)
+			"Make sure returned expression consumed all input.
+			if !Sps_accept(ps, '\s*$', 1)
+				throw "Expected `&&', `||' or end of input"
+			endif
+			" Valid expression
+			echo "Expression: " . ps.sel
+			echo S_Sps_expr_to_string(expr, 0)
+		endif
+		return expr
+	catch
+		echoerr "Syntax error in selector at char offset " . ps.idx
+			\. ": " . v:exception . ", unconsumed input: `" . ps.sel[ps.idx:] . "'"
+	endtry
 endfu
 
 " >>>
