@@ -1918,6 +1918,8 @@ fu! s:Translate_fmt_clr_list(s)
 	" >>>
 	" Process the fmt/clr/bgc spec atom(s) in a loop
 	while i < len
+		" TODO: Consider splitting the whole thing up front and looping over the
+		" pieces, as we do for Parse_fmt_clr_transformer.
 		" Find end of spec ([,.] or end of string)
 		" (Commas and dots not allowed except as field sep)
 		" NOTE: Match with '$' returns strlen (even for empty string)
@@ -1936,8 +1938,9 @@ fu! s:Translate_fmt_clr_list(s)
 				return ''
 			endif
 			let tokstr = tokstr.tok
-		" Validate the field in various ways
-		elseif i==ie	" check null fields
+		elseif i==ie
+			" We have empty field, which is permitted only when it results from
+			" '.' at beginning.
 			let fld = ''
 			if ie==0	" at beginning of list ('.' permitted)
 				if ie==len-1
@@ -1959,7 +1962,8 @@ fu! s:Translate_fmt_clr_list(s)
 				return ''
 			endif
 		endif
-		if ie==len-1	" validate last char in string
+		if ie==len-1
+			" Validate last char in string
 			if num_fld==0
 				" NOTE: Can't actually get here...
 				let s:err_str = "fmt/clr spec list contains no fields"
@@ -2014,6 +2018,7 @@ endfu
 
 " Binary progression: ubisrc
 let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
+let s:cfg_color_name_compat = 0
 
 " Function: s:????() <<<
 " >>>
@@ -2121,9 +2126,125 @@ endfu
 " Note: The value 0 in an additive mode fmt mask is a NOP. In non-additive
 " (prescriptive) mode, it clears existing fmts. For colors, 0 means 'no color'.
 fu! s:Parse_fmt_clr_transformer(specs)
+	" Initalize return object.
+	let ret = {}
+	let specs = TxtfmtUtil_strip(a:specs)
+	if empty(specs)
+		" Effectively empty spec. Return NOP object.
+		return ret
+	endif
+	" Split the comma or space-separated f/c/k components
+	" Note: Compatibility option determines whether components can be separated
+	" by only whitespace.
+	" Note: Use of explicit commas can produce empty components anywhere, even
+	" at end: set keepempty to facilitate detection.
+	" Note: Because we've stripped trailing whitespace, a trailing empty
+	" component can be caused only by comma; accordingly, the \ze\S is
+	" superfluous.
+	let re_sep = '\s*,\s*'
+	if !s:cfg_color_name_compat
+		let re_sep .= '\|[fck]\s*[^[:space:],]\+\zs\s\+\ze\S'
+	endif
+	let fcks = split(specs, re_sep, 1)
+	" Loop over the f/c/k components
+	for spec in fcks
+		if empty(spec)
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
+		endif
+		" Extract token type and remainder of spec
+		let [t, spec] = [spec[0], spec[1:]]
+		" Validate the type
+		if t !~ '[fck]'
+			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
+		endif
+		if has_key(ret, b:txtfmt_rgn_typ_abbrevs[t])
+			" We've already processed a component of this type.
+			throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
+		endif
+		" Discard any whitespace between type and subsequent spec. (Necessary to
+		" ensure spec itself is 'stripped'.)
+		let spec = TxtfmtUtil_lstrip(spec)
+		" Switch on type
+		if t == 'f'
+			" Design Decision: Keep special meaning of `f-', and support several
+			" other intuitive means of specifying 'no format'.
+			" Caveat: If using whitespace, rather than comma, to separate specs,
+			" you'd need to use a form other than `f' to prevent subsequent char
+			" from being interpreted as attr.
+			if empty(spec) || spec == '=' || spec == '-' || spec == '=-'
+				" Clear all fmt attrs
+				let ret.fmt = 0
+			else
+				" Note: Special cases have all been handled.
+				" Additive or prescriptive mode?
+				let additive = spec[0] != '='
+				let attrs = additive ? spec : spec[1:]
+				" Validate form of the fmt attr list.
+				" Design Decision: For now, permit empty segments: e.g., +u--b.
+				" TODO: Does this make sense, or should the -- be treated as
+				" error? (Consider that someone might think of -- as +.)
+				if attrs !~ '^[' . (additive ? '-+' : '')
+					\. b:ubisrc_fmt{b:txtfmt_num_formats-1} . ']\+$'
+					throw "Invalid fmt transformer spec: `f" . spec . "'"
+				endif
+				" Initialize mask(s) to be built in loop.
+				let masks = additive ? {'+': 0, '-': 0}  : {'=': 0}
+				" Initialize default (or only) op.
+				let op = additive ? '+' : '='
+				" Loop over individual chars.
+				for atom in split(attrs, '\zs')
+					if atom == '+'
+						let op = '+'
+					elseif atom == '-'
+						let op = '-'
+					else
+						" Check for ambiguity.
+						if additive && and(masks[op == '+' ? '-' : '+'], s:ubisrc_mask[atom])
+							throw "Ambiguous use of fmt attr " . atom . " in both add/sub parts of spec: `f" . spec . "'"
+						endif
+						let masks[op] = or(masks[op], s:ubisrc_mask[atom])
+					endif
+				endfor
+				if additive
+					" Save list of add/sub masks.
+					let ret.fmt = [masks['+'], masks['-']]
+				else
+					" Save scalar 'set' mask
+					let ret.fmt = masks['=']
+				endif
+			endif
+		elseif t == 'c' || t == 'k'
+			if t == 'k' && !b:txtfmt_cfg_bgcolor
+				throw "Use of `k' invalid when background colors are disabled"
+			endif
+			" Note: Unlike fmts, dash is always special for colors.
+			" Rationale: Out of respect for legacy usage, coupled with fact that
+			" there is no other meaning for `-' in color context.
+			" TODO: Decide whether to permit c=-.
+			if empty(spec) || spec == '-'
+				" Return to default.
+				let clr_num = 0
+			else
+				let clr_num = s:Lookup_clr_namepat(t, spec)
+				if clr_num <= 0
+					if clr_num == 0
+						throw "Invalid color name pattern in fmt/clr transformer spec: `" . spec . "'"
+					else
+						throw "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . spec . "'"
+					endif
+				endif
+			endif
+			let ret[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
+		else
+			throw "Invalid type specifier in fmt/clr transformer spec: " . t
+		endif
+	endfor
+	return ret
+endfu
+fu! s:Parse_fmt_clr_transformer_obsolete2(specs)
 	" ALPHA_TODO: Defer decision on a few aspects of format, possibly till
 	" feedback from alpha users received..
-	let cfg = {'allow_empty': 0, 'allow_override': 0, 'strict_fmts': 0, 'dash_special': 0}
+	let cfg = {'allow_empty': 0, 'allow_override': 0, 'strict_fmts': 0, 'dash_special': 1}
 	" Initalize return object.
 	let ret = {}
 	let specs = TxtfmtUtil_strip(a:specs)
@@ -4178,11 +4299,11 @@ let s:cfg_color_name_compat = 0
 "    interpret the latter as f_attrs.
 " 2. Put explicit `-' or `=' after f.
 " 3. Use `&&' (always means logical AND).
-fu! Sps_tok_init(sel)
+fu! s:Sel_parser_tok_init(sel)
 	let ps = {'sel': a:sel, 'idx': 0}
 	return ps
 endfu
-fu! Sps_match(ps, re, ...)
+fu! s:Sel_parser_match(ps, re, ...)
 	if a:0 ? a:1 : 0
 		" Whitespace matched only explicitly.
 		let si = a:ps.idx
@@ -4204,17 +4325,20 @@ fu! Sps_match(ps, re, ...)
 	return {}
 endfu
 " Convenience method used when only boolean success/failure is desired from
-" Sps_match. Optional explicit_ws arg defaults to false, but may be overridden.
-fu! Sps_accept(ps, re, ...)
-	return !empty(Sps_match(a:ps, a:re, a:0 ? a:1 : 0))
+" s:Sel_parser_match. Optional explicit_ws arg defaults to false, but may be
+" overridden.
+fu! s:Sel_parser_accept(ps, re, ...)
+	return !empty(s:Sel_parser_match(a:ps, a:re, a:0 ? a:1 : 0))
 endfu
 " Handle both &[&] and |[|] bool expressions.
-fu! Sps_bool_expr(ps, op)
+fu! s:Sel_parser_bool_expr(ps, op)
 	let expr = {'op': a:op, 'expr': []}
 	" Need to check for both &/| and &&/||
 	let opop = a:op . a:op
 	while !exists('l:got_op') || !empty(got_op)
-		let sexpr = a:op == '|' ? Sps_bool_expr(a:ps, '&') : Sps_term(a:ps)
+		let sexpr = a:op == '|'
+			\? s:Sel_parser_bool_expr(a:ps, '&')
+			\: s:Sel_parser_term(a:ps)
 		if empty(sexpr)
 			if exists('l:got_op') && !empty(got_op)
 				throw "Expected term following " . got_op
@@ -4226,7 +4350,8 @@ fu! Sps_bool_expr(ps, op)
 		" Accumulate the sub-expression.
 		call add(expr.expr, sexpr)
 		" Check for logical operator.
-		let got_op = Sps_accept(a:ps, opop) ? opop : Sps_accept(a:ps, a:op) ? a:op : ''
+		let got_op = s:Sel_parser_accept(a:ps, opop)
+			\? opop : s:Sel_parser_accept(a:ps, a:op) ? a:op : ''
 	endwhile
 	if len(expr.expr) == 1
 		" Remove useless layer (e.g., don't maintain an OR expression whose only
@@ -4235,12 +4360,12 @@ fu! Sps_bool_expr(ps, op)
 	endif
 	return expr
 endfu
-fu! Sps_try_fterm(ps)
-	if Sps_accept(a:ps, 'f')
+fu! s:Sel_parser_try_fterm(ps)
+	if s:Sel_parser_accept(a:ps, 'f')
 		let term = {}
 		" Caveat: Don't let the pattern consume the 1st in pair of &'s or |'s
 		" Allow =- though it makes little sense.
-		let m = Sps_match(a:ps, '\s*\%(\%(||\|&&\)\)\@!'
+		let m = s:Sel_parser_match(a:ps, '\s*\%(\%(||\|&&\)\)\@!'
 			\. '\%(\([&|]\|=\?\)\([ubisrc]\+\)\|\(=-\|[-=]\)\?\)', 1)
 		if empty(m) || empty(m[2])
 			" Literally or effectively f-
@@ -4256,15 +4381,15 @@ fu! Sps_try_fterm(ps)
 	" No fterm
 	return {}
 endfu
-fu! Sps_try_ckterm(ps)
-	let m = Sps_match(a:ps, '[ck]')
+fu! s:Sel_parser_try_ckterm(ps)
+	let m = s:Sel_parser_match(a:ps, '[ck]')
 	if !empty(m)
 		" Looks like fg/bg color.
 		let term = {'op': m[0]}
 		" TODO: Regex for color name chars would simplify things.
 		let re_cname_char = '[-_a-zA-Z0-9]'
 		" Note: Permit interior whitespace in name if cfg_color_name_compat set.
-		let m = Sps_match(a:ps, re_cname_char
+		let m = s:Sel_parser_match(a:ps, re_cname_char
 			\. '\%(' . (s:cfg_color_name_compat ? '\s*' : '') . re_cname_char . '\)*')
 		let term.cname = empty(m) ? '-' : m[0]
 		return term
@@ -4272,25 +4397,25 @@ fu! Sps_try_ckterm(ps)
 	" No clr/bgc term
 	return {}
 endfu
-fu! Sps_term(ps)
-	let term = Sps_try_fterm(a:ps)
+fu! s:Sel_parser_term(ps)
+	let term = s:Sel_parser_try_fterm(a:ps)
 	if !empty(term) | return term | endif
 	" Not f-term
-	let term = Sps_try_ckterm(a:ps)
+	let term = s:Sel_parser_try_ckterm(a:ps)
 	if !empty(term) | return term | endif
 	" Neither f nor ck
-	if Sps_accept(a:ps, '!')
-		let term = Sps_term(a:ps)
+	if s:Sel_parser_accept(a:ps, '!')
+		let term = s:Sel_parser_term(a:ps)
 		let term.neg = !has_key(term, 'neg') || !term.neg
 		return term
 	endif
 	" Neither f nor ck nor !term
-	if Sps_accept(a:ps, '(')
-		let term = Sps_bool_expr(a:ps, '|')
+	if s:Sel_parser_accept(a:ps, '(')
+		let term = s:Sel_parser_bool_expr(a:ps, '|')
 		if empty(term)
 			throw "Expected term following `('"
 		endif
-		if !Sps_accept(a:ps, ')')
+		if !s:Sel_parser_accept(a:ps, ')')
 			throw "Expected `&', `|' or `)'"
 		endif
 		return term
@@ -4298,7 +4423,7 @@ fu! Sps_term(ps)
 	return {}
 endfu
 " Debug function
-fu! S_Sps_expr_to_string(expr, indent)
+fu! s:Sel_parser_expr_to_string(expr, indent)
 	let sw = 2
 	let s = ''
 	" Print recursively.
@@ -4313,26 +4438,28 @@ fu! S_Sps_expr_to_string(expr, indent)
 		let s .= "(\n" . (repeat(' ', (a:indent + 1) * sw))
 		let first_expr = 1
 		for sexpr in a:expr.expr
-			let sep = first_expr ? '' : (' ' . (a:expr.op[0] =~ '&' ? '&&' : '||') . ' ')
-			let s .= sep . S_Sps_expr_to_string(sexpr, a:indent + 1)
+			let sep = first_expr
+				\? ''
+				\: (' ' . (a:expr.op[0] =~ '&' ? '&&' : '||') . ' ')
+			let s .= sep . s:Sel_parser_expr_to_string(sexpr, a:indent + 1)
 			let first_expr = 0
 		endfor
 		let s .= "\n" . repeat(' ', a:indent * sw) . ")"
 	endif
 	return s
 endfu
-fu! S_Parse_selector(sel)
-	let ps = Sps_tok_init(a:sel)
+fu! s:Parse_selector(sel)
+	let ps = s:Sel_parser_tok_init(a:sel)
 	try
-		let expr = Sps_bool_expr(ps, '|')
+		let expr = s:Sel_parser_bool_expr(ps, '|')
 		if !empty(expr)
 			"Make sure returned expression consumed all input.
-			if !Sps_accept(ps, '\s*$', 1)
+			if !s:Sel_parser_accept(ps, '\s*$', 1)
 				throw "Expected `&&', `||' or end of input"
 			endif
 			" Valid expression
 			echo "Expression: " . ps.sel
-			echo S_Sps_expr_to_string(expr, 0)
+			echo s:Sel_parser_expr_to_string(expr, 0)
 		endif
 		return expr
 	catch
