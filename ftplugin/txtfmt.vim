@@ -3420,18 +3420,21 @@ endfu
 
 " TODO: Perhaps rename...
 fu! s:Vmap_compute(rgn, pspecs, opt)
-	let sync_info = s:Vmap_sync_start(a:rgn, a:opt)
-	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
-	" start/end indices returned explicitly.
-	" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
-	" predicate for tokens.
-	"
-	" Question: When do we expect empty?
-	let toks = s:Vmap_collect(a:rgn, sync_info, a:opt)
-	call s:dbg_display_toks("Vmap_collect", toks)
-	if !s:Is_empty(a:pspecs.rgns[a:rgn])
+	let toks = {}
+	for rgn in keys(a:pspecs.rgns)
+		let sync_info = s:Vmap_sync_start(rgn, a:opt)
+		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
+		" start/end indices returned explicitly.
+		" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
+		" predicate for tokens.
+		"
+		" Question: When do we expect empty?
+		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:opt)
+		call s:dbg_display_toks("Vmap_collect", toks[rgn])
+	endfor
+	if !s:Is_empty(a:pspecs.rgns)
 		" Apply pspec without worrying about whether toks will be kept.
-		call s:Vmap_apply(a:rgn, a:pspecs, toks)
+		call s:Vmap_apply(a:pspecs, toks)
 	endif
 	call s:dbg_display_toks("Vmap_apply", toks)
 	return toks
@@ -4040,17 +4043,22 @@ fu! s:dbg_display_toks(context, toks)
 	endif
 	echo "\r"
 	echo a:context
-	for ti in a:toks
-		if ti.typ == 'eob'
-			echo ti.rgn . ' ' . '<eob> virtual tok'
-		else
-			echo printf('(%3d, %3d): %s(%2d): => %s'
-				\, empty(ti.pos) ? -1 : ti.pos[0]
-				\, empty(ti.pos) ? -1 : ti.pos[1]
-				\, ti.rgn, ti.idx, ti.action)
-		endif
+	" TODO: This is a kludge to keep things working during refactor...
+	let rgns = type(a:toks) == 4 ? keys(a:toks) : ['']
+	for rgn in rgns
+		let toks = empty(rgn) ? a:toks : a:toks[rgn]
+		for ti in toks
+			if ti.typ == 'eob'
+				echo ti.rgn . ' ' . '<eob> virtual tok'
+			else
+				echo printf('(%3d, %3d): %s(%2d): => %s'
+					\, empty(ti.pos) ? -1 : ti.pos[0]
+					\, empty(ti.pos) ? -1 : ti.pos[1]
+					\, ti.rgn, ti.idx, ti.action)
+			endif
+		endfor
+		echo "\r"
 	endfor
-	echo "\r"
 endfu
 
 " TODO: Consider whether is_del is best approach? Perhaps string op arg instead?
@@ -4067,18 +4075,16 @@ fu! s:Operate_region(pspecs, opt)
 	" Big TODO: Parameterize the functions taking rgn; this will obviate the
 	" need for multiple loops (currently, the pipeline is broken up so we can do
 	" the (non-rgn-specific) s:Delete_region_text once-only.
-	let toks = {}
-	for rgn in keys(a:pspecs.rgns)
-		" TODO: May change name to calculate or something?
-		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs, a:opt)
-		if a:opt['op'] == 'delete'
+	let toks = s:Vmap_compute(rgn, a:pspecs, a:opt)
+	if a:opt['op'] == 'delete'
+		for rgn in toks
 			" Update list to reflect toks we're going to delete before cleanup.
 			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
 			" Issue: Some indices aren't getting updated properly.
 			call s:Vmap_delete(toks[rgn], dri)
 			call s:dbg_display_toks("Vmap_delete " . rgn, toks[rgn])
-		endif
-	endfor
+		endfor
+	endif
 	if a:opt['op'] == 'delete'
 		" Delete text between phantom head (inclusive) and phantom tail (exclusive).
 		" Note: Phantom tail tok would be *appended* at the stored position: hence,
