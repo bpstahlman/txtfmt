@@ -4063,48 +4063,36 @@ fu! s:Operate_region(pspecs, opt)
 		" Get info needed for proper delete.
 		let dri = s:Vmap_get_region_info(a:opt)
 	endif
-	" Loop over rgn types.
-	" Big TODO: Parameterize the functions taking rgn; this will obviate the
-	" need for multiple loops (currently, the pipeline is broken up so we can do
-	" the (non-rgn-specific) s:Delete_region_text once-only.
-	let toks = {}
-	for rgn in keys(a:pspecs.rgns)
-		" TODO: May change name to calculate or something?
-		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs, a:opt)
-		if a:opt['op'] == 'delete'
-			" Update list to reflect toks we're going to delete before cleanup.
-			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
-			" Issue: Some indices aren't getting updated properly.
-			call s:Vmap_delete(toks[rgn], dri)
-			call s:dbg_display_toks("Vmap_delete " . rgn, toks[rgn])
-		endif
-	endfor
+	" TODO: May change name to calculate or something?
+	let toks = s:Vmap_compute(a:pspecs, a:opt)
 	if a:opt['op'] == 'delete'
-		" Delete text between phantom head (inclusive) and phantom tail (exclusive).
-		" Note: Phantom tail tok would be *appended* at the stored position: hence,
-		" the 'inclusive' arg.
-		" Important Note: Delete the region text once-only, regardless of number
-		" of rgn types involved.
-		" WHOA!!!! Do I really not need to know # of bytes deleted by the following?
-		" If not, I did a lot of work in Delete_region_text for nothing... Could
-		" probably really simplify things if # deleted bytes isn't needed.
+		" Update list to reflect toks we're going to delete before cleanup.
+		call s:dbg_display_toks("before Vmap_delete", toks)
+		" Issue: Some indices aren't getting updated properly.
+		call s:Vmap_delete(toks, dri)
+		call s:dbg_display_toks("Vmap_delete", toks)
+		" Delete text between phantom head (inclusive) and phantom tail
+		" (exclusive).
+		" Note: Phantom tail tok would be *appended* at the stored position:
+		" hence, the 'inclusive' arg.
+		" WHOA!!!! Do I really not need to know # of bytes deleted by the
+		" following? If not, I did a lot of work in Delete_region_text for
+		" nothing... Could probably really simplify things if # deleted bytes
+		" isn't needed.
 		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Now for cleanup phases...
-	for rgn in keys(a:pspecs.rgns)
-		" TODO: Consider call by ref vs return...
-		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks[rgn])
-		call s:Vmap_cleanup(rgn, toks[rgn], a:opt)
-		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks[rgn])
-		" TODO: Consider integrating this cleanup into Vmap_cleanup, but
-		" probably wait till refactor is complete...
-		call filter(toks[rgn], 'v:val.typ == "tok"')
-		call s:dbg_display_toks("Removed virtual toks " . rgn, toks[rgn])
-		" TODO: Convert to in-place merge.
-		let mtoks = s:Vmap_rev_and_merge(mtoks, toks[rgn], a:opt)
-		call s:dbg_display_toks("Vmap_rev_and_merge " . rgn, mtoks)
-	endfor
-	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
+	call s:dbg_display_toks("before Vmap_cleanup", toks)
+	call s:Vmap_cleanup(toks, a:opt)
+	call s:dbg_display_toks("Vmap_cleanup", toks)
+	" TODO: Consider integrating this cleanup into Vmap_cleanup, but
+	" probably wait till refactor is complete...
+	call filter(toks, 'v:val.typ == "tok"')
+	call s:dbg_display_toks("Removed virtual toks", toks)
+	" TODO: Convert to in-place merge.
+	let mtoks = s:Vmap_rev_and_merge(mtoks, toks, a:opt)
+	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
+
 	call s:Vmap_apply_changes(mtoks, a:opt)
 	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
