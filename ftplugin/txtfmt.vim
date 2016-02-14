@@ -1820,7 +1820,7 @@ fu! s:Translate_fmt_clr_spec(s)
 		if empty(s[1])
 			" valid default format
 			return nr2char(
-				\b:txtfmt_{b:txtfmt_rgn_typ_abbrevs[t]}_first_tok)
+				\b:txtfmt_{b:txtfmt_rgn_typ_names[t]}_first_tok)
 
 		else
 			" Shouldn't be anything after [fck]-
@@ -2082,7 +2082,9 @@ fu! s:Get_cur_rgn_info()
 endfu
 " >>>
 " Function: s:Parse_fmt_clr_transformer() <<<
-" Convert the input comma-separated f/c/k transformer spec to a struct.
+" Input: [<selector>/]<fck-spec>
+" Convert the input comma-separated f/c/k transformer spec and optional
+" preceding selector expression to a struct.
 " Input Format: In lieu of full grammar, here are some illustrative examples:
 " fubi
 "   Add bold-underline-italic
@@ -2113,25 +2115,35 @@ endfu
 "   Same as previous (this was actually the only way pre-vmap Txtfmt)
 " Output Format:
 " {
-"   fmt:
-"     0-N - {set-fmt-mask}
-"     |
-"     [
-"       0-N - {add-fmt-mask},
-"       0-N - {sub-fmt-mask}
-"     ],
-"   clr: 0-{max-active-clr-num}
-"   bgc: 0-{max-active-bgc-num}
+"   sel: [] | {}
+"   rgns: {
+"     fmt:
+"       0-N - {set-fmt-mask}
+"       |
+"       [
+"         0-N - {add-fmt-mask},
+"         0-N - {sub-fmt-mask}
+"       ],
+"     clr: 0-{max-active-clr-num}
+"     bgc: 0-{max-active-bgc-num}
+"   }
 " }
 " Note: The value 0 in an additive mode fmt mask is a NOP. In non-additive
 " (prescriptive) mode, it clears existing fmts. For colors, 0 means 'no color'.
 fu! s:Parse_fmt_clr_transformer(specs)
-	" Initalize return object.
-	let ret = {}
-	let specs = TxtfmtUtil_strip(a:specs)
+	" Strip off the selector if it was supplied.
+	" Note: The following patterns strip leading and trailing whitespace on the
+	" components.
+	let [_, sel, specs; rest] = matchlist(a:specs, '^\%(\s*\([^/]\{-}\)\s*/\)\?\s*\(.\{-}\)\s*$')
 	if empty(specs)
 		" Effectively empty spec. Return NOP object.
-		return ret
+		return {}
+	endif
+	" Initalize non-empty return object.
+	let ret = {'sel': {'op': '!', 'val': 1}, 'rgns': {}}
+	let rgns = ret.rgns
+	if !empty(sel)
+		let ret.sel = S_Parse_selector(sel)
 	endif
 	" Split the comma or space-separated f/c/k components
 	" Note: Compatibility option determines whether components can be separated
@@ -2157,7 +2169,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 		if t !~ '[fck]'
 			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
 		endif
-		if has_key(ret, b:txtfmt_rgn_typ_abbrevs[t])
+		if has_key(rgns, b:txtfmt_rgn_typ_abbrevs[t])
 			" We've already processed a component of this type.
 			throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
 		endif
@@ -2173,7 +2185,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			" from being interpreted as attr.
 			if empty(spec) || spec == '=' || spec == '-' || spec == '=-'
 				" Clear all fmt attrs
-				let ret.fmt = 0
+				let rgns.fmt = 0
 			else
 				" Note: Special cases have all been handled.
 				" Additive or prescriptive mode?
@@ -2207,10 +2219,10 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				endfor
 				if additive
 					" Save list of add/sub masks.
-					let ret.fmt = [masks['+'], masks['-']]
+					let rgns.fmt = [masks['+'], masks['-']]
 				else
 					" Save scalar 'set' mask
-					let ret.fmt = masks['=']
+					let rgns.fmt = masks['=']
 				endif
 			endif
 		elseif t == 'c' || t == 'k'
@@ -2234,7 +2246,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 					endif
 				endif
 			endif
-			let ret[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
+			let rgns[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
 		else
 			throw "Invalid type specifier in fmt/clr transformer spec: " . t
 		endif
@@ -3319,8 +3331,8 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 	return toks
 endfu
 
-fu! s:Vmap_apply(rgn, pspec, toks)
-	let pspec = a:pspec
+fu! s:Vmap_apply(rgn, pspecs, toks)
+	let pspecs = a:pspecs
 	let toks = a:toks
 
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
@@ -3351,16 +3363,30 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 				" Real tok - not phantom
 				let old_idx = tok.idx
 			endif
-			if a:rgn == 'fmt'
-				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
-			else
-				let new_idx = pspec
+			" TODO: Better way to do this...
+			" TEMP DEBUG: Hardcode values in clr/bgc for testing.
+			" TODO: Refactor outer loop so that we can have real values for all
+			" 3 of fmt/clr/bgc here. This is a significant refactor...
+			let ts = {'fmt': 0, 'clr': 3, 'bgc': 5}
+			let ts[a:rgn] = old_idx
+			if s:Check_selector(pspecs.sel, ts)
+				if a:rgn == 'fmt'
+					let new_idx = s:Vmap_apply_fmt(pspecs.rgns[a:rgn], old_idx)
+				else
+					let new_idx = pspecs.rgns[a:rgn]
+				endif
 			endif
 		elseif tok.loc == '='
 			let old_idx = tok.idx
-			" Leave new_idx == -1 for clr/bgc toks to force deletion.
-			if a:rgn == 'fmt'
-				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
+			" TODO: Better way to do this...
+			" TEMP DEBUG: Hardcode values in clr/bgc for testing.
+			let ts = {'fmt': 0, 'clr': 3, 'bgc': 5}
+			let ts[a:rgn] = old_idx
+			if s:Check_selector(pspecs.sel, ts)
+				" Leave new_idx == -1 for clr/bgc toks to force deletion.
+				if a:rgn == 'fmt'
+					let new_idx = s:Vmap_apply_fmt(pspecs.rgns[a:rgn], old_idx)
+				endif
 			endif
 		elseif tok.loc == '}'
 			if tok.action != 'a'
@@ -3393,7 +3419,7 @@ fu! s:Vmap_apply(rgn, pspec, toks)
 endfu
 
 " TODO: Perhaps rename...
-fu! s:Vmap_compute(rgn, pspec, opt)
+fu! s:Vmap_compute(rgn, pspecs, opt)
 	let sync_info = s:Vmap_sync_start(a:rgn, a:opt)
 	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 	" start/end indices returned explicitly.
@@ -3403,9 +3429,9 @@ fu! s:Vmap_compute(rgn, pspec, opt)
 	" Question: When do we expect empty?
 	let toks = s:Vmap_collect(a:rgn, sync_info, a:opt)
 	call s:dbg_display_toks("Vmap_collect", toks)
-	if !s:Is_empty(a:pspec)
+	if !s:Is_empty(a:pspecs.rgns[a:rgn])
 		" Apply pspec without worrying about whether toks will be kept.
-		call s:Vmap_apply(a:rgn, a:pspec, toks)
+		call s:Vmap_apply(a:rgn, a:pspecs, toks)
 	endif
 	call s:dbg_display_toks("Vmap_apply", toks)
 	return toks
@@ -4042,9 +4068,9 @@ fu! s:Operate_region(pspecs, opt)
 	" need for multiple loops (currently, the pipeline is broken up so we can do
 	" the (non-rgn-specific) s:Delete_region_text once-only.
 	let toks = {}
-	for rgn in keys(a:pspecs)
+	for rgn in keys(a:pspecs.rgns)
 		" TODO: May change name to calculate or something?
-		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs[rgn], a:opt)
+		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs, a:opt)
 		if a:opt['op'] == 'delete'
 			" Update list to reflect toks we're going to delete before cleanup.
 			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
@@ -4065,7 +4091,7 @@ fu! s:Operate_region(pspecs, opt)
 		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Now for cleanup phases...
-	for rgn in keys(a:pspecs)
+	for rgn in keys(a:pspecs.rgns)
 		" TODO: Consider call by ref vs return...
 		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks[rgn])
 		call s:Vmap_cleanup(rgn, toks[rgn], a:opt)
@@ -4194,13 +4220,13 @@ fu! s:Highlight_region(rgn, mode)
 	" Prompt user for desired highlighting
 	let tokstr = s:Prompt_fmt_clr_spec()
 	" Parse and validate fmt/clr transformer spec
-	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
+	let pspecs = s:Parse_fmt_clr_transformer(tokstr)
 	" Check for Cancel request
 	" Note: Nothing about position or mode has changed at this point.
 	" TODO: In event of cancel, should we return {} as a signal to caller who may wish take advantage?
-	if !empty(tokinfo)
+	if !empty(pspecs)
 		" Perform the highlighting.
-		call s:Operate_region(tokinfo, opt)
+		call s:Operate_region(pspecs, opt)
 	endif
 	return opt
 endfu
@@ -4362,7 +4388,7 @@ fu! s:Sel_parser_bool_expr(ps, op)
 endfu
 fu! s:Sel_parser_try_fterm(ps)
 	if s:Sel_parser_accept(a:ps, 'f')
-		let term = {}
+		let term = {'mask': 0}
 		" Caveat: Don't let the pattern consume the 1st in pair of &'s or |'s
 		" Allow =- though it makes little sense.
 		let m = s:Sel_parser_match(a:ps, '\s*\%(\%(||\|&&\)\)\@!'
@@ -4370,11 +4396,15 @@ fu! s:Sel_parser_try_fterm(ps)
 		if empty(m) || empty(m[2])
 			" Literally or effectively f-
 			let term.op = 'f='
-			let term.attrs = ''
 		else
 			" Non-default attrs
 			let term.op = 'f' . (empty(m[1]) ? '=' : m[1])
-			let term.attrs = m[2]
+			" TODO: Ensure m[2] is validated somewhere: either prior to this or
+			" in loop below... (Probably wait till I've refactored for latest
+			" format change.)
+			for attr in split(m[2], '\zs')
+				let term.mask = or(term.mask, s:ubisrc_mask[attr])
+			endfor
 		endif
 		return term
 	endif
@@ -4391,7 +4421,29 @@ fu! s:Sel_parser_try_ckterm(ps)
 		" Note: Permit interior whitespace in name if cfg_color_name_compat set.
 		let m = s:Sel_parser_match(a:ps, re_cname_char
 			\. '\%(' . (s:cfg_color_name_compat ? '\s*' : '') . re_cname_char . '\)*')
-		let term.cname = empty(m) ? '-' : m[0]
+		let cname = empty(m) ? '-' : m[0]
+
+		" Set color index: 0 = default, with 1 corresponding to first
+		" non-default color.
+		if cname == '-'
+			let term.idx = 0
+		else
+			" TODO!!!!!!!!!!!!!!!! 
+			" Obviate need for boilerplate error-checking after call to
+			" Lookup_clr_namepat - probably just have it throw exception
+			" directly, but there's a legacy case to consider...
+			let term.idx = s:Lookup_clr_namepat(term.op, cname)
+			if term.idx == 0
+				throw "Invalid color name pattern: '" . cname . "'"
+			elseif term.idx < 0
+				" TODO_BG: Make sure the help note below is still valid after
+				" help has been updated.
+				throw "Color ".(-1 * term.idx)." is not an active "
+					\.(term.op ==? 'c' ? "foreground" : "background")
+					\." color. (:help "
+					\.(term.op ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
+			endif
+		endif
 		return term
 	endif
 	" No clr/bgc term
@@ -4431,9 +4483,9 @@ fu! s:Sel_parser_expr_to_string(expr, indent)
 		let s .= "!"
 	endif
 	if a:expr.op =~ 'f[=&|]'
-		let s .= a:expr.op . '{' . a:expr.attrs . '}'
+		let s .= a:expr.op . '{' . printf('$%02x', a:expr.mask) . '}'
 	elseif a:expr.op =~ '[ck]'
-		let s .= a:expr.op . '{' . a:expr.cname . '}'
+		let s .= a:expr.op . a:expr.idx
 	elseif a:expr.op =~ '[&|]'
 		let s .= "(\n" . (repeat(' ', (a:indent + 1) * sw))
 		let first_expr = 1
@@ -4448,7 +4500,8 @@ fu! s:Sel_parser_expr_to_string(expr, indent)
 	endif
 	return s
 endfu
-fu! s:Parse_selector(sel)
+fu! S_Parse_selector(sel)
+	echomsg "S_Parse_selector got " . a:sel
 	let ps = s:Sel_parser_tok_init(a:sel)
 	try
 		let expr = s:Sel_parser_bool_expr(ps, '|')
@@ -4464,8 +4517,52 @@ fu! s:Parse_selector(sel)
 		return expr
 	catch
 		echoerr "Syntax error in selector at char offset " . ps.idx
-			\. ": " . v:exception . ", unconsumed input: `" . ps.sel[ps.idx:] . "'"
+			\. ": " . v:exception . " at " . v:throwpoint
+			\. ", unconsumed input: `" . ps.sel[ps.idx:] . "'"
 	endtry
+endfu
+
+" Evaluate input expression against the input toks, returning 1 if expression
+" evaluates true.
+" Inputs:
+" expr: expression in form returned by Parse_selector
+" toks: {
+"   fmt: <fmt-mask>
+"   clr: <fg-color-number>
+"   bgc: <bg-color-number>
+" }
+fu! s:Check_selector(expr, toks)
+	" Cache inputs for convenience.
+	let [e, t] = [a:expr, a:toks]
+	" Set val within one of the if's below, handling any negation at end.
+	if type(e) == 0
+		let val = e
+	elseif e.op == '!'
+		" Boolean val.
+		let val = e.val
+	elseif e.op =~ '^[&|]$'
+		" Initialize to identity val, toggling in loop on short-circuit.
+		let val = e.op == '&' ? 1 : 0
+		for sexpr in e.expr
+			if !val == !!s:Check_selector(sexpr, t)
+				let val = !val
+				break
+			endif
+		endfor
+	elseif e.op =~ '^f[=&|]$'
+		if e.op[1] == '='
+			let val = e.mask == t.fmt
+		else
+			let val = function(e.op[1] == '&' ? 'and' : 'or')(e.mask, t.fmt)
+		endif
+	elseif e.op =~ '^[ck]$'
+		echomsg "Color comparison" . e.idx . " -- " . t[b:txtfmt_rgn_typ_abbrevs[e.op]]
+		let val = e.idx == t[b:txtfmt_rgn_typ_abbrevs[e.op]]
+	else
+		throw "Internal Error! Invalid term in selector expression: " . string(e)
+	endif
+	echomsg "Check_selector returning " . (has_key(e, 'neg') && e.neg ? !val : !!val)
+	return has_key(e, 'neg') && e.neg ? !val : !!val
 endfu
 
 " >>>
