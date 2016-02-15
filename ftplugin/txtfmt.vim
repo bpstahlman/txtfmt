@@ -2695,13 +2695,16 @@ endfu
 "   tok: <tok-char>
 " }
 " Post Condition: Unless 'n' flag supplied, will be positioned on a found token.
-fu! s:Search_tok(rgn, sflags, ...)
+" REFACTOR_TODO: Modify comments now that this accepts list of rgn types.
+fu! s:Search_tok(rgns, sflags, ...)
 	" Note: For search(), stopline of 0 works like omitting arg.
 	let stopline = a:0 ? a:1 : 0
 	" Initialize return struct.
 	let ret = {'typ': 'eob', 'rgn': a:rgn}
 	" TODO: Consider adding 'loc' somewhere in return struct.
-	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
+	let re_tok = empty(a:rgns)
+		\? b:txtfmt_re_any_tok
+		\: join(map(copy(a:rgns), 'b:txtfmt_re_{v:val}_tok'), '\|')
 	" TODO: Consider doing away with sflags, in favor of distinct args.
 	let [lnum, col] = searchpos(re_tok, a:sflags . 'W', stopline)
 	if lnum
@@ -3203,6 +3206,76 @@ fu! s:Vmap_sync_start(rgn, opt)
 		\'tok_infos': tok_infos
 	\}
 endfu
+fu! s:Vmap_sync_start_experimental(rgn, opt)
+	let sel_beg_pos = a:opt.rgn.beg
+	let sel_end_pos = a:opt.rgn.end
+	let stopline_beg = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)[0]
+	" TODO: May not need the end stoppos any more... Actually, we should
+	" probably just get it elsewhere (e.g., in Vmap_collect).
+	let stopline = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)[0]
+	" Start looking at head of vsel.
+	call cursor(sel_beg_pos)
+	" Look backward for an ss_safe tok if we can find it.
+	" REFACTOR_TODO: Perhaps check whether bgc active?
+	" Maintain running list of rgns still 'unsafe'.
+	let rgns_unsafe = ['fmt', 'clr', 'bgc']
+	" Keep up with pos of earliest found token by type.
+	let prev_pos = {'fmt': [], 'clr': [], 'bgc': []}
+	" Maintain mixed list of tokens.
+	" Note: We can stop collecting tokens of a given rgn type once we've found
+	" a supersedence safe token of that type.
+	let tok_infos = []
+	while !empty(rgns_unsafe)
+		" TODO: Change some of the syncing constraint stuff now that the zwa's
+		" are no longer used...
+		" REFACTOR_TODO: Make Search_tok handle list of rgn types.
+		let ti = s:Search_tok(rgns_unsafe, 'b', stopline_beg)
+		if ti.typ != 'tok'
+			" Couldn't find ss safe tok within stop distance.
+			break
+		endif
+		" Add found tok, whether supersedence constraint satisfied or not.
+		call insert(tok_infos, ti)
+		" Has this tok satisfied supersedence constraint? Look only up to next
+		" tok of this type (if one was found) or head of vsel.
+		if s:Contains_hlable(ti.pos, empty(prev_pos[ti.rgn])
+			\? sel_beg_pos : prev_pos[ti.rgn], [0, 0])
+			call remove(rgns_unsafe, index(rgns_unsafe, ti.rgn))
+		endif
+		" Cache last physical tok encountered.
+		let prev_pos[ti.rgn] = ti.pos
+	endwhile
+	" Check for rgn-specific failure to find ss_safe tok.
+	" Note: We're going to have to prepend a virtual tok to satisfy
+	" supersedence constraint.
+	" TODO: Make sure the virtual tok doesn't need more of the stuff
+	" Search_tok normally returns. E.g., what about 'tok'? Should it be set,
+	" or left empty (as for <eob>).
+	" Assumption: We're either on earliest tok found or vsel head.
+	if empty(s:Backward_char())
+		" Already at head of buffer
+		let idxs = {'fmt': 0, 'clr': 0, 'bgc': 0}
+	else
+		" Sitting 1 char prior to earliest point of interest (which could
+		" be either vsel head or actual tok)
+		" Sync on synstack.
+		let idxs = s:Get_cur_rgn_info()
+	endif
+	" TODO: Is actual char really needed in the struct? Remove if not used.
+	for rgn in rgns_unsafe
+		call insert(tok_infos, {
+			\'typ': 'tok', 'pos': [], 'rgn': rgn,
+			\'idx': idxs[rgn], 'chr': s:Idx_to_tok(rgn, idxs[rgn])
+		\})
+	endfor
+	
+	" TODO: May not need the end stopline any more... Actually, we should
+	" probably just get it elsewhere (e.g., in Vmap_collect).
+	return {
+		\'stopline': stopline,
+		\'tok_infos': tok_infos
+	\}
+endfu
 " Note: This function also should augment tok_info with loc and action: i.e.,
 " in addition to the basic tok returned by Search_tok, the toks in the
 " returned list will have the following:
@@ -3212,7 +3285,7 @@ endfu
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
 " VMAPS TODO: Update function header.
-fu! s:Vmap_collect(rgn, sync_info, opt)
+fu! s:Vmap_collect(sync_info, opt)
 	let toks = a:sync_info.tok_infos
 	" Mark toks added during sync as being prior to vsel.
 	" TODO: Consider doing this in Search_tok itself...
@@ -3221,6 +3294,8 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		let tok.action = ''
 	endfor
 	" Final tok in list (latest in buf) is our starting point.
+	" REFACTOR_TODO: Need to start with last physical tok if there is one
+	" (which, if it exists, will be one of the final 3).
 	let tok = toks[-1]
 	if !empty(tok.pos)
 		" Actual sync tok: start on it and disallow cur pos match.
@@ -3233,18 +3308,19 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		let allow_cmatch = 1
 	endif
 	let ti_last = {}
-	let sel_cmp_prev = -1
+	let sel_cmp_prev = {'fmt': -1, 'clr': -1, 'bgc': -1}
 	let [sel_beg_found, sel_end_found] = [0, 0]
 	" Ref used to facilitate delayed add (primarily for eob special case).
 	while 1
 		" Look for next tok (or hla) within stopline range (not necessarily in vsel)
-		let ti = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stopline)
+		" Note: Empty string for rgn means any rgn type.
+		let ti = s:Search_tok('', allow_cmatch ? 'c' : '', a:sync_info.stopline)
 		let allow_cmatch = 0
 		" TODO: Consider using different test for <eob>.
 		let sel_cmp = ti.typ != 'tok'
 			\? 1
 			\: s:Cmp_pos_to_rng(ti.pos, a:opt.rgn.beg, a:opt.rgn.end)
-		if sel_cmp_prev < sel_cmp
+		if sel_cmp_prev[ti.rgn] < sel_cmp
 			" We've advanced w.r.t. vsel.
 			if !sel_beg_found
 				" Need to add something for head: either a phantom (here) or
@@ -3258,7 +3334,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 					" What about 'typ'? Should there be a special one?
 					call add(toks, {
 						\'typ': 'tok',
-						\'rgn': a:rgn,
+						\'rgn': ti.rgn,
 						\'pos': a:opt.rgn.beg,
 						\'idx': -1,
 						\'tok': '',
@@ -3274,7 +3350,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				" TODO: Decide on 'tok' for phantom... Should we even add?
 				call add(toks, {
 					\'typ': 'tok',
-					\'rgn': a:rgn,
+					\'rgn': ti.rgn,
 					\'pos': a:opt.rgn.end,
 					\'idx': -1,
 					\'tok': '',
@@ -3293,15 +3369,15 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				\: a:opt.rgn.end == ti.pos ? '}' : '='
 			if ti.loc == '>'
 				" Do we already have a candidate 'last tok'?
-				if !empty(ti_last)
+				if !has_key(ti_last, ti.rgn)
 					" Any hlable between ti_last and this one? If so, current
 					" tok is unnecessary.
-					if s:Contains_hlable(ti_last.pos, ti.pos, [0, 0])
+					if s:Contains_hlable(ti_last[ti.rgn].pos, ti.pos, [0, 0])
 						break
 					endif
 				endif
 				" Current tok is needed, and becomes candidate for 'last tok'.
-				let ti_last = ti
+				let ti_last[ti.rgn] = ti
 			endif
 			" Finish updating and add the current tok.
 			let ti.action = ''
@@ -3311,7 +3387,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 			if ti.loc == '{' | let sel_beg_found = 1 | endif
 			call add(toks, ti)
 			" Update for next iteration...
-			let sel_cmp_prev = sel_cmp
+			let sel_cmp_prev[ti.rgn] = sel_cmp
 		else
 			" No more tokens in range (and hit hlable or end of buffer before
 			" finding one past range).
@@ -3331,7 +3407,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 	return toks
 endfu
 
-fu! s:Vmap_apply(rgn, pspecs, toks)
+fu! s:Vmap_apply(pspecs, toks)
 	let pspecs = a:pspecs
 	let toks = a:toks
 
@@ -3346,54 +3422,53 @@ fu! s:Vmap_apply(rgn, pspecs, toks)
 	" corresponding token to be marked for deletion. We do this iff we know
 	" (even before running cleanup logic) that the token is going away: e.g.,
 	" clr/bgc tok within region.
-	let old_idx = toks[0].idx
-	let i = 1
-	while i < len(toks)
+	" REFACTOR_TODO: Consider this...
+	" Initialize to sentinel so that we know when we encounter first of a type.
+	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1}
+	"let old_idx = toks[0].idx
+	for i in range(toks)
 		let tok = toks[i]
+		if old_idx[tok.rgn] < 0
+			" Boot-strap each rgn type.
+			let old_idx[tok.rgn] = tok.idx
+			continue
+		endif
 		" Skip non-tokens (e.g., <eob>).
-		if tok.typ != 'tok' | let i += 1 | continue | endif
+		if tok.typ != 'tok' | continue | endif
 		" TODO: If we guarantee new_idx is set within if/else, remove this...
 		let new_idx = -1
 		if tok.loc == '<'
 			" Change nothing prior to region, but do stay in sync.
-			let old_idx = tok.idx
-			let new_idx = old_idx
+			let old_idx[tok.rgn] = tok.idx
+			let new_idx = tok.idx
 		elseif tok.loc == '{'
 			if tok.action != 'i'
 				" Real tok - not phantom
-				let old_idx = tok.idx
+				let old_idx[tok.rgn] = tok.idx
 			endif
-			" TODO: Better way to do this...
-			" TEMP DEBUG: Hardcode values in clr/bgc for testing.
-			" TODO: Refactor outer loop so that we can have real values for all
-			" 3 of fmt/clr/bgc here. This is a significant refactor...
-			let ts = {'fmt': 0, 'clr': 3, 'bgc': 5}
-			let ts[a:rgn] = old_idx
-			if s:Check_selector(pspecs.sel, ts)
-				if a:rgn == 'fmt'
-					let new_idx = s:Vmap_apply_fmt(pspecs.rgns[a:rgn], old_idx)
+			if s:Check_selector(pspecs.sel, old_idx)
+				if tok.rgn == 'fmt'
+					let new_idx = s:Vmap_apply_fmt(pspecs.rgns.fmt, old_idx.fmt)
 				else
-					let new_idx = pspecs.rgns[a:rgn]
+					let new_idx = pspecs.rgns[tok.rgn]
 				endif
 			endif
 		elseif tok.loc == '='
-			let old_idx = tok.idx
-			" TODO: Better way to do this...
-			" TEMP DEBUG: Hardcode values in clr/bgc for testing.
-			let ts = {'fmt': 0, 'clr': 3, 'bgc': 5}
-			let ts[a:rgn] = old_idx
-			if s:Check_selector(pspecs.sel, ts)
+			let old_idx[tok.rgn] = tok.idx
+			if s:Check_selector(pspecs.sel, old_idx)
 				" Leave new_idx == -1 for clr/bgc toks to force deletion.
-				if a:rgn == 'fmt'
-					let new_idx = s:Vmap_apply_fmt(pspecs.rgns[a:rgn], old_idx)
+				if tok.rgn == 'fmt'
+					let new_idx = s:Vmap_apply_fmt(pspecs.rgns.fmt, old_idx.fmt])
 				endif
 			endif
 		elseif tok.loc == '}'
 			if tok.action != 'a'
 				" Real tok - not phantom
-				let old_idx = tok.idx
+				let old_idx[tok.rgn] = tok.idx
 			endif
-			let new_idx = old_idx
+			" REFACTOR_TODO: Following original logic, but need to verify that
+			" the intent was to revert to store old_idx for phantom...
+			let new_idx = old_idx[tok.rgn]
 		else " past vsel
 			break
 		endif
@@ -3415,26 +3490,41 @@ fu! s:Vmap_apply(rgn, pspecs, toks)
 			let tok.action = 'd'
 		endif
 		let i += 1
-	endwhile
+	endfor
 endfu
 
 " TODO: Perhaps rename...
-fu! s:Vmap_compute(rgn, pspecs, opt)
-	let sync_info = s:Vmap_sync_start(a:rgn, a:opt)
-	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
-	" start/end indices returned explicitly.
-	" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
-	" predicate for tokens.
-	"
-	" Question: When do we expect empty?
-	let toks = s:Vmap_collect(a:rgn, sync_info, a:opt)
-	call s:dbg_display_toks("Vmap_collect", toks)
-	if !s:Is_empty(a:pspecs.rgns[a:rgn])
+fu! s:Vmap_compute(pspecs, opt)
+	let toks = {}
+	" AUTO_TODO: Somehow have list of all rgn types of interest passed in, and
+	" loop over just those: e.g., rgn types involved both in pspecs and any
+	" selector.
+	for rgn in ['fmt', 'clr', 'bgc']
+		let sync_info = s:Vmap_sync_start(rgn, a:opt)
+		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
+		" start/end indices returned explicitly.
+		" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
+		" predicate for tokens.
+		"
+		" Question: When do we expect empty?
+		let toks[rgn] = s:Vmap_collect(a:rgn, sync_info, a:opt)
+		call s:dbg_display_toks("Vmap_collect", toks)
+	endfor
+
+	" REFACTOR_TODO: See what's needed here...
+	" Convert hash keyed by rgn type to single array.
+	" Note: The merge function should record (in sync_info) the index at which
+	" subsequent search should start (i.e., latest physical tok, or final tok).
+	let mtoks = s:Vmap_merge_toks(toks, sync_info, a:opt)
+
+	" REFACTOR_TODO: Consider contents of a:pspecs: can it be empty? When? What
+	" sort of checks?
+	if !s:Is_empty(a:pspecs.rgns)
 		" Apply pspec without worrying about whether toks will be kept.
-		call s:Vmap_apply(a:rgn, a:pspecs, toks)
+		call s:Vmap_apply(a:pspecs, mtoks)
 	endif
-	call s:dbg_display_toks("Vmap_apply", toks)
-	return toks
+	call s:dbg_display_toks("Vmap_apply", mtoks)
+	return mtoks
 endfu
 
 " Compare input positions (format: [row, col])
@@ -3502,6 +3592,44 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 		throw printf("Internal error: mutually-exclusive actions %s, %s at position [%d, %d].",
 			\act_a, act_b, a:t_a.pos[0], a:t_a.pos[1])
 	endif
+endfu
+
+" Convert hash of tok arrays, keyed by rgn type, to a single, ordered array of
+" toks, with rgn type stored in each element.
+fu! Vmap_merge_toks(toks, sync_info, opt)
+	let mtoks = []
+	" Build array of the arrays to be merged.
+	let aofa = []
+	for toks in values(a:toks)
+		if !empty(toks)
+			call add(aofa, toks)
+		endif
+	endfor
+	" As long as there are arrays to be merged...
+	" Possible TODO: There are definitely more efficient ways to do this, but
+	" I'm not convinced optimization makes sense.
+	while !empty(aofa)
+		let sel_idx = -1
+		" Find the array whose head tok comes next in buffer.
+		for idx in range(len(aofa))
+			" Compare this one with prev best (if any).
+			let cmp = sel_idx < 0
+				? -1 : s:Vmap_cmp_tok(aofa[idx][0], aofa[sel_idx][0]])
+			if cmp < 0
+				let sel_idx = idx
+			endif
+		endfor
+		" Merge selected tok into return array.
+		call add(mtoks, aofa[sel_idx][0])
+		" Remove processed tok (and possibly containing array).
+		if len(aofa[sel_idx] == 1)
+			" Remove tok and containing array, which is now empty.
+			call remove(aofa, sel_idx)
+		else
+			call remove(aofa[sel_idx], 0)
+		endif
+	endfor
+	return mtoks
 endfu
 
 " Reverse toks and merge with mtoks (assumed to be reversed/merged already).
@@ -4058,7 +4186,6 @@ endfu
 fu! s:Operate_region(pspecs, opt)
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
-	let mtoks = []
 	if a:opt['op'] == 'delete'
 		" Get info needed for proper delete.
 		let dri = s:Vmap_get_region_info(a:opt)
@@ -4090,6 +4217,7 @@ fu! s:Operate_region(pspecs, opt)
 	call filter(toks, 'v:val.typ == "tok"')
 	call s:dbg_display_toks("Removed virtual toks", toks)
 	" TODO: Convert to in-place merge.
+	" REFACTOR_TODO: Merge is no longer required. Revisit the function...
 	let mtoks = s:Vmap_rev_and_merge(mtoks, toks, a:opt)
 	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
 
