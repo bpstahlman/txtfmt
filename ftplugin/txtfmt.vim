@@ -2700,7 +2700,7 @@ fu! s:Search_tok(rgns, sflags, ...)
 	" Note: For search(), stopline of 0 works like omitting arg.
 	let stopline = a:0 ? a:1 : 0
 	" Initialize return struct.
-	let ret = {'typ': 'eob', 'rgn': a:rgn}
+	let ret = {'typ': 'eob'}
 	" TODO: Consider adding 'loc' somewhere in return struct.
 	let re_tok = empty(a:rgns)
 		\? b:txtfmt_re_any_tok
@@ -3428,13 +3428,13 @@ fu! s:Vmap_apply(pspecs, toks)
 	"let old_idx = toks[0].idx
 	for i in range(toks)
 		let tok = toks[i]
+		" Skip non-tokens (e.g., <eob>).
+		if tok.typ != 'tok' | continue | endif
+		" Boot-strap each rgn type.
 		if old_idx[tok.rgn] < 0
-			" Boot-strap each rgn type.
 			let old_idx[tok.rgn] = tok.idx
 			continue
 		endif
-		" Skip non-tokens (e.g., <eob>).
-		if tok.typ != 'tok' | continue | endif
 		" TODO: If we guarantee new_idx is set within if/else, remove this...
 		let new_idx = -1
 		if tok.loc == '<'
@@ -3489,7 +3489,6 @@ fu! s:Vmap_apply(pspecs, toks)
 			" Delete the tok (intended only for clr/bgc toks)
 			let tok.action = 'd'
 		endif
-		let i += 1
 	endfor
 endfu
 
@@ -3899,25 +3898,34 @@ endfu
 "     loc: <|{|=|}|>
 " }, ...]
 "
-fu! s:Vmap_cleanup(rgn, toks, opt)
+fu! s:Vmap_cleanup(toks, opt)
 	let toks = a:toks
 	" Keep up with latest tok that's safe from deletion.
 	" First tok is never deletable (and may not be an actual tok).
-	let ti_safe = toks[0]
+	""""let ti_safe = toks[0]
+	let ti_safe = {}
 	" Keep up with tok to be used in supersedence tests. Empty means skip
 	" supersedence check. First tok is never superseded.
 	let tip = {}
 	" Start with first tok susceptible to supersedence; i.e., tok *after*
 	" (virtual or actual) sync tok.
-	let idx = 1
+	let idx = 0
 	while idx < len(toks)
 		let ti = toks[idx]
+		" Skip the first tok of each rgn type, which is always ss safe.
+		if !has_key(ti_safe, ti.rgn)
+			let ti_safe[ti.rgn] = ti
+			let tip[ti.rgn] = {}
+			let idx += 1
+			continue
+		endif
 		if ti.typ == 'tok' && ti.action == 'd'
 			" Skip deleted toks, which have no impact on anything.
 			" Note: Won't see 'd' for anything but colors here.
 			let idx += 1
 			continue
 		endif
+
 		" Ensure that superseded or redundant toks are either discarded
 		" (phantom) or deleted from buffer.
 		" Note: No need to remove anything from list at this point: to ensure
@@ -3941,6 +3949,10 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				continue
 			endif
 		endif
+
+		" !!!!!!! UNDER CONSTRUCTION !!!!!! Should we cache some stuff like tip
+		" and ti_safe at this point? Examine the logic below...
+		<<< Pick up here >>>
 
 		" If here, we have a tok that is not *currently* redundant, but
 		" could supersede a preceding non-deleted tok (in which case, it could
@@ -4064,27 +4076,30 @@ endfu
 " thinking just delete the phantom at head, or for that matter, perhaps don't
 " even add it to begin with - it really serves no purpose...
 fu! s:Vmap_delete(toks, ri)
-	" TODO TODO: Clean this up with refactoring...
-	" Important: Currently, this is done by all 3 region types, and the result
-	" is exactly the same!!! At least calculate externally and pass in; however,
-	" a better way is to parameterize the various pipeline functions, which
-	" currently operate independently on the rgn types. This would also simplify
-	" the main controller function.
-
 	" Loop over all tokens, though the we won't really start doing anything till
 	" we get to phantom head.
 	" Possible TODO: If location were cached somewhere, we could start there.
+	let [idx_head, idx_tail] = [{}, {}]
 	let idx = 0
 	for tok in a:toks
 		if tok.loc == '{'
 			" TODO: Consider whether to skip adding this tok in the 'delete'
 			" case (since we know it will be deleted); in that case, phantom
 			" head pos would correspond to a:opt.rgn.beg.
-			let idx_head = idx
+			let idx_head[tok.rgn] = idx
+			" Note: Record position of *first* phantom head.
+			if !exists('l:del_head')
+				let del_head = idx
+			endif
 		elseif tok.loc == '}' || tok.loc == '>'
 			if tok.loc == '}'
 				" Phantom tail
-				let idx_tail = idx
+				let idx_tail[tok.rgn] = idx
+				" Note: Record position of *first* phantom tail (since delete is
+				" exclusive of phantom tail).
+				if !exists('l:del_tail')
+					let del_tail = idx
+				endif
 				" Note: Convert append to insert and adjust pos accordingly.
 				" Rationale: Any char at original append position is being
 				" deleted, which precludes append at that location.
@@ -4117,7 +4132,8 @@ fu! s:Vmap_delete(toks, ri)
 	" cleanup, and we don't want that either. We want it completely ignored.
 	" Assumption: Upstream logic guarantees existence of both idx_head and
 	" idx_tail.
-	call remove(a:toks, idx_head, idx_tail - 1)
+	" Note: del_tail - 1 reflects exclusive nature of delete at tail.
+	call remove(a:toks, del_head, del_tail - 1)
 endfu
 
 fu! s:Vmap_protect_bslash(opt)
@@ -4191,6 +4207,7 @@ fu! s:Operate_region(pspecs, opt)
 		let dri = s:Vmap_get_region_info(a:opt)
 	endif
 	" TODO: May change name to calculate or something?
+	" Note: Returned array of toks is merged (all rgns together).
 	let toks = s:Vmap_compute(a:pspecs, a:opt)
 	if a:opt['op'] == 'delete'
 		" Update list to reflect toks we're going to delete before cleanup.
@@ -4217,7 +4234,9 @@ fu! s:Operate_region(pspecs, opt)
 	call filter(toks, 'v:val.typ == "tok"')
 	call s:dbg_display_toks("Removed virtual toks", toks)
 	" TODO: Convert to in-place merge.
-	" REFACTOR_TODO: Merge is no longer required. Revisit the function...
+	" REFACTOR_TODO: Merge is no longer required. Revisit the function to see
+	" whether anything besides reverse is needed (I believe there may be some
+	" discards).
 	let mtoks = s:Vmap_rev_and_merge(mtoks, toks, a:opt)
 	call s:dbg_display_toks("Vmap_rev_and_merge", mtoks)
 
