@@ -2696,31 +2696,20 @@ endfu
 " }
 " Post Condition: Unless 'n' flag supplied, will be positioned on a found token.
 " REFACTOR_TODO: Modify comments now that this accepts list of rgn types.
-fu! s:Search_tok(rgns, sflags, ...)
+fu! S_Search_tok(rgns, sflags, ...)
 	" Note: For search(), stopline of 0 works like omitting arg.
 	let stopline = a:0 ? a:1 : 0
 	" Initialize return struct.
 	let ret = {'typ': 'eob'}
 	" TODO: Consider adding 'loc' somewhere in return struct.
 	let re_tok = empty(a:rgns)
-		\? b:txtfmt_re_any_tok
-		\: join(map(copy(a:rgns), 'b:txtfmt_re_{v:val}_tok'), '\|')
+		\ ? b:txtfmt_re_any_tok
+		\ : join(map(copy(a:rgns), 'b:txtfmt_re_{v:val}_tok'), '\|')
 	" TODO: Consider doing away with sflags, in favor of distinct args.
 	let [lnum, col] = searchpos(re_tok, a:sflags . 'W', stopline)
 	if lnum
 		" Cursor is on found tok (unless 'n' flag was input).
 		let ret.typ = 'tok'
-		" Parse the tok and store in denormalized form.
-		" TODO: Consider nesting all this within a sub-object.
-		" Rationale: Cleaner division between the object returned by this
-		" function (which could be non-tok) and an actual tok object.
-		" TODO: Make this change a separate refactor. There's already a lot on
-		" this one...
-		let ret.chr = s:Get_char([lnum, col])
-		let ti = s:Get_tok_info(ret.chr)
-		let ret.rgn = ti.rgn
-		let ret.idx = ti.idx
-		let ret.pos = [lnum, col]
 	else
 		" No tok within stopline distance; try unbounded search that stops at
 		" tok or hlable, whichever comes first.
@@ -2742,6 +2731,8 @@ fu! s:Search_tok(rgns, sflags, ...)
 		if lnum
 			" Found either tok or hlable (but haven't moved cursor to it).
 			if submatch == 2
+				" IMPORTANT TODO: This case is *very* rare, but possible.
+				" Go over function logic and intended use case again...
 				let ret.typ = 'tok'
 				" Position on found tok unless prevented by input flag.
 				if a:sflags !~ 'n'
@@ -2754,6 +2745,25 @@ fu! s:Search_tok(rgns, sflags, ...)
 				let ret.typ = 'hla'
 			endif
 		endif
+	endif
+	" Do this here for all cases that find tok...
+	" Note: I've just moved this block down here; prior to this, there was a
+	" slight bug whereby tok details didn't get filled in for submatch == 2 case
+	" above.
+	" TODO: Rework this function, perhaps taking advantage of positioning on
+	" cursor when 'n' flag is omitted.
+	if ret.typ == 'tok'
+		" Parse the tok and store in denormalized form.
+		" TODO: Consider nesting all this within a sub-object.
+		" Rationale: Cleaner division between the object returned by this
+		" function (which could be non-tok) and an actual tok object.
+		" TODO: Make this change a separate refactor. There's already a lot on
+		" this one...
+		let ret.chr = s:Get_char([lnum, col])
+		let ti = s:Get_tok_info(ret.chr)
+		let ret.rgn = ti.rgn
+		let ret.idx = ti.idx
+		let ret.pos = [lnum, col]
 	endif
 
 	return ret
@@ -3285,7 +3295,7 @@ endfu
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
 " VMAPS TODO: Update function header.
-fu! s:Vmap_collect(sync_info, opt)
+fu! s:Vmap_collect(rgn, sync_info, opt)
 	let toks = a:sync_info.tok_infos
 	" Mark toks added during sync as being prior to vsel.
 	" TODO: Consider doing this in Search_tok itself...
@@ -3314,7 +3324,7 @@ fu! s:Vmap_collect(sync_info, opt)
 	while 1
 		" Look for next tok (or hla) within stopline range (not necessarily in vsel)
 		" Note: Empty string for rgn means any rgn type.
-		let ti = s:Search_tok('', allow_cmatch ? 'c' : '', a:sync_info.stopline)
+		let ti = s:Search_tok([a:rgn], allow_cmatch ? 'c' : '', a:sync_info.stopline)
 		let allow_cmatch = 0
 		" TODO: Consider using different test for <eob>.
 		let sel_cmp = ti.typ != 'tok'
@@ -3399,7 +3409,15 @@ fu! s:Vmap_collect(sync_info, opt)
 			" sentinel as simple as an empty object for <eob>. Also, consider
 			" changing the 'typ' field to a pair of flags: tok and hla.
 			if ti.typ == 'eob'
-				call add(toks, ti)
+				" REFACTOR_TODO: Consider this... For now, I just need to ensure
+				" that there's an <eob> for each rgn type; otherwise,
+				" Vmap_cleanup will break; is this the best way?
+				"for rgn in ['fmt', 'clr', 'bgc']
+				"	let ti_eob = {'typ': 'eob', 'rgn': rgn}
+				"	call add(toks, ti_eob)
+				"endfor
+				" NO! Rgn types haven't been merged yet!
+				let ti.rgn = a:rgn
 			endif
 			break
 		endif
@@ -3906,7 +3924,7 @@ fu! s:Vmap_cleanup(toks, opt)
 	let ti_safe = {}
 	" Keep up with tok to be used in supersedence tests. Empty means skip
 	" supersedence check. First tok is never superseded.
-	let tip = {}
+	let tip_ = {}
 	" Start with first tok susceptible to supersedence; i.e., tok *after*
 	" (virtual or actual) sync tok.
 	let idx = 0
@@ -3915,7 +3933,7 @@ fu! s:Vmap_cleanup(toks, opt)
 		" Skip the first tok of each rgn type, which is always ss safe.
 		if !has_key(ti_safe, ti.rgn)
 			let ti_safe[ti.rgn] = ti
-			let tip[ti.rgn] = {}
+			let tip_[ti.rgn] = {}
 			let idx += 1
 			continue
 		endif
@@ -3941,7 +3959,7 @@ fu! s:Vmap_cleanup(toks, opt)
 			" Perform 1st redundancy check using tip if it exists, else ti_safe.
 			" Design Decision: When both superseding and redundant toks exist,
 			" prefer to delete redundant.
-			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
+			if (empty(tip_[ti.rgn]) ? ti_safe.idx : tip.idx) == ti.idx
 				"echomsg "Removing in 1st red test: " . string(ti)
 				let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 				let idx += 1
@@ -3953,6 +3971,12 @@ fu! s:Vmap_cleanup(toks, opt)
 		" !!!!!!! UNDER CONSTRUCTION !!!!!! Should we cache some stuff like tip
 		" and ti_safe at this point? Examine the logic below...
 		<<< Pick up here >>>
+
+		" Cache for convenience.
+		" Note: tip can't be changed till after the big if, from tip_next.
+		if has_key(ti, 'rgn')
+			let tip = tip_[ti.rgn]
+		endif
 
 		" If here, we have a tok that is not *currently* redundant, but
 		" could supersede a preceding non-deleted tok (in which case, it could
@@ -3972,7 +3996,7 @@ fu! s:Vmap_cleanup(toks, opt)
 			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
 				\[tip.action == 'i', ti.action == 'a'], tip)
 				"echomsg "Not hlable between " . string(tip.pos)
-					\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
+					"\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
 				" TODO: Reword to reflect new meaning of bleed-through.
@@ -4010,7 +4034,7 @@ fu! s:Vmap_cleanup(toks, opt)
 			endif
 		endif
 		" Update for next iter.
-		let tip = tip_next
+		let tip_[ti.rgn] = tip_next
 		let idx += 1
 	endwhile
 endfu
