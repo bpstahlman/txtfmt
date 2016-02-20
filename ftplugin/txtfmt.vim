@@ -6660,7 +6660,6 @@ call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
 " Operator-pending mode mappings <<<
-nmap <Bslash>h :set opfunc=<SID>Operator<CR>g@
 call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
 			\":set opfunc=<SID>Highlight_operator<CR>g@")
 call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
