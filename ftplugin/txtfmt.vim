@@ -3448,6 +3448,12 @@ fu! s:Vmap_apply(pspecs, toks)
 	for tok in a:toks
 		" Skip non-tokens (e.g., <eob>).
 		if tok.typ != 'tok' | continue | endif
+		" Skip tokens whose type is not implicated in the input pspecs.
+		" REFACTOR_TODO: Prior to refactor, Vmap_apply wasn't even called in
+		" such cases. Makes sure this is the best way to handle...
+		if !has_key(a:pspecs.rgns, tok.rgn)
+			continue
+		endif
 		" Boot-strap each rgn type.
 		if old_idx[tok.rgn] < 0
 			let old_idx[tok.rgn] = tok.idx
@@ -3460,22 +3466,45 @@ fu! s:Vmap_apply(pspecs, toks)
 			let old_idx[tok.rgn] = tok.idx
 			let new_idx = tok.idx
 		elseif tok.loc == '{'
+			" TODO: Make sure phantom logic hasn't changed: in particular, make
+			" sure action will never be 'a' for phantom head. Pretty sure it's
+			" only an append (at tail) that can be converted to insert, and that
+			" doesn't matter here...
 			if tok.action != 'i'
 				" Real tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
+			" IMPORTANT TODO: Need to ensure that if tok is phantom and isn't
+			" selected, we don't leave it with default (and invalid) idx of -1.
 			if s:Check_selector(a:pspecs.sel, old_idx)
 				if tok.rgn == 'fmt'
+					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
 					let new_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				else
 					let new_idx = a:pspecs.rgns[tok.rgn]
 				endif
+			elseif tok.action == 'i'
+				" Delete unselected phantom head!
+				" See 'IMPORTANT TODO' above, and note that this logic is
+				" provisional - not sure it's the correct solution... The idea
+				" is to avoid leaving a phantom head in place when we're
+				" refusing to apply anything to it (and it currently has invalid
+				" tok idx).
+				" ISSUE: This isn't sufficient!!!! May need to add phantom toks
+				" at places other than rgn head!!!!
+				"echomsg "Setting action to '' for " . string(tok)
+				let tok.action = ''
+				" Skip the end of loop new_idx logic, since we've already
+				" updated the token.
+				continue
 			endif
 		elseif tok.loc == '='
 			let old_idx[tok.rgn] = tok.idx
 			if s:Check_selector(a:pspecs.sel, old_idx)
 				" Leave new_idx == -1 for clr/bgc toks to force deletion.
 				if tok.rgn == 'fmt'
+					" REFACTOR_TODO: Something going on here...
+					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
 					let new_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				endif
 			endif
@@ -3517,9 +3546,23 @@ fu! s:Vmap_compute(pspecs, opt)
 	" and loop over just those: e.g., rgn types involved both in pspecs and any
 	" selector. If nothing else, we need to loop over only *active* rgn types.
 	" REFACTOR_TODO: Function that returns array of applicable rgns.
-	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-	let clr_active = b:txtfmt_cfg_numfgcolors > 0
-	for rgn in extend(extend(['fmt'], clr_active ? ['clr'] : []), bgc_active ? ['bgc'] : [])
+	"let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	"let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	"for rgn in extend(extend(['fmt'], clr_active ? ['clr'] : []), bgc_active ? ['bgc'] : [])
+	" REFACTOR_TODO: Prior to refactor, didn't even call Vmap_compute for rgn
+	" type not in pspecs; doing so would have added phantom toks, which, because
+	" Vmap_apply was not run for their rgn type, would have retained the default
+	" tok idx of -1 all the way till Vmap_apply_changes, at which point, attempt
+	" to insert invalid tok would have caused strange things to happen. For
+	" now, therefore, I'm syncing and collecting only for rgn types in pspecs;
+	" however, I can see an advantage to syncing/collecting unconditionally:
+	" namely, it would permit cleanup on all rgn types, even those not in
+	" pspecs. Perhaps adopt logic that permits tok syncing and collection to run
+	" for all rgn types, but (eg) doesn't add phantom toks for rgn types not in
+	" pspecs. Or perhaps even allow the phantom toks up to a point, then ensure
+	" they're deleted before they do any harm...
+	" Design Decision Needed: Read preceding paragraph and decide...
+	for rgn in keys(a:pspecs.rgns)
 		let sync_info = s:Vmap_sync_start(rgn, a:opt)
 		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 		" start/end indices returned explicitly.
@@ -3528,7 +3571,7 @@ fu! s:Vmap_compute(pspecs, opt)
 		"
 		" Question: When do we expect empty?
 		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:opt)
-		call s:dbg_display_toks("Vmap_collect", toks)
+		call s:dbg_display_toks("Vmap_collect", toks[rgn])
 	endfor
 
 	" Convert hash keyed by rgn type to single array.
@@ -3537,6 +3580,7 @@ fu! s:Vmap_compute(pspecs, opt)
 	" physical tok, or final tok - see note within Vmap_apply on possible
 	" optimization, but this is beyond the scope of this refactor).
 	let mtoks = s:Vmap_merge_toks(toks, sync_info, a:opt)
+	call s:dbg_display_toks("after Vmap_merge_toks", mtoks)
 
 	" REFACTOR_TODO: Consider contents of a:pspecs: can it be empty? When? What
 	" sort of checks should be performed, and where?
@@ -3634,15 +3678,17 @@ fu! s:Vmap_merge_toks(toks, sync_info, opt)
 		" Find the array whose head tok comes next in buffer.
 		for idx in range(len(aofa))
 			" Compare this one with prev best (if any).
-			" Note: Ordering of position-less toks matters only within a rgn
-			" type; might as well stick them after toks with position.
+			" Caveat: Ordering of position-less toks matters only within a rgn
+			" type, but we need to pull them as soon as possible; otherwise,
+			" they can 'trap' normal toks behind them, thereby preventing the
+			" normal toks from being merged into the stream at the right point.
 			" Caveat: Don't pass positionless toks to Vmap_cmp_tok.
 			let cmp = sel_idx < 0
 				\ ? -1
 				\ : empty(aofa[sel_idx][0].pos)
-					\ ? -1
+					\ ? 1
 					\ : empty(aofa[idx][0].pos)
-						\ ? 1
+						\ ? -1
 						\ : s:Vmap_cmp_tok(aofa[idx][0], aofa[sel_idx][0])
 			if cmp < 0
 				let sel_idx = idx
@@ -3879,6 +3925,7 @@ endfu
 fu! s:Vmap_apply_changes(toks, opt)
 	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
+		echomsg "Applying changes to buf: " . string(tok)
 		if tok.typ == 'eob' || empty(tok.action)
 			" No change from what's in buffer.
 			continue
@@ -3909,7 +3956,8 @@ fu! s:Vmap_apply_changes(toks, opt)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
-			exe 'normal! '.(tok.action == 'r' ? 's' : tok.action)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			" BUG HERE!!!! What's happening here?!?!
+			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-R>=l:tokstr\<CR>"
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
@@ -4221,10 +4269,10 @@ fu! s:dbg_display_toks(context, toks)
 		if ti.typ == 'eob'
 			echo ti.rgn . ' ' . '<eob> virtual tok'
 		else
-			echo printf('(%3d, %3d): %s(%2d): => %s'
+			echo printf('(%3d, %3d): %s(%2d): => %s [%s]'
 				\, empty(ti.pos) ? -1 : ti.pos[0]
 				\, empty(ti.pos) ? -1 : ti.pos[1]
-				\, ti.rgn, ti.idx, ti.action)
+				\, ti.rgn, ti.idx, ti.action, ti.typ)
 		endif
 	endfor
 	echo "\r"
@@ -4664,6 +4712,7 @@ fu! s:Sel_parser_expr_to_string(expr, indent)
 	endif
 	return s
 endfu
+" REFACTOR_TODO: Change this back to s:Parse_selector.
 fu! S_Parse_selector(sel)
 	echomsg "S_Parse_selector got " . a:sel
 	let ps = s:Sel_parser_tok_init(a:sel)
