@@ -3297,7 +3297,9 @@ endfu
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
 " VMAPS TODO: Update function header.
-fu! s:Vmap_collect(rgn, sync_info, opt)
+" REFACTOR_TODO: other_rgns arg is just for prototyping. Refactor if I keep this
+" approach...
+fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 	let toks = a:sync_info.tok_infos
 	" Mark toks added during sync as being prior to vsel.
 	" TODO: Consider doing this in Search_tok itself...
@@ -3388,6 +3390,27 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				" Current tok is needed, and becomes candidate for 'last tok'.
 				let ti_last = ti
 			endif
+			""""
+			" !!!! UNDER CONSTRUCTION !!!!
+			" Add phantoms for the other rgn types.
+			" Note: These must come *before* the actual tok to prevent indices
+			" from getting out of sync when applying changes to buffer.
+			" TODO: Actually necessary only when non-identity selector used.
+			if ti.loc == '='
+				for rgn in a:other_rgns
+					" Add a phantom.
+					call add(toks, {
+						\'typ': 'tok',
+						\'rgn': rgn,
+						\'pos': ti.pos,
+						\'idx': -1,
+						\'tok': '',
+						\'loc': '=',
+						\'action': 'i'
+					\})
+				endfor
+			endif
+			""""
 			" Finish updating and add the current tok.
 			let ti.action = ''
 			" TODO: We could skip next iteration update if we know we're leaving
@@ -3444,7 +3467,7 @@ fu! s:Vmap_apply(pspecs, toks)
 	" Note: Having unused keys in old_idx is harmless; rgn types present in
 	" a:toks determines which keys will be used.
 	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1}
-	"let old_idx = toks[0].idx
+	let new_idx = {}
 	for tok in a:toks
 		" Skip non-tokens (e.g., <eob>).
 		if tok.typ != 'tok' | continue | endif
@@ -3459,54 +3482,57 @@ fu! s:Vmap_apply(pspecs, toks)
 			let old_idx[tok.rgn] = tok.idx
 			continue
 		endif
-		" TODO: If we guarantee new_idx is set within if/else, remove this...
-		let new_idx = -1
+		" REFACTOR_TODO: Decide between this and the old_idx way (above). Note
+		" that neither old nor new should be able to become -1 after becoming
+		" >=0.
+		if !has_key(new_idx)
+			let new_idx[tok.rgn] = tok.idx
+		endif
+		" TODO: If we guarantee set_idx is set within if/else, remove this...
+		let set_idx = -1
 		if tok.loc == '<'
 			" Change nothing prior to region, but do stay in sync.
 			let old_idx[tok.rgn] = tok.idx
-			let new_idx = tok.idx
+			let new_idx[tok.rgn] = tok.idx
 		elseif tok.loc == '{'
-			" TODO: Make sure phantom logic hasn't changed: in particular, make
-			" sure action will never be 'a' for phantom head. Pretty sure it's
-			" only an append (at tail) that can be converted to insert, and that
-			" doesn't matter here...
 			if tok.action != 'i'
 				" Real tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
 			" IMPORTANT TODO: Need to ensure that if tok is phantom and isn't
 			" selected, we don't leave it with default (and invalid) idx of -1.
+			"echomsg "Vmap_apply considering " . string(tok)
 			if s:Check_selector(a:pspecs.sel, old_idx)
 				if tok.rgn == 'fmt'
 					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
-					let new_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
+					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				else
-					let new_idx = a:pspecs.rgns[tok.rgn]
+					let set_idx = a:pspecs.rgns[tok.rgn]
 				endif
-			elseif tok.action == 'i'
-				" Delete unselected phantom head!
-				" See 'IMPORTANT TODO' above, and note that this logic is
-				" provisional - not sure it's the correct solution... The idea
-				" is to avoid leaving a phantom head in place when we're
-				" refusing to apply anything to it (and it currently has invalid
-				" tok idx).
-				" ISSUE: This isn't sufficient!!!! May need to add phantom toks
-				" at places other than rgn head!!!!
-				"echomsg "Setting action to '' for " . string(tok)
-				let tok.action = ''
-				" Skip the end of loop new_idx logic, since we've already
-				" updated the token.
-				continue
 			endif
+			" REFACTOR_TODO: Just removed the elseif for unselected phantom
+			" head. Thinking was that, whereas interior phantom may be needed in
+			" unselected case, phantom head never will be. Check logic...
 		elseif tok.loc == '='
-			let old_idx[tok.rgn] = tok.idx
+			if tok.action != 'i'
+				" Real tok - not phantom
+				let old_idx[tok.rgn] = tok.idx
+			endif
 			if s:Check_selector(a:pspecs.sel, old_idx)
-				" Leave new_idx == -1 for clr/bgc toks to force deletion.
 				if tok.rgn == 'fmt'
 					" REFACTOR_TODO: Something going on here...
 					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
-					let new_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
+					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
+				else
+					"clr/bgc
+					let set_idx = a:pspecs.rgns[tok.rgn]
 				endif
+			elseif tok.action == 'i'
+				" Not selected, but phantom may be needed to keep original
+				" region unaffected. Note that this situation applies only for a
+				" phantom, as a regular tok should be left alone in the
+				" non-selected case.
+				let set_idx = old_idx[tok.rgn]
 			endif
 		elseif tok.loc == '}'
 			if tok.action != 'a'
@@ -3514,27 +3540,44 @@ fu! s:Vmap_apply(pspecs, toks)
 				let old_idx[tok.rgn] = tok.idx
 			endif
 			" REFACTOR_TODO: Following original logic, but need to verify that
-			" the intent was to revert to store old_idx for phantom...
-			let new_idx = old_idx[tok.rgn]
+			" the intent was to revert to stored old_idx for phantom...
+			let set_idx = old_idx[tok.rgn]
 		else " past vsel
+			echomsg "Breaking out on " . string(tok)
 			break
 		endif
-		" Handle any required tok update.
-		if new_idx >= 0
-			" Don't make changes where none are required.
-			" Design Decision: Defer all decisions regarding redundancy and
-			" such.
-			if new_idx != tok.idx
-				let tok.idx = new_idx
-				" Assumption: Phantom toks are the only ones with non-empty
-				" action at this point, and their action shouldn't change.
-				if empty(tok.action)
-					let tok.action = 'r'
-				endif
+		" Handle any required tok update/delete/discard.
+		if set_idx >= 0
+			" Tok might need to be changed/initialized.
+			if new_idx[tok.rgn] == old_idx[tok.rgn]
+				" Check for unnecessary tok.
+				" REFACTOR_TODO: Currently, I'm doing some of cleanup's work here (by
+				" deleting/discarding toks I can see are not needed). Should I be?
+				" REFACTOR_TODO: I'm thinking this can handle discard of
+				" unnecessary phantom heads and tails as well as interior
+				" phantoms - is logic correct?
+				let tok.action = empty(tok.action) ? 'd' : ''
 			endif
+			if empty(tok.action)
+				" Existing tok
+				if set_idx != tok.idx
+				   let tok.idx = set_idx
+				   let tok.action = 'r'
+				endif	   
+			else
+				 " Phantom tok
+				 let tok.idx = set_idx
+			endif
+			let new_idx[tok.rgn] = set_idx
 		else
-			" Delete the tok (intended only for clr/bgc toks)
-			let tok.action = 'd'
+			" Either this is a real tok that wasn't selected (which should be
+			" left alone), or it's a phantom that wasn't needed (which can be
+			" discarded).
+			if !empty(tok.action)
+				let tok.action = ''
+			else
+				let new_idx[tok.rgn] = tok.idx
+			endif
 		endif
 	endfor
 endfu
@@ -3570,7 +3613,7 @@ fu! s:Vmap_compute(pspecs, opt)
 		" predicate for tokens.
 		"
 		" Question: When do we expect empty?
-		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:opt)
+		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:opt, filter(keys(a:pspecs.rgns), 'v:val != l:rgn'))
 		call s:dbg_display_toks("Vmap_collect", toks[rgn])
 	endfor
 
@@ -3588,7 +3631,7 @@ fu! s:Vmap_compute(pspecs, opt)
 		" Apply pspec without worrying about whether mtoks will be kept.
 		call s:Vmap_apply(a:pspecs, mtoks)
 	endif
-	call s:dbg_display_toks("Vmap_apply", mtoks)
+	call s:dbg_display_toks("after Vmap_apply", mtoks)
 	return mtoks
 endfu
 
@@ -3924,6 +3967,7 @@ endfu
 " }, ...]
 fu! s:Vmap_apply_changes(toks, opt)
 	" Note: List of toks is ordered from later in buffer to earlier.
+	let g:dbg_stuff = []
 	for tok in a:toks
 		echomsg "Applying changes to buf: " . string(tok)
 		if tok.typ == 'eob' || empty(tok.action)
@@ -3938,6 +3982,7 @@ fu! s:Vmap_apply_changes(toks, opt)
 		if tok.action == 'd'
 			" Delete tok from buffer.
 			let tokstr = s:Delete_char(tok.pos)
+			call add(g:dbg_stuff, "Deleting at " . string(tok.pos))
 		else " [iar]
 			" We're going to be inserting/replacing a tok.
 			" Special Case: If insert pos is past end of non-empty line, need to
@@ -3954,10 +3999,13 @@ fu! s:Vmap_apply_changes(toks, opt)
 			" position at end.
 			call cursor(tok.pos)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
+			let [g:tokpos, g:tokstr] = [tok.pos, tokstr]
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
 			" BUG HERE!!!! What's happening here?!?!
-			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-R>=l:tokstr\<CR>"
+			let g:execstr = 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-R>=g:tokstr\<CR>"
+			"exe g:execstr
+			call add(g:dbg_stuff, {'tokpos': g:tokpos, 'tokstr': g:tokstr, 'execstr': g:execstr})
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
@@ -4062,7 +4110,11 @@ fu! s:Vmap_cleanup(toks, opt)
 				if ti.typ != 'eob' && ti_safe.idx
 					" Cap non-default region to prevent bleed through.
 					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
-					if empty(tip.action) | let tip.action = 'r' | endif
+					" REFACTOR_TODO: Consider the change to this test... Change
+					" was needed because Vmap_apply can change action 'i' to ''.
+					" We could always leave the phantom and strip it out during
+					" cleanup...
+					if empty(tip.action) && tip.idx >= 0 | let tip.action = 'r' | endif
 					let tip.idx = 0
 					" Design Decision: Once we decide to cap, the decision is
 					" final: though subsequent tok might be rendered
