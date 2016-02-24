@@ -3443,16 +3443,8 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 endfu
 
 fu! s:Vmap_apply(pspecs, toks)
-	" TODO: Consider whether it's necessary to start at beginning, or whether we
-	" might start at the final or penultimate tok for each rgn type. (Consider
-	" that we may have many tokens that were collected solely for cleanup
-	" purposes, and are superseded many times before we get to the end of the
-	" list returned by Vmap_sync_start.)
-	" Idea: I'm thinking we could loop from the end, and look for final 2 toks
-	" of each type: the final one is where we'd start; the penultimate would be
-	" used to initialize old_idx. But that's not part of this refactor... (TODO)
-
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
+	" REFACTOR_TODO: This comment is old, and somewhat out of date.
 	" Old/new_idx logic: old_idx always represents the idx that would have
 	" been active at a given point prior to the Vmap application. When new_idx
 	" is set, it is set to the value imparted to it by the highlighting spec
@@ -3480,13 +3472,9 @@ fu! s:Vmap_apply(pspecs, toks)
 		" Boot-strap each rgn type.
 		if old_idx[tok.rgn] < 0
 			let old_idx[tok.rgn] = tok.idx
+			" REFACTOR_TODO - How to initialize new_idx[]?????
+			let new_idx[tok.rgn] = tok.idx " or should it be -1
 			continue
-		endif
-		" REFACTOR_TODO: Decide between this and the old_idx way (above). Note
-		" that neither old nor new should be able to become -1 after becoming
-		" >=0.
-		if !has_key(new_idx)
-			let new_idx[tok.rgn] = tok.idx
 		endif
 		" TODO: If we guarantee set_idx is set within if/else, remove this...
 		let set_idx = -1
@@ -3494,49 +3482,31 @@ fu! s:Vmap_apply(pspecs, toks)
 			" Change nothing prior to region, but do stay in sync.
 			let old_idx[tok.rgn] = tok.idx
 			let new_idx[tok.rgn] = tok.idx
-		elseif tok.loc == '{'
+		elseif tok.loc == '{' || tok.loc == '='
+			" REFACTOR_TODO: Validate combining { and = cases.
 			if tok.action != 'i'
-				" Real tok - not phantom
-				let old_idx[tok.rgn] = tok.idx
-			endif
-			" IMPORTANT TODO: Need to ensure that if tok is phantom and isn't
-			" selected, we don't leave it with default (and invalid) idx of -1.
-			"echomsg "Vmap_apply considering " . string(tok)
-			if s:Check_selector(a:pspecs.sel, old_idx)
-				if tok.rgn == 'fmt'
-					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
-					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
-				else
-					let set_idx = a:pspecs.rgns[tok.rgn]
-				endif
-			endif
-			" REFACTOR_TODO: Just removed the elseif for unselected phantom
-			" head. Thinking was that, whereas interior phantom may be needed in
-			" unselected case, phantom head never will be. Check logic...
-		elseif tok.loc == '='
-			if tok.action != 'i'
-				" Real tok - not phantom
+				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
 			if s:Check_selector(a:pspecs.sel, old_idx)
+				" Selected! Apply highlighting.
 				if tok.rgn == 'fmt'
-					" REFACTOR_TODO: Something going on here...
 					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
 					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				else
 					"clr/bgc
 					let set_idx = a:pspecs.rgns[tok.rgn]
 				endif
-			elseif tok.action == 'i'
-				" Not selected, but phantom may be needed to keep original
-				" region unaffected. Note that this situation applies only for a
-				" phantom, as a regular tok should be left alone in the
-				" non-selected case.
+			else
+				" Unselected existing or phantom tok; ensure that highlighting
+				" is unchanged from what it was before.
+				" Note: Logic for how to accomplish this is deferred to end of
+				" loop; simply record what highlighting should be.
 				let set_idx = old_idx[tok.rgn]
 			endif
 		elseif tok.loc == '}'
 			if tok.action != 'a'
-				" Real tok - not phantom
+				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
 			" REFACTOR_TODO: Following original logic, but need to verify that
@@ -3548,36 +3518,28 @@ fu! s:Vmap_apply(pspecs, toks)
 		endif
 		" Handle any required tok update/delete/discard.
 		if set_idx >= 0
-			" Tok might need to be changed/initialized.
-			if new_idx[tok.rgn] == old_idx[tok.rgn]
-				" Check for unnecessary tok.
-				" REFACTOR_TODO: Currently, I'm doing some of cleanup's work here (by
-				" deleting/discarding toks I can see are not needed). Should I be?
-				" REFACTOR_TODO: I'm thinking this can handle discard of
-				" unnecessary phantom heads and tails as well as interior
-				" phantoms - is logic correct?
-				let tok.action = empty(tok.action) ? 'd' : ''
-			endif
 			if empty(tok.action)
 				" Existing tok
-				if set_idx != tok.idx
-				   let tok.idx = set_idx
-				   let tok.action = 'r'
+				if set_idx == new_idx[tok.rgn]
+					" This one is redundant.
+					" REFACTOR_TODO: Should we even be considering this here?
+					let tok.action = 'd'
+				elseif set_idx != tok.idx
+					" Different from current.
+					let tok.idx = set_idx
+					let tok.action = 'r'
 				endif	   
 			else
 				 " Phantom tok
-				 let tok.idx = set_idx
+				 if set_idx != new_idx[tok.rgn]
+					 let tok.idx = set_idx
+				 else
+					 " Phantom unnecessary
+					 let tok.action = ''
+				 endif
 			endif
+			" Update for next iteration.
 			let new_idx[tok.rgn] = set_idx
-		else
-			" Either this is a real tok that wasn't selected (which should be
-			" left alone), or it's a phantom that wasn't needed (which can be
-			" discarded).
-			if !empty(tok.action)
-				let tok.action = ''
-			else
-				let new_idx[tok.rgn] = tok.idx
-			endif
 		endif
 	endfor
 endfu
