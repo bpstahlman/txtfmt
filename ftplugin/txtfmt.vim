@@ -1815,13 +1815,14 @@ fu! s:Translate_fmt_clr_spec(s)
 	" Check for default (no fmt/clr)
 	" Design Decision: As of version introducing auto maps, treat (e.g.) f- and
 	" f identically.
+	" REFACTOR_TODO: I'm thinking of moving away from this, but need to decide
+	" whether to accept f= for manual maps.
 	if s[0] == '' || s[0] == '-'
 		" Maybe valid default; make sure nothing follows a `-'.
 		if empty(s[1])
 			" valid default format
 			return nr2char(
-				\b:txtfmt_{b:txtfmt_rgn_typ_names[t]}_first_tok)
-
+				\b:txtfmt_{b:txtfmt_rgn_typ_abbrevs[t]}_first_tok)
 		else
 			" Shouldn't be anything after [fck]-
 			let s:err_str = 'Unexpected chars after "' . t . '-"'
@@ -3390,11 +3391,18 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 				" Current tok is needed, and becomes candidate for 'last tok'.
 				let ti_last = ti
 			endif
+			" Finish updating and add the current tok.
+			let ti.action = ''
+			" TODO: We could skip next iteration update if we know we're leaving
+			" loop (e.g. in eob case).
+			if ti.loc == '}' | let sel_end_found = 1 | endif
+			if ti.loc == '{' | let sel_beg_found = 1 | endif
+			call add(toks, ti)
 			""""
 			" !!!! UNDER CONSTRUCTION !!!!
 			" Add phantoms for the other rgn types.
-			" Note: These must come *before* the actual tok to prevent indices
-			" from getting out of sync when applying changes to buffer.
+			" Note: Using action 'a' to prevent indices from getting out of sync
+			" when applying changes to buffer.
 			" TODO: Actually necessary only when non-identity selector used.
 			if ti.loc == '='
 				for rgn in a:other_rgns
@@ -3406,18 +3414,11 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 						\'idx': -1,
 						\'tok': '',
 						\'loc': '=',
-						\'action': 'i'
+						\'action': 'a'
 					\})
 				endfor
 			endif
 			""""
-			" Finish updating and add the current tok.
-			let ti.action = ''
-			" TODO: We could skip next iteration update if we know we're leaving
-			" loop (e.g. in eob case).
-			if ti.loc == '}' | let sel_end_found = 1 | endif
-			if ti.loc == '{' | let sel_beg_found = 1 | endif
-			call add(toks, ti)
 			" Update for next iteration...
 			let sel_cmp_prev = sel_cmp
 		else
@@ -3461,12 +3462,16 @@ fu! s:Vmap_apply(pspecs, toks)
 	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1}
 	let new_idx = {}
 	for tok in a:toks
+		echomsg "tok=" . string(tok)
+		echomsg "    sel=" . string(a:pspecs.sel)
+		echomsg "    old_idx=" . string(old_idx)
 		" Skip non-tokens (e.g., <eob>).
 		if tok.typ != 'tok' | continue | endif
 		" Skip tokens whose type is not implicated in the input pspecs.
 		" REFACTOR_TODO: Prior to refactor, Vmap_apply wasn't even called in
 		" such cases. Makes sure this is the best way to handle...
 		if !has_key(a:pspecs.rgns, tok.rgn)
+			echomsg "Continue1 on " . string(tok)
 			continue
 		endif
 		" Boot-strap each rgn type.
@@ -3474,6 +3479,7 @@ fu! s:Vmap_apply(pspecs, toks)
 			let old_idx[tok.rgn] = tok.idx
 			" REFACTOR_TODO - How to initialize new_idx[]?????
 			let new_idx[tok.rgn] = tok.idx " or should it be -1
+			echomsg "Continue2 on " . string(tok)
 			continue
 		endif
 		" TODO: If we guarantee set_idx is set within if/else, remove this...
@@ -3484,7 +3490,7 @@ fu! s:Vmap_apply(pspecs, toks)
 			let new_idx[tok.rgn] = tok.idx
 		elseif tok.loc == '{' || tok.loc == '='
 			" REFACTOR_TODO: Validate combining { and = cases.
-			if tok.action != 'i'
+			if empty(tok.action)
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
@@ -3503,17 +3509,16 @@ fu! s:Vmap_apply(pspecs, toks)
 				" Note: Logic for how to accomplish this is deferred to end of
 				" loop; simply record what highlighting should be.
 				let set_idx = old_idx[tok.rgn]
+				echomsg "Selector failed: set_idx=" . set_idx . " tok=" . string(tok)
 			endif
 		elseif tok.loc == '}'
 			if tok.action != 'a'
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
-			" REFACTOR_TODO: Following original logic, but need to verify that
-			" the intent was to revert to stored old_idx for phantom...
 			let set_idx = old_idx[tok.rgn]
 		else " past vsel
-			echomsg "Breaking out on " . string(tok)
+			"echomsg "Breaking out on " . string(tok)
 			break
 		endif
 		" Handle any required tok update/delete/discard.
@@ -3929,7 +3934,6 @@ endfu
 " }, ...]
 fu! s:Vmap_apply_changes(toks, opt)
 	" Note: List of toks is ordered from later in buffer to earlier.
-	let g:dbg_stuff = []
 	for tok in a:toks
 		echomsg "Applying changes to buf: " . string(tok)
 		if tok.typ == 'eob' || empty(tok.action)
@@ -3944,7 +3948,6 @@ fu! s:Vmap_apply_changes(toks, opt)
 		if tok.action == 'd'
 			" Delete tok from buffer.
 			let tokstr = s:Delete_char(tok.pos)
-			call add(g:dbg_stuff, "Deleting at " . string(tok.pos))
 		else " [iar]
 			" We're going to be inserting/replacing a tok.
 			" Special Case: If insert pos is past end of non-empty line, need to
@@ -3961,13 +3964,9 @@ fu! s:Vmap_apply_changes(toks, opt)
 			" position at end.
 			call cursor(tok.pos)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
-			let [g:tokpos, g:tokstr] = [tok.pos, tokstr]
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
-			" BUG HERE!!!! What's happening here?!?!
-			let g:execstr = 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-R>=g:tokstr\<CR>"
-			"exe g:execstr
-			call add(g:dbg_stuff, {'tokpos': g:tokpos, 'tokstr': g:tokstr, 'execstr': g:execstr})
+			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-R>=l:tokstr\<CR>"
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
@@ -4009,6 +4008,12 @@ fu! s:Vmap_cleanup(toks, opt)
 		if ti.typ == 'tok' && ti.action == 'd'
 			" Skip deleted toks, which have no impact on anything.
 			" Note: Won't see 'd' for anything but colors here.
+			continue
+		endif
+		" REFACTOR_TODO: Analyze this...
+		if ti.typ == 'tok' && ti.idx < 0
+			" Skip the interior phantoms that weren't needed (idx == -1)
+			" !!!! UNDER CONSTRUCTION !!!!
 			continue
 		endif
 
@@ -4783,12 +4788,12 @@ fu! s:Check_selector(expr, toks)
 			let val = function(e.op[1] == '&' ? 'and' : 'or')(e.mask, t.fmt)
 		endif
 	elseif e.op =~ '^[ck]$'
-		echomsg "Color comparison" . e.idx . " -- " . t[b:txtfmt_rgn_typ_abbrevs[e.op]]
+		"echomsg "Color comparison" . e.idx . " -- " . t[b:txtfmt_rgn_typ_abbrevs[e.op]]
 		let val = e.idx == t[b:txtfmt_rgn_typ_abbrevs[e.op]]
 	else
 		throw "Internal Error! Invalid term in selector expression: " . string(e)
 	endif
-	echomsg "Check_selector returning " . (has_key(e, 'neg') && e.neg ? !val : !!val)
+	"echomsg "Check_selector returning " . (has_key(e, 'neg') && e.neg ? !val : !!val)
 	return has_key(e, 'neg') && e.neg ? !val : !!val
 endfu
 

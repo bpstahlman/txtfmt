@@ -211,6 +211,7 @@ let b:txtfmt_const_tokrange_limit_{'u'} = 0xFFFF
 let b:txtfmt_re_number_atom = '\([1-9]\d*\|0x\x\+\)'
 
 " Map the single-char fmt spec types to their 3-char equivalents.
+" TODO: The abbrevs/names suffixes seem rather backwards...
 let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc'}
 let b:txtfmt_rgn_typ_names = {'fmt': 'f', 'clr': 'c', 'bgc': 'k'}
 
