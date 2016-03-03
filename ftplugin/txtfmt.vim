@@ -3376,9 +3376,11 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 			" was past region end and hlable lies between it and this one (in
 			" which case, we already have sufficient toks for cleanup at tail).
 			" Note: Phantom toks are always added above.
+			echomsg "Before: " . string(ti)
 			let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
 				\: a:opt.rgn.beg == ti.pos ? '{'
 				\: a:opt.rgn.end == ti.pos ? '}' : '='
+			echomsg "After: " . string(ti)
 			if ti.loc == '>'
 				" Do we already have a candidate 'last tok'?
 				if !empty(ti_last)
@@ -3399,12 +3401,16 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 			if ti.loc == '{' | let sel_beg_found = 1 | endif
 			call add(toks, ti)
 			""""
+			echomsg "About to check for phantoms to add... " . string(ti)
 			" !!!! UNDER CONSTRUCTION !!!!
 			" Add phantoms for the other rgn types.
 			" Note: Using action 'a' to prevent indices from getting out of sync
 			" when applying changes to buffer.
 			" TODO: Actually necessary only when non-identity selector used.
-			if ti.loc == '='
+			" TODO: Think through this if condition: bottom line is, I need to
+			" append interior phantoms whenever the tok just added is
+			" non-phantom, and it's either at head or within region.
+			if empty(ti.action) && ti.loc =~ '[{=]'
 				for rgn in a:other_rgns
 					" Add a phantom.
 					call add(toks, {
@@ -3497,7 +3503,7 @@ fu! s:Vmap_apply(pspecs, toks)
 			if s:Check_selector(a:pspecs.sel, old_idx)
 				" Selected! Apply highlighting.
 				if tok.rgn == 'fmt'
-					"echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
+					echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
 					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				else
 					"clr/bgc
@@ -3512,12 +3518,18 @@ fu! s:Vmap_apply(pspecs, toks)
 				echomsg "Selector failed: set_idx=" . set_idx . " tok=" . string(tok)
 			endif
 		elseif tok.loc == '}'
+			echomsg "tok loc }: " . string(tok) . " old=" . old_idx[tok.rgn]
 			if tok.action != 'a'
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
 			let set_idx = old_idx[tok.rgn]
 		else " past vsel
+			" REFACTOR_TODO: We're breaking out here prematurely, due to
+			" presence of phantom 'interior' toks before the actual phantom.
+			" !!!!!!!!!!!!! FIXME !!!!!!!!!!!!!!!!
+			" TODO: Think whether there's a better way to harmonize interior and
+			" head/tail phantoms...
 			"echomsg "Breaking out on " . string(tok)
 			break
 		endif
@@ -3536,6 +3548,7 @@ fu! s:Vmap_apply(pspecs, toks)
 				endif	   
 			else
 				 " Phantom tok
+				 echomsg "Comparing " . set_idx . " to " . new_idx[tok.rgn]
 				 if set_idx != new_idx[tok.rgn]
 					 let tok.idx = set_idx
 				 else
@@ -4065,8 +4078,8 @@ fu! s:Vmap_cleanup(toks, opt)
 			" Caveat: ti.typ == 'eob' implies no actual tok pos.
 			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
 				\[tip.action == 'i', ti.action == 'a'], tip)
-				"echomsg "Not hlable between " . string(tip.pos)
-					"\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
+				echomsg "Not hlable between " . string(tip.pos)
+					\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
 				" TODO: Reword to reflect new meaning of bleed-through.
@@ -4074,9 +4087,12 @@ fu! s:Vmap_cleanup(toks, opt)
 				" superseded tok can be deleted.
 				" Another Special Case: Never 'cap' to prevent bleed-through
 				" onto end of buffer.
+				" !!!!!! REFACTOR_TODO !!!!!! I'm thinking that the whole
+				" bleed-through test is wrong/unnecessary with my current
+				" definition of hlable (nzwbs).
 				if ti.typ != 'eob' && ti_safe.idx
 					" Cap non-default region to prevent bleed through.
-					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
+					echomsg "Cap non-default region to prevent bleed-through: " . string(tip) . " - " . string(ti) . " - ti_safe: " . string(ti_safe)
 					" REFACTOR_TODO: Consider the change to this test... Change
 					" was needed because Vmap_apply can change action 'i' to ''.
 					" We could always leave the phantom and strip it out during
@@ -4089,7 +4105,7 @@ fu! s:Vmap_cleanup(toks, opt)
 					let ti_safe = tip
 				else
 					" Nothing but maybe toks exposed. Delete superseded tok.
-					"echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip)
+					echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip) . " - " . string(ti)
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
 				endif
 				" Supersedence test complete.
@@ -4098,7 +4114,7 @@ fu! s:Vmap_cleanup(toks, opt)
 				"echomsg "Printing safe and other: " . string(ti_safe) . " - " . string(ti)
 				if ti.typ == 'tok' && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
-					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
+					echomsg "Removing tok determined redundant by 2nd test: " . string(ti) . " - " . string(ti)
 					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 					let tip_next = {}
 				endif
@@ -4288,10 +4304,10 @@ fu! s:dbg_display_toks(context, toks)
 		if ti.typ == 'eob'
 			echo ti.rgn . ' ' . '<eob> virtual tok'
 		else
-			echo printf('(%3d, %3d): %s(%2d): => %s [%s]'
+			echo printf('(%3d, %3d): %s(%2d): => %s [%s] @ %s'
 				\, empty(ti.pos) ? -1 : ti.pos[0]
 				\, empty(ti.pos) ? -1 : ti.pos[1]
-				\, ti.rgn, ti.idx, ti.action, ti.typ)
+				\, ti.rgn, ti.idx, empty(ti.action) ? ' ' : ti.action , ti.typ, ti.loc)
 		endif
 	endfor
 	echo "\r"
