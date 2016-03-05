@@ -3146,10 +3146,12 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 					\'loc': '}',
 					\'action': 'a'
 				\})
-				" Move to position of phantom tail so that next search tests the
-				" buffer *after* region.
-				" Assumption: allow_cmatch has been cleared definitively.
-				call cursor(a:opt.rgn.end)
+				if ti.typ != 'tok'
+					" Since we didn't find a tok before stopline, our next
+					" search will look for hla between phantom tail and eob.
+					" Assumption: allow_cmatch has been cleared definitively.
+					call cursor(a:opt.rgn.end)
+				endif
 			endif
 		endif
 		if ti.typ == 'tok'
