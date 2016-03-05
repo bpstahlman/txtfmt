@@ -3322,28 +3322,27 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 	endif
 	let ti_last = {}
 	let sel_cmp_prev = -1
-	let [sel_beg_found, sel_end_found] = [0, 0]
-	" Ref used to facilitate delayed add (primarily for eob special case).
+	let [sel_beg_found, sel_end_found, sel_end_found_prev] = [0, 0, 0]
 	while 1
-		" Look for next tok (or hla) within stopline range (not necessarily in vsel)
+		" Look for next tok within stopline range (not necessarily in region)
 		let ti = s:Search_tok(a:rgn, allow_cmatch ? 'c' : '', a:sync_info.stopline)
 		let allow_cmatch = 0
-		" TODO: Consider using different test for <eob>.
+		" Determine positioning of current tok wrt region:
+		" -1=before 0=in 1=after
 		let sel_cmp = ti.typ != 'tok'
 			\? 1
 			\: s:Cmp_pos_to_rng(ti.pos, a:opt.rgn.beg, a:opt.rgn.end)
+		" Check for transitions wrt region.
 		if sel_cmp_prev < sel_cmp
-			" We've advanced w.r.t. vsel.
+			" We've advanced w.r.t. region.
 			if !sel_beg_found
 				" Need to add something for head: either a phantom (here) or
 				" augmented tok (end of loop).
 				let sel_beg_found = 1
-				" If we didn't find tok at all, or found one not at vsel head,
+				" If we didn't find tok at all, or found one not at region head,
 				" add phantom.
 				if ti.typ != 'tok' || ti.pos != a:opt.rgn.beg
-					" Add phantom tok for vsel beg
-					" TODO: Decide on 'tok' for phantom... Should we even add?
-					" What about 'typ'? Should there be a special one?
+					" Add phantom tok for region beg
 					call add(toks, {
 						\'typ': 'tok',
 						\'rgn': a:rgn,
@@ -3359,7 +3358,6 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 				let sel_end_found = 1
 				" Add phantom tail.
 				" Note: sel_cmp == 1 precludes actual } tok.
-				" TODO: Decide on 'tok' for phantom... Should we even add?
 				call add(toks, {
 					\'typ': 'tok',
 					\'rgn': a:rgn,
@@ -3369,6 +3367,10 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 					\'loc': '}',
 					\'action': 'a'
 				\})
+				" Move to position of phantom tail so that next search tests the
+				" buffer *after* region.
+				" Assumption: allow_cmatch has been cleared definitively.
+				call cursor(a:opt.rgn.end)
 			endif
 		endif
 		if ti.typ == 'tok'
@@ -3443,8 +3445,18 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 				let ti.rgn = a:rgn
 				call add(toks, ti)
 			endif
-			break
+			if ti.typ == 'eob' || sel_end_found_prev
+				" Either we've already hit 'eob' or most recent search started
+				" at end of region and found hla before eob; in either case, we
+				" have all we need. Note that there could be another tok past
+				" stopline, but we would have discarded it anyways if we'd found
+				" it (see earlier break).
+				break
+			endif
 		endif
+		" Update for next iteration...
+		let sel_cmp_prev = sel_cmp
+		let sel_end_found_prev = sel_end_found
 	endwhile
 	return toks
 endfu
