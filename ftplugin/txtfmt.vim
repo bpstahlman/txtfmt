@@ -3210,6 +3210,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		let sel_cmp_prev = sel_cmp
 		let sel_end_found_prev = sel_end_found
 	endwhile
+
 	return toks
 endfu
 
@@ -3913,19 +3914,19 @@ fu! s:dbg_display_toks(context, toks)
 	if !exists('g:dbg_display_on') || !g:dbg_display_on
 		return
 	endif
-	echo "\r"
-	echo a:context
+	echomsg ""
+	echomsg a:context
 	for ti in a:toks
 		if ti.typ == 'eob'
-			echo ti.rgn . ' ' . '<eob> virtual tok'
+			echomsg ti.rgn . ' ' . '<eob> virtual tok'
 		else
-			echo printf('(%3d, %3d): %s(%2d): => %s'
+			echomsg printf('(%3d, %3d): %s(%2d): => %s [%s] @ %s'
 				\, empty(ti.pos) ? -1 : ti.pos[0]
 				\, empty(ti.pos) ? -1 : ti.pos[1]
-				\, ti.rgn, ti.idx, ti.action)
+				\, ti.rgn, ti.idx, empty(ti.action) ? ' ' : ti.action , ti.typ, ti.loc)
 		endif
 	endfor
-	echo "\r"
+	echomsg ""
 endfu
 
 " TODO: Consider whether is_del is best approach? Perhaps string op arg instead?
