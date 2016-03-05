@@ -2853,7 +2853,10 @@ fu! s:Get_hlable_patt(tok_info)
 		let re_extra = (ws_hlable  ? '' : '\&\S')
 	else
 		" Non-aggressive mode
-		let re_extra = '\|^$'
+		" Note: This matches only a fully blank line, or one containing only
+		" tokens: not one containing only whitespace, nor even a single newline
+		" between lines.
+		let re_extra = '\|^\%(' . b:txtfmt_re_any_tok . '\)*$'
 	endif
 	return b:txtfmt_re_any_ntok . re_extra
 endfu
@@ -3697,15 +3700,22 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
 				\[tip.action == 'i', ti.action == 'a'], tip)
 				"echomsg "Not hlable between " . string(tip.pos)
-					\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
+				"	\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
-				" TODO: Reword to reflect new meaning of bleed-through.
 				" Special Case: If bleed-through is from default tok,
 				" superseded tok can be deleted.
 				" Another Special Case: Never 'cap' to prevent bleed-through
 				" onto end of buffer.
-				if ti.typ != 'eob' && ti_safe.idx
+				" Note: Bleed-through cap scenario has recently become much more
+				" narrow: in particular, capping occurs only when the superseded
+				" and superseding toks are separated by a newline (possibly with
+				" toks adjacent to newline): i.e., no hlable between toks on
+				" adjacent lines.
+				" Assumption: If the toks are separated by more than a single
+				" line, they're separated by nzwbs: hence, Contains_hlable test
+				" would prevent our getting here.
+				if ti.typ != 'eob' && ti_safe.idx && tip.pos[0] != ti.pos[0]
 					" Cap non-default region to prevent bleed through.
 					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
