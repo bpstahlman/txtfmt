@@ -4319,19 +4319,19 @@ fu! s:dbg_display_toks(context, toks)
 	if !exists('g:dbg_display_on') || !g:dbg_display_on
 		return
 	endif
-	echo "\r"
-	echo a:context
+	echomsg "\r"
+	echomsg a:context
 	for ti in a:toks
 		if ti.typ == 'eob'
-			echo ti.rgn . ' ' . '<eob> virtual tok'
+			echomsg ti.rgn . ' ' . '<eob> virtual tok'
 		else
-			echo printf('(%3d, %3d): %s(%2d): => %s [%s] @ %s'
+			echomsg printf('(%3d, %3d): %s(%2d): => %s [%s] @ %s'
 				\, empty(ti.pos) ? -1 : ti.pos[0]
 				\, empty(ti.pos) ? -1 : ti.pos[1]
 				\, ti.rgn, ti.idx, empty(ti.action) ? ' ' : ti.action , ti.typ, ti.loc)
 		endif
 	endfor
-	echo "\r"
+	echomsg "\r"
 endfu
 
 fu! s:Operate_region(pspecs, opt)
@@ -4770,7 +4770,6 @@ fu! s:Sel_parser_expr_to_string(expr, indent)
 endfu
 " REFACTOR_TODO: Change this back to s:Parse_selector.
 fu! S_Parse_selector(sel)
-	echomsg "S_Parse_selector got " . a:sel
 	let ps = s:Sel_parser_tok_init(a:sel)
 	try
 		let expr = s:Sel_parser_bool_expr(ps, '|')
@@ -4780,7 +4779,6 @@ fu! S_Parse_selector(sel)
 				throw "Expected `&&', `||' or end of input"
 			endif
 			" Valid expression
-			echo "Expression: " . ps.sel
 			echo s:Sel_parser_expr_to_string(expr, 0)
 		endif
 		return expr
