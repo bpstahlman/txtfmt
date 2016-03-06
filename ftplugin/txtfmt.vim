@@ -168,8 +168,7 @@ fu! s:Move_cursor(off)
 		let mode = mode()
 		" Determine the last byte on which cursor may be positioned.
 		" (In insert mode, cursor may be positioned just after the last byte.)
-		let last_col = mode =~ 'i' ? virtcol('$') : virtcol('$') - 1
-		"echomsg 'mode='.mode.' last_col='.last_col
+		let last_col = mode =~ 'i' ? col('$') : col('$') - 1
 	endif
 	" Determine starting byte and screen column location.
 	let col = col('.')
