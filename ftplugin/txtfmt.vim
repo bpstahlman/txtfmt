@@ -1768,37 +1768,53 @@ endfu
 " Function: s:Translate_fmt_clr_spec() <<<
 " Purpose: Convert the input fmt/clr spec string to the corresponding fmt/clr
 " token.
-" How: The input fmt/clr spec string will be in one of the following formats:
-" f-
-" c-
-" k-                       if background colors are active
-" Change Note: As of version introducing auto maps, the `-' is now optional.
-" f[u][b][i][[s][r][[c]]]  Note that s, r and c values must be disallowed for
-"                          certain permutations of b:txtfmt_cfg_longformats and
-"                          b:txtfmt_cfg_undercurl
-" c<clr_patt>
-" k<clr_patt>             if background colors are active
-" Note: <clr_patt> must match one of the color definitions specified by user
-" (or default if user hasn't overriden).
-" Note: Specification of an inactive color is considered to be an error.
+" Syntax: See the examples.
+" Pre Condition: No whitespace is permitted anywhere in the input. Caller should
+" have stripped any surrounding whitespace.
+" Examples: For now, these examples are sufficiently enlightening to obviate
+" need for formal grammar.
+"
+" -- Formats --
+" f-      default (no fmt)
+" f=      same
+" f=-     same
+" fubi    underline-bold-italic
+" fbiu    same
+" f=ubi   same
+" Note: s/r/c attributes disallowed for certain permutations of
+" b:txtfmt_cfg_longformats and b:txtfmt_cfg_undercurl
+"
+" -- Colors --
+" cblue   fg clr blue
+" c=blue  same
+" Note: Default (no) clr/bgc forms identical to fmt forms.
+" Note: Color names such as 'blue' in the example must match one of the color
+" definitions specified by user (or default pattern if user hasn't overriden).
+" Note: Specification of an inactive color (or any background color when
+" background colors are disabled by 'tokrange') is considered to be an error.
 " Return: One of the following:
 " 1) A single fmt token
 " 2) A single clr token
 " 3) A single bgc token
-" 4) '' - empty string if erroneous user entry
+" 4) empty string signals erroneous user entry
 " Error: If error, function will set the script-local s:err_str
 " Note: The function logic takes advantage of the fact that both strpart() and
 " string offset bracket notation (s[i]) allow indices past end of string, in
 " which case, they return empty strings.
-fu! s:Translate_fmt_clr_spec(s)
-	let s = TxtfmtUtil_strip(a:s)
+" TODO: Rework to use exceptions rather than s:err_str.
+fu! s:Translate_fmt_clr_spec(spec)
+	" Design Decision: No whitespace permitted between type and what follows.
+	let [t, s] = [a:spec[0], a:spec[1:]]
 	if empty(s)
-		let s:err_str = "Empty component in fmt/clr spec"
+		let s:err_str = 'Empty fmt/clr spec: ' . t . ' must be followed by something.'
 		return ''
 	endif
-	" Split into type and spec, discarding any whitespace uncovered by removal
-	" of type.
-	let [t, s] = [s[0], TxtfmtUtil_lstrip(s[1:])]
+	" If here, we don't have (illegal) bare f/c/k.
+	" Permit (and ignore) a single `=' following type.
+	if s[0] == '='
+		" Note: After this point, empty(s) is valid default indication.
+		let s = s[1:]
+	endif
 	" Ensure valid component type.
 	if t !~? '[fc' . (b:txtfmt_cfg_bgcolor ? 'k' : '') . ']'
 		if t ==? 'k'
@@ -1812,15 +1828,13 @@ fu! s:Translate_fmt_clr_spec(s)
 		return ''
 	endif
 	" Check for default (no fmt/clr)
-	" Design Decision: As of version introducing auto maps, treat (e.g.) f- and
-	" f identically.
-	if s[0] == '' || s[0] == '-'
+	" Note: Due to earlier validation, empty s implies bare `='.
+	if empty(s) || s[0] == '-'
 		" Maybe valid default; make sure nothing follows a `-'.
 		if empty(s[1])
 			" valid default format
 			return nr2char(
 				\b:txtfmt_{b:txtfmt_rgn_typ_abbrevs[t]}_first_tok)
-
 		else
 			" Shouldn't be anything after [fck]-
 			let s:err_str = 'Unexpected chars after "' . t . '-"'
@@ -1830,9 +1844,6 @@ fu! s:Translate_fmt_clr_spec(s)
 	" We have a non-default (but not necessarily valid) spec.
 	if t ==? 'f'
 		" fmt string
-		" Design Decision: As of version introducing auto maps, ignore all
-		" whitespace in fmt spec.
-		let s = substitute(s, '\s\+', '', 'g')
 		" Since not default fmt request, spec must match [ubi[sr[c]]]
 		if s =~ '[^'.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']'
 			" s contains illegal (but not necessarily invalid) char
@@ -1857,19 +1868,17 @@ fu! s:Translate_fmt_clr_spec(s)
 			" Spec contains only legal (active) and valid fmt attrs.
 			" Convert the attr chars to a binary val used to get token.
 			" TODO: Perhaps use Vim's or() function now that it's available.
-			let bin_val = 0
-			if s=~'u' | let bin_val = bin_val + 1 | endif
-			if s=~'b' | let bin_val = bin_val + 2 | endif
-			if s=~'i' | let bin_val = bin_val + 4 | endif
-			if s=~'s' | let bin_val = bin_val + 8  | endif
-			if s=~'r' | let bin_val = bin_val + 16 | endif
-			if s=~'c' | let bin_val = bin_val + 32 | endif
-			return nr2char(b:txtfmt_fmt_first_tok + bin_val)
+			let mask = 0
+			" Loop over individual chars.
+			for atom in split(s, '\zs')
+				let mask = or(mask, s:ubisrc_mask[atom])
+			endfor
+			return nr2char(b:txtfmt_fmt_first_tok + mask)
 		endif
 	elseif t ==? 'c' || t ==? 'k'
 		" Assumption: Type has already been validated.
 		" clr or bgc string
-		" Since not default fmt request, spec must match color pattern.
+		" Since not default clr/bgc request, spec must match color pattern.
 		" Determine which color index corresponds to color pattern.
 		let clr_ind = s:Lookup_clr_namepat(t, s)
 		if clr_ind == 0
@@ -1892,13 +1901,13 @@ fu! s:Translate_fmt_clr_spec(s)
 endfu
 " >>>
 " Function: s:Translate_fmt_clr_list() <<<
-" Purpose: Translate the input comma/dot-separated list of fmt/clr/bgc spec
-" atoms into a string of tokens suitable for insertion into the buffer.
+" Purpose: Translate the input comma/dot/space-separated list of fmt/clr/bgc
+" spec atoms into a string of tokens suitable for insertion into the buffer.
 " Validation is performed. Also, cursor offset into translated token string is
 " determined based upon the presence of a dot (replaces comma when it appears
 " between fmt/clr/bgc atoms - may also appear as first or last character in
 " fmt/clr/bgc spec list).
-" Input: Comma/Dot-separated list of fmt/clr/bgc spec atoms.
+" Input: Comma/dot-separated list of fmt/clr/bgc spec atoms.
 " Return: String of the following format:
 " <offset>,<tokstr>
 " Error: Return empty string and set s:err_str
@@ -1907,106 +1916,76 @@ fu! s:Translate_fmt_clr_list(s)
 	" For convenience
 	let s = a:s
 	let len = strlen(s)
-	" Initializations <<<
 	let offset = -1			" -1 means not explicitly set by user
-	let offset_fixed = 0	" binary flag
 	let i = 0
-	let sep = ''			"[,.] or '' for end-of string
+	let sep = ''			"[,.] or '' for ws-separated or end-of string
 	let num_fld = 0			" # of atoms encountered
 	let tokstr = ''			" built up in loop
-	" >>>
+	" First check for `.' at head of list.
+	" Note: On failure to find leading `.', matchend will return -1, which
+	" needs to be changed to 0 so that loop starts looking at start.
+	let i = matchend(s, '^\s*\.\s*')
+	if i > 0
+		let offset = 0
+	else
+		let i = 0
+	endif
 	" Process the fmt/clr/bgc spec atom(s) in a loop
+	" Note: We've already processed any leading `.'; at this point.
 	while i < len
-		" Find end of spec ([,.] or end of string)
-		" (Commas and dots not allowed except as field sep)
-		" NOTE: Match with '$' returns strlen (even for empty string)
-		let ie = match(s, '[,.]\|$', i)
-		" Extract field sep and text
-		let sep = ie<len ? s[ie] : ''
-		" TODO - See about consolidating the if's below...
-		if ie>i
-			let fld = strpart(s, i, ie-i)
-			let num_fld = num_fld+1
-			" Translate field if non-empty
+		" Get a term and whatever separates it from any following term.
+		" Note: Commas and dots not allowed except as field sep.
+		" Note: Match with '$' returns strlen (even for empty string)
+		" Note: This pattern will always match, but match will be empty for
+		" empty term.
+		" Captures:
+		" 1=f/c/k component (optional, but nonexistent treated as error)
+		" 2=non-whitespace sep (if it exists)
+		let ms = matchlist(s, '^\([^,.[:space:]]*\)\s*\([.,]\)\?\s*', i)
+		let fld = ms[1]
+		let sep = ms[2]
+		if !empty(fld)
+			" Assumption: Pattern guarantees fld has no surrounding whitespace.
+			let num_fld += 1
+			" Translate non-empty field.
 			let tok = s:Translate_fmt_clr_spec(fld)
 			if tok == ''
 				" Must have been error
-				let s:err_str = "Invalid fmt/clr spec: '".fld."': ".s:err_str
+				let s:err_str = "Invalid fmt/clr spec: '" . fld . "': " . s:err_str
 				return ''
 			endif
-			let tokstr = tokstr.tok
-		" Validate the field in various ways
-		elseif i==ie	" check null fields
-			let fld = ''
-			if ie==0	" at beginning of list ('.' permitted)
-				if ie==len-1
-					let s:err_str = "Separator with nothing to separate"
-					return ''
-				elseif len==0
-					" Note: This should probably be checked before now, but
-					" just to be complete...
-					let s:err_str = "Invalid empty fmt/clr spec list"
-					return ''
-				elseif sep=='.'
-					let offset = 0
-				else
-					let s:err_str = "Invalid leading ',' in fmt/clr spec list"
-					return ''
-				endif
-			else	" not at beginning of list
-				let s:err_str = "Empty field encountered at '".strpart(s, i)
-				return ''
-			endif
+			let tokstr = tokstr . tok
+		else
+			let s:err_str = "Empty field encountered at '" . strpart(s, i)
+			return ''
 		endif
-		if ie==len-1	" validate last char in string
-			if num_fld==0
-				" NOTE: Can't actually get here...
-				let s:err_str = "fmt/clr spec list contains no fields"
-				return ''
-			elseif sep!='.'
-				let s:err_str = "Trailing comma not allowed in fmt/clr spec list"
+		" Was offset specified with `.' separator?
+		" Design Decision: Signal error if list includes multiple `.'.
+		" Rationale: May indicate user confusion.
+		if sep == '.'
+			if offset >= 0
+				let s:err_str = "Only 1 `.' permitted in fmt/clr spec"
 				return ''
 			endif
-		endif
-		" If here, field is OK unless atom is bad...
-		" Do offset logic
-		if offset==-1 && sep=='.'
 			let offset = num_fld
 		endif
-		" Update for next iteration
-		let i = ie+1
-		if i > len
-			break
-		endif
-		" OLD (implicit) logic for determining cursor offset <<<
-		" TODO_BG: Get rid of this...
-		"if tok=~b:re_fmt_any_stok || tok=~b:re_fmt_etok
-		"	if fmt_begun
-		"		" Fix cursor location (if not already fixed)
-		"		if offset==0
-		"			let offset = num_fld-1
-		"		endif
-		"	endif
-		"	" If fmt start tok, set flag
-		"	if tok!~b:re_fmt_etok
-		"		let fmt_begun = 1
-		"	endif
-		"elseif tok=~b:re_clr_any_stok || tok=~b:re_clr_etok
-		"	if clr_begun
-		"		" Fix cursor location (if not already fixed)
-		"		if offset==0
-		"			let offset = num_fld-1
-		"		endif
-		"	endif
-		"	" If clr start tok, set flag
-		"	if tok!~b:re_clr_etok
-		"		let clr_begun = 1
-		"	endif
-		"endif
-		" >>>
+		" Update for next iteration.
+		let i += len(ms[0])
 	endwhile
+	" Check post-conditions:
+	" -At least 1 term (since caller typically handles empty spec).
+	"  TODO: Once I've transitioned to exception handling, could probably just
+	"  return empty string for this case (i.e., stop returning error).
+	" -Final sep can't be `,' (only `.' makes sense at end of list).
+	if !empty(sep) && sep == ','
+		let s:err_str = "Trailing comma not allowed in fmt/clr spec list"
+		return ''
+	elseif !num_fld
+		let s:err_str = "Translate_fmt_clr_list: expected at least 1 term in fmt/clr/bgc list"
+		return ''
+	endif
 	" Return the special format string
-	return offset.','.tokstr
+	return offset . ',' . tokstr
 endfu
 " >>>
 " VMAPS TODO - Move elsewhere... <<<
@@ -5822,6 +5801,11 @@ fu! Txtfmt_GetTokStr(s)
 	" Make sure this is a txtfmt buffer
 	if !exists('b:loaded_txtfmt')
 		echoerr "Function Txtfmt_GetTokStr can be used only within a 'txtfmt' buffer"
+		return ''
+	endif
+	" Note: Caller shouldn't be passing empty or effectively empty string, but
+	" if he does, handle here, as Translate_fmt_clr_list considers it error.
+	if a:s =~ '^\s*$'
 		return ''
 	endif
 	" Call script-local function to perform the translation
