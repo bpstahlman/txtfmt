@@ -2056,38 +2056,32 @@ fu! s:Get_cur_rgn_info()
 endfu
 " >>>
 " Function: s:Parse_fmt_clr_transformer() <<<
-" Input: [<selector>/]<fck-spec>
+" Input: <fck-spec>[/<selector>]
 " Convert the input comma-separated f/c/k transformer spec and optional
-" preceding selector expression to a struct.
-" Input Format: In lieu of full grammar, here are some illustrative examples:
-" fubi
-"   Add bold-underline-italic
-" f+ubi
-"   Same as previous (+ is the default).
-" fub-is
-"   Add bold-underline, remove italic-standout
-" fub-isb
-"   Add underline, remove italic-standout-bold
-"   Explanation: When same attr is given more than once, all but last ignored
-" f-ubi
-"   Remove bold-underline-italic
-" fb-i+u-s
-"   Add bold-underline, remove italic-standout
-" f+b-i+u-s
-"   Same as previous
-" f-
-"   NOP (literally, remove nothing)
-" f=ubi
-"   Set formats to exactly bold-underline-italic
-" f=
-"   Clear formatting (literally, set to empty fmt attrs)
-" cr
-"   Set fg color to red
-" k
-"   Remove bg color
-" k-
-"   Same as previous (this was actually the only way pre-vmap Txtfmt)
-" Output Format:
+" following selector expression to a struct.
+" Input Format: In lieu of full grammar, here are some illustrative examples of
+" both fmt/clr transformer spec and selector expressions.
+" Transformer Spec Examples:
+" fubi        add bold-underline-italic
+" f+ubi       same as previous (+ is the default).
+" fub-is      add bold-underline, remove italic-standout
+" fub-isb     ERROR - conflicting action for 'bold'
+" f-ubi       remove bold-underline-italic
+" fb-i+u-s    add bold-underline, remove italic-standout
+" f+b-i+u-s   same as previous
+" f-          clear formatting
+" f=          same as previous (literally, set to empty fmt attrs)
+" f=-         same as previous (though a bit weird)
+" f=ubi       set formats to exactly bold-underline-italic
+" cr          set fg color to red
+" c=r         same as previous
+" kblue       set bg color to blue
+" k=blue      same as previous
+" Note: 'Clear color' specified same for c/k as for f.
+" Selector Expression Examples:
+" TODO...
+"
+" --- Output Format ---
 " {
 "   sel: [] | {}
 "   rgns: {
@@ -2108,7 +2102,9 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	" Strip off the selector if it was supplied.
 	" Note: The following patterns strip leading and trailing whitespace on the
 	" components.
-	let [_, sel, specs; rest] = matchlist(a:specs, '^\%(\s*\([^/]\{-}\)\s*/\)\?\s*\(.\{-}\)\s*$')
+	" TODO: Consider using match() to find any `/' (would be more efficient).
+	let [_, specs, sel; rest] =
+		\matchlist(a:specs, '^\s*\(.\{-}\)\s*\%(/\s*\(.\{-}\)\s*\)\?$')
 	if empty(specs)
 		" Effectively empty spec. Return NOP object.
 		return {}
@@ -2117,20 +2113,15 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	let ret = {'sel': {'op': '!', 'val': 1}, 'rgns': {}}
 	let rgns = ret.rgns
 	if !empty(sel)
-		let ret.sel = S_Parse_selector(sel)
+		let ret.sel = s:Parse_selector(sel)
 	endif
 	" Split the comma or space-separated f/c/k components
-	" Note: Compatibility option determines whether components can be separated
-	" by only whitespace.
 	" Note: Use of explicit commas can produce empty components anywhere, even
 	" at end: set keepempty to facilitate detection.
 	" Note: Because we've stripped trailing whitespace, a trailing empty
 	" component can be caused only by comma; accordingly, the \ze\S is
 	" superfluous.
-	let re_sep = '\s*,\s*'
-	if !s:cfg_color_name_compat
-		let re_sep .= '\|[fck]\s*[^[:space:],]\+\zs\s\+\ze\S'
-	endif
+	let re_sep = '\s*,\s*\|\s\+'
 	let fcks = split(specs, re_sep, 1)
 	" Loop over the f/c/k components
 	for spec in fcks
@@ -2145,19 +2136,18 @@ fu! s:Parse_fmt_clr_transformer(specs)
 		endif
 		if has_key(rgns, b:txtfmt_rgn_typ_abbrevs[t])
 			" We've already processed a component of this type.
-			throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
+			throw "Parse_fmt_clr_transformer: no more than 1 component of"
+				\ . " each type (f|c|k) permitted"
 		endif
-		" Discard any whitespace between type and subsequent spec. (Necessary to
-		" ensure spec itself is 'stripped'.)
-		let spec = TxtfmtUtil_lstrip(spec)
+		if empty(spec)
+			throw "Parse_fmt_clr_transformer: `" . t . "' must be followed by valid "
+				\ . (t == 'f' ? "format attributes" : "color name")
+		endif
 		" Switch on type
 		if t == 'f'
 			" Design Decision: Keep special meaning of `f-', and support several
 			" other intuitive means of specifying 'no format'.
-			" Caveat: If using whitespace, rather than comma, to separate specs,
-			" you'd need to use a form other than `f' to prevent subsequent char
-			" from being interpreted as attr.
-			if empty(spec) || spec == '=' || spec == '-' || spec == '=-'
+			if spec == '=' || spec == '-' || spec == '=-'
 				" Clear all fmt attrs
 				let rgns.fmt = 0
 			else
@@ -2184,9 +2174,10 @@ fu! s:Parse_fmt_clr_transformer(specs)
 					elseif atom == '-'
 						let op = '-'
 					else
-						" Check for ambiguity.
+						" Check for conflict.
 						if additive && and(masks[op == '+' ? '-' : '+'], s:ubisrc_mask[atom])
-							throw "Ambiguous use of fmt attr " . atom . " in both add/sub parts of spec: `f" . spec . "'"
+							throw "Ambiguous use of fmt attr " . atom
+							\ . " in both add/sub parts of spec: `f" . spec . "'"
 						endif
 						let masks[op] = or(masks[op], s:ubisrc_mask[atom])
 					endif
@@ -2203,144 +2194,23 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			if t == 'k' && !b:txtfmt_cfg_bgcolor
 				throw "Use of `k' invalid when background colors are disabled"
 			endif
-			" Note: Unlike fmts, dash is always special for colors.
-			" Rationale: Out of respect for legacy usage, coupled with fact that
-			" there is no other meaning for `-' in color context.
-			" TODO: Decide whether to permit c=-.
-			if empty(spec) || spec == '-'
+			" Allow several special forms for default (no) color.
+			if spec == '=' || spec == '-' || spec == '=-'
 				" Return to default.
 				let clr_num = 0
 			else
 				let clr_num = s:Lookup_clr_namepat(t, spec)
 				if clr_num <= 0
 					if clr_num == 0
-						throw "Invalid color name pattern in fmt/clr transformer spec: `" . spec . "'"
+						throw "Invalid color name pattern in fmt/clr transformer spec: `"
+							\ . spec . "'"
 					else
-						throw "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . spec . "'"
+						throw "Color specified by name pattern in fmt/clr"
+							\ . " transformer spec is inactive: `" . spec . "'"
 					endif
 				endif
 			endif
 			let rgns[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
-		else
-			throw "Invalid type specifier in fmt/clr transformer spec: " . t
-		endif
-	endfor
-	return ret
-endfu
-fu! s:Parse_fmt_clr_transformer_obsolete2(specs)
-	" ALPHA_TODO: Defer decision on a few aspects of format, possibly till
-	" feedback from alpha users received..
-	let cfg = {'allow_empty': 0, 'allow_override': 0, 'strict_fmts': 0, 'dash_special': 1}
-	" Initalize return object.
-	let ret = {}
-	let specs = TxtfmtUtil_strip(a:specs)
-	if empty(specs)
-		" Effectively empty spec. Return NOP object.
-		return ret
-	endif
-	" Split the comma-separated f/c/k components
-	" Note: Docs forbid both commas and whitespace in color names, and we're
-	" going to ignore them in fmt specs.
-	" Design Decision: Keepempty won't get empties at head or tail because we've
-	" already stripped; it will, however, allow us to detect empty components.
-	let fcks = split(specs, '\s*,\s*', 1)
-	" Loop over the f/c/k components
-	for spec in fcks
-		if empty(spec)
-			if cfg.allow_empty
-				continue
-			else
-				throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
-			endif
-		endif
-		" Extract token type and remainder of spec
-		let [t, spec] = [spec[0], spec[1:]]
-		" Validate the type
-		if t !~ '[fck]'
-			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
-		endif
-		if has_key(ret, b:txtfmt_rgn_typ_abbrevs[t])
-			" We've already processed a component of this type.
-			if cfg.allow_override
-				call remove(ret, b:txtfmt_rgn_typ_abbrevs[t])
-			else
-				throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
-			endif
-		endif
-		" Discard any whitespace between type and subsequent spec. (Necessary to
-		" ensure spec itself is 'stripped'.)
-		let spec = TxtfmtUtil_lstrip(spec)
-		" Switch on type
-		if t == 'f'
-			" ALPHA_TODO: Should we treat f- as special case meaning clear
-			" formats, or keep things logical (i.e., remove nothing)? For now,
-			" let cfg object decide.
-			" Note: Special case '+' could just as well be handled in loop, as
-			" could '-' when dash not special, but why not short-circuit here?
-			if empty(spec) || spec == '+' || (!cfg.dash_special && spec == '-')
-				" No change
-				let ret.fmt = [0, 0]
-			elseif spec == '=' || (cfg.dash_special && spec == '-')
-				" Clear all fmt attrs
-				let ret.fmt = 0
-			else
-				" Note: Special cases have all been handled.
-				" Design Decision: Discard spaces (even interior), which have no
-				" meaning in fmt specs.
-				let spec = substitute(spec, '\s\+', '', 'g')
-				" Additive or prescriptive mode?
-				let additive = spec[0] != '='
-				let attrs = additive ? spec : spec[1:]
-				" Validate form of the fmt attr list.
-				" Assumption: attrs cannot be simply `-' at this point.
-				if additive && cfg.strict_fmts && attrs !~ '^+\?\([ubisrc]*\)\(-\([ubisrc]*\)\)\?$'
-					\ || attrs =~ '[^' . (additive ? '-+' : '') . b:ubisrc_fmt{b:txtfmt_num_formats-1} . ']'
-					throw "Invalid fmt transformer spec: `f" . spec . "'"
-				endif
-				" Initialize mask(s) to be built in loop.
-				let masks = additive ? {'+': 0, '-': 0}  : {'=': 0}
-				" Initialize default (or only) op.
-				let op = additive ? '+' : '='
-				" Loop over individual chars.
-				for atom in split(attrs, '\zs')
-					if atom == '+'
-						let op = '+'
-					elseif atom == '-'
-						let op = '-'
-					else
-						" Check for ambiguity.
-						if additive && and(masks[op == '+' ? '-' : '+'], s:ubisrc_mask[atom])
-							throw "Ambiguous use of fmt attr " . atom . " in both add/sub parts of spec: `f" . spec . "'"
-						endif
-						let masks[op] = or(masks[op], s:ubisrc_mask[atom])
-					endif
-				endfor
-				if additive
-					" Save list of add/sub masks.
-					let ret.fmt = [masks['+'], masks['-']]
-				else
-					" Save scalar 'set' mask
-					let ret.fmt = masks['=']
-				endif
-			endif
-		elseif t == 'c' || t == 'k'
-			" Note: Unlike fmts, dash is always special for colors.
-			" Rationale: Out of respect for legacy usage, coupled with fact that
-			" there is no other meaning for `-' in color context.
-			if empty(spec) || spec == '-'
-				" Return to default.
-				let clr_num = 0
-			else
-				let clr_num = s:Lookup_clr_namepat(t, spec)
-				if clr_num <= 0
-					if clr_num == 0
-						throw "Invalid color name pattern in fmt/clr transformer spec: `" . spec . "'"
-					else
-						throw "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . spec . "'"
-					endif
-				endif
-			endif
-			let ret[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
 		else
 			throw "Invalid type specifier in fmt/clr transformer spec: " . t
 		endif
@@ -2492,8 +2362,6 @@ fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 			throw "Invalid type specifier in fmt/clr transformer spec: " . tt
 		endif
 	endfor
-	echo "Returning from Parse_fmt_clr_transformer:"
-	echo ret
 	return ret
 endfu
 " TODO: TEMP DEBUG
@@ -3356,11 +3224,9 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 			" was past region end and hlable lies between it and this one (in
 			" which case, we already have sufficient toks for cleanup at tail).
 			" Note: Phantom toks are always added above.
-			echomsg "Before: " . string(ti)
 			let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
 				\: a:opt.rgn.beg == ti.pos ? '{'
 				\: a:opt.rgn.end == ti.pos ? '}' : '='
-			echomsg "After: " . string(ti)
 			if ti.loc == '>'
 				" Do we already have a candidate 'last tok'?
 				if !empty(ti_last)
@@ -3381,8 +3247,8 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 			if ti.loc == '{' | let sel_beg_found = 1 | endif
 			call add(toks, ti)
 			""""
-			echomsg "About to check for phantoms to add... " . string(ti)
 			" !!!! UNDER CONSTRUCTION !!!!
+			" REFACTOR_TODO: Validate this logic and remove 'Under Construction'...
 			" Add phantoms for the other rgn types.
 			" Note: Using action 'a' to prevent indices from getting out of sync
 			" when applying changes to buffer.
@@ -3458,16 +3324,13 @@ fu! s:Vmap_apply(pspecs, toks)
 	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1}
 	let new_idx = {}
 	for tok in a:toks
-		echomsg "tok=" . string(tok)
-		echomsg "    sel=" . string(a:pspecs.sel)
-		echomsg "    old_idx=" . string(old_idx)
 		" Skip non-tokens (e.g., <eob>).
 		if tok.typ != 'tok' | continue | endif
 		" Skip tokens whose type is not implicated in the input pspecs.
 		" REFACTOR_TODO: Prior to refactor, Vmap_apply wasn't even called in
 		" such cases. Makes sure this is the best way to handle...
+		" Ahhh!!!! Can't do this, as the type may be implicated in selector!!!
 		if !has_key(a:pspecs.rgns, tok.rgn)
-			echomsg "Continue1 on " . string(tok)
 			continue
 		endif
 		" Boot-strap each rgn type.
@@ -3475,7 +3338,6 @@ fu! s:Vmap_apply(pspecs, toks)
 			let old_idx[tok.rgn] = tok.idx
 			" REFACTOR_TODO - How to initialize new_idx[]?????
 			let new_idx[tok.rgn] = tok.idx " or should it be -1
-			echomsg "Continue2 on " . string(tok)
 			continue
 		endif
 		" TODO: If we guarantee set_idx is set within if/else, remove this...
@@ -3490,10 +3352,11 @@ fu! s:Vmap_apply(pspecs, toks)
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
+			"echomsg "Checking selector: " . string(a:pspecs.sel)
+			"echomsg "old_idx: " . string(old_idx)
 			if s:Check_selector(a:pspecs.sel, old_idx)
 				" Selected! Apply highlighting.
 				if tok.rgn == 'fmt'
-					echomsg "Applying " . string(a:pspecs.rgns.fmt) . " to " old_idx.fmt
 					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				else
 					"clr/bgc
@@ -3505,10 +3368,8 @@ fu! s:Vmap_apply(pspecs, toks)
 				" Note: Logic for how to accomplish this is deferred to end of
 				" loop; simply record what highlighting should be.
 				let set_idx = old_idx[tok.rgn]
-				echomsg "Selector failed: set_idx=" . set_idx . " tok=" . string(tok)
 			endif
 		elseif tok.loc == '}'
-			echomsg "tok loc }: " . string(tok) . " old=" . old_idx[tok.rgn]
 			if tok.action != 'a'
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
@@ -3538,7 +3399,7 @@ fu! s:Vmap_apply(pspecs, toks)
 				endif	   
 			else
 				 " Phantom tok
-				 echomsg "Comparing " . set_idx . " to " . new_idx[tok.rgn]
+				 "echomsg "Comparing " . set_idx . " to " . new_idx[tok.rgn]
 				 if set_idx != new_idx[tok.rgn]
 					 let tok.idx = set_idx
 				 else
@@ -3938,7 +3799,6 @@ endfu
 fu! s:Vmap_apply_changes(toks, opt)
 	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
-		echomsg "Applying changes to buf: " . string(tok)
 		if tok.typ == 'eob' || empty(tok.action)
 			" No change from what's in buffer.
 			continue
@@ -4099,7 +3959,7 @@ fu! s:Vmap_cleanup(toks, opt)
 					let ti_safe = tip
 				else
 					" Nothing but maybe toks exposed. Delete superseded tok.
-					echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip) . " - " . string(ti)
+					"echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip) . " - " . string(ti)
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
 				endif
 				" Supersedence test complete.
@@ -4108,7 +3968,7 @@ fu! s:Vmap_cleanup(toks, opt)
 				"echomsg "Printing safe and other: " . string(ti_safe) . " - " . string(ti)
 				if ti.typ == 'tok' && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
-					echomsg "Removing tok determined redundant by 2nd test: " . string(ti) . " - " . string(ti)
+					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti) . " - " . string(ti)
 					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 					let tip_next = {}
 				endif
@@ -4741,8 +4601,7 @@ fu! s:Sel_parser_expr_to_string(expr, indent)
 	endif
 	return s
 endfu
-" REFACTOR_TODO: Change this back to s:Parse_selector.
-fu! S_Parse_selector(sel)
+fu! s:Parse_selector(sel)
 	let ps = s:Sel_parser_tok_init(a:sel)
 	try
 		let expr = s:Sel_parser_bool_expr(ps, '|')
@@ -4752,7 +4611,7 @@ fu! S_Parse_selector(sel)
 				throw "Expected `&&', `||' or end of input"
 			endif
 			" Valid expression
-			echo s:Sel_parser_expr_to_string(expr, 0)
+			"echo s:Sel_parser_expr_to_string(expr, 0)
 		endif
 		return expr
 	catch
