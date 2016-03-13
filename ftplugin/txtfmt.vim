@@ -114,6 +114,13 @@ fu! s:Prep_for_single_quotes(s)
 	return substitute(a:s, "'", "''", 'g')
 endfu
 " >>>
+" Function: s:Get_active_rgns() <<<
+fu! s:Get_active_rgns()
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	return extend(extend(['fmt'], clr_active ? ['clr'] : []), bgc_active ? ['bgc'] : [])
+endfu
+" >>>
 " Function: s:Move_cursor() <<<
 " Purpose: Move the cursor right or left (within the current line) by the
 " specified number of characters positions. Note that character positions are
@@ -3256,6 +3263,12 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 			" TODO: Think through this if condition: bottom line is, I need to
 			" append interior phantoms whenever the tok just added is
 			" non-phantom, and it's either at head or within region.
+			" BIG TODO!!!! FIXME!!!! Somehow need to ensure the presence of at
+			" least a phantom head for rgn types not represented in specs:
+			" otherwise, Vmap_apply's selector logic won't work properly. Could
+			" do it here, or could simply ensure that syncing/collecting is done
+			" for *all* region types. (One advantage of the latter approach is
+			" that it permits cleanup on all region types.)
 			if empty(ti.action) && ti.loc =~ '[{=]'
 				for rgn in a:other_rgns
 					" Add a phantom.
@@ -3326,13 +3339,6 @@ fu! s:Vmap_apply(pspecs, toks)
 	for tok in a:toks
 		" Skip non-tokens (e.g., <eob>).
 		if tok.typ != 'tok' | continue | endif
-		" Skip tokens whose type is not implicated in the input pspecs.
-		" REFACTOR_TODO: Prior to refactor, Vmap_apply wasn't even called in
-		" such cases. Makes sure this is the best way to handle...
-		" Ahhh!!!! Can't do this, as the type may be implicated in selector!!!
-		if !has_key(a:pspecs.rgns, tok.rgn)
-			continue
-		endif
 		" Boot-strap each rgn type.
 		if old_idx[tok.rgn] < 0
 			let old_idx[tok.rgn] = tok.idx
@@ -3352,9 +3358,17 @@ fu! s:Vmap_apply(pspecs, toks)
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
-			"echomsg "Checking selector: " . string(a:pspecs.sel)
-			"echomsg "old_idx: " . string(old_idx)
-			if s:Check_selector(a:pspecs.sel, old_idx)
+			" REFACTOR_TODO: The has_key test below is meant to ensure that we
+			" discard a phantom whose rgn type isn't represented in pspecs, and
+			" that we do so without performing selector test, and even more
+			" importantly, without attempting to apply fmt/clr (since the
+			" attempt might generate error for rgn type not present in pspecs).
+			" Prior to refactor, Vmap_apply wasn't even called for such rgn
+			" types. Falling into the else should cause the right thing to
+			" happen naturally; however, we probably shouldn't even add interior
+			" phantoms we know will be removed here...
+			if has_key(a:pspecs.rgns, tok.rgn)
+				\ && s:Check_selector(a:pspecs.sel, old_idx)
 				" Selected! Apply highlighting.
 				if tok.rgn == 'fmt'
 					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
@@ -3363,8 +3377,9 @@ fu! s:Vmap_apply(pspecs, toks)
 					let set_idx = a:pspecs.rgns[tok.rgn]
 				endif
 			else
-				" Unselected existing or phantom tok; ensure that highlighting
-				" is unchanged from what it was before.
+				" Either tok is unselected or its rgn type isn't represented in
+				" pspec; in either case, ensure that highlighting is unchanged
+				" from what it was before.
 				" Note: Logic for how to accomplish this is deferred to end of
 				" loop; simply record what highlighting should be.
 				let set_idx = old_idx[tok.rgn]
@@ -3376,9 +3391,9 @@ fu! s:Vmap_apply(pspecs, toks)
 			endif
 			let set_idx = old_idx[tok.rgn]
 		else " past vsel
-			" REFACTOR_TODO: We're breaking out here prematurely, due to
-			" presence of phantom 'interior' toks before the actual phantom.
-			" !!!!!!!!!!!!! FIXME !!!!!!!!!!!!!!!!
+			" REFACTOR_TODO: At one point, we were breaking out here
+			" prematurely, due to presence of phantom 'interior' toks before the
+			" actual phantom.
 			" TODO: Think whether there's a better way to harmonize interior and
 			" head/tail phantoms...
 			"echomsg "Breaking out on " . string(tok)
@@ -3419,10 +3434,6 @@ fu! s:Vmap_compute(pspecs, opt)
 	" REFACTOR_TODO: Somehow have list of all rgn types of interest passed in,
 	" and loop over just those: e.g., rgn types involved both in pspecs and any
 	" selector. If nothing else, we need to loop over only *active* rgn types.
-	" REFACTOR_TODO: Function that returns array of applicable rgns.
-	"let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-	"let clr_active = b:txtfmt_cfg_numfgcolors > 0
-	"for rgn in extend(extend(['fmt'], clr_active ? ['clr'] : []), bgc_active ? ['bgc'] : [])
 	" REFACTOR_TODO: Prior to refactor, didn't even call Vmap_compute for rgn
 	" type not in pspecs; doing so would have added phantom toks, which, because
 	" Vmap_apply was not run for their rgn type, would have retained the default
@@ -3436,7 +3447,8 @@ fu! s:Vmap_compute(pspecs, opt)
 	" pspecs. Or perhaps even allow the phantom toks up to a point, then ensure
 	" they're deleted before they do any harm...
 	" Design Decision Needed: Read preceding paragraph and decide...
-	for rgn in keys(a:pspecs.rgns)
+	"for rgn in keys(a:pspecs.rgns)
+	for rgn in s:Get_active_rgns()
 		let sync_info = s:Vmap_sync_start(rgn, a:opt)
 		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
 		" start/end indices returned explicitly.
