@@ -49,7 +49,7 @@ Select the text to be highlighted using either mouse or visual mode (e.g., v, V 
 	\h
 At the resulting Txtfmt prompt, enter the following and hit Enter:
 	f=bi,cb
-Note: You could also have typed "fbi,cb" (without the `='), which would have added bold-italic on top of any existing format attributes: i.e., the `=' causes any existing format attributes to be overwritten. More on this later...
+Note: You could also have typed "fbi,cb" (without the `='), which would have *added* bold-italic on top of any existing format attributes: i.e., the `=' causes any existing format attributes to be overwritten. More on this later...
 
 === USAGE EXAMPLE (OPERATOR-PENDING AUTO MAPS) ===
 Suppose you wish to make the word under the cursor red, bold-underline.
@@ -66,7 +66,7 @@ Once again, Vim awaits a motion. Enter the normal mode command to move down 2 li
 	2j
 At the resulting Txtfmt prompt, type the following and hit Enter:
 	fui
-Note: Because we used "f" instead of "f=", the word you highlighted in the first step has retained the bold attribute.
+Note: Because we used "fui" instead of "f=ui", the word you highlighted in the first step has retained the bold attribute.
 
 === USAGE EXAMPLE (MANUAL MAPS) ===
 Suppose you wish to enter some green text...
@@ -271,7 +271,7 @@ Now suppose you wish to change the highlighting of just one word within the bloc
 	-Remove italic
 	-Add underline
 	-Change color to blue
-Of course, you could accomplish this with manual mappings by inserting a bold-italic format token and a blue fg color token at the start of the word, and a bold-italic format token and default fg color token at the end of the word. But this is a bit tedious. Note, for instance, that you would have to think about the current highlighting *after* the region to know what sort of tokens should be inserted at the end of the word. Also, there is no way with manual maps to say "remove italic" and "add underline". You have to think about the existing highlighting to know what sort of token to insert. This is exactly the sort of use-case for which Txtfmt's auto maps were designed...
+Of course, you could accomplish this with manual mappings by inserting "fbu" and "cb" tokens at the start of the word, and "fbi" and "c-" tokens at the end of the word. But this is a bit tedious. Note, for instance, that you would have to think about the current highlighting *after* the region to know what sort of tokens should be inserted at the end of the word. Also, there is no way with manual maps to say "remove italic" and "add underline". You have to think about the existing highlighting to know what sort of token to insert. This is exactly the sort of use-case for which Txtfmt's auto maps were designed...
 
 To accomplish the desired highlighting with an operator-pending map, simply position yourself at the start of the word to be changed and type the following:
 	\h
@@ -279,18 +279,22 @@ Vim is now waiting for you to execute a motion to define the region you wish to 
 	fu-i,cb
 Notice that the word at cursor is now blue bold-underline, and the containing region is unchanged.
 
-The fmt/clr spec you just entered used "additive mode" to add underline and subtract italic. Note that there's a subtle difference between the use of `-' in manual and auto maps: in manual maps, `-' is used to turn off formats altogether (i.e., to return to the "default" format or color); with auto maps, it is used to "subtract", or remove, specific attributes. Although an explicit `+' can be used to "add" fmt attributes, it is generally unnecessary, since attributes are added by default. The following examples should give the idea:
-	fbi       (add bold and italic)
-	f+bi      (same as above: leading `+' is optional)
-	fbi-us    (add bold and italic / remove underline and standout)
-	f+bi-us   (same as above)
-	fb-u+i-s  (same as above)
-	f-bi      (remove bold and italic)
+The fmt/clr spec you just entered used "additive mode" to add underline and subtract italic. An additive mode spec uses `-' to "subtract", or remove, specific attributes. Although an explicit `+' can be used to "add" fmt attributes, it is generally unnecessary, since format attributes are added by default. The following examples should give the idea:
+	fbi        add bold and italic
+	f+bi       same as above (leading `+' is optional)
+	fbi-u      add bold and italic / remove underline
+	f+bi-u     same as above
+	fb-u+i     same as above
+	f-bi       remove bold and italic
+	f-         clear all format attributes
+
+Note: You might have been tempted to think of `f-' as a degenerate additive mode spec that removes nothing (i.e., as a NOP); however, this would have been too confusing for legacy users accustomed to thinking of a `-' by itself as "clear all" formats/colors.
 
 *** Note to Alpha testers ***
 I have considered (and have not completely ruled out) the following, stricter format...
 	f<ADD>-<SUB>
-...which would not permit add/sub components to be interspersed in any order as they were in the examples. With this more limited format, an explicit `+' would never be needed (and would probably not even be allowed). Feedback is welcome on this UI choice, as the design is not yet frozen.
+...which would not permit add/sub components to be interspersed in any order as they were in at least one of the examples. With this more limited format, an explicit `+' would never be needed (and would probably not even be allowed). Feedback is welcome on this UI choice, as the design is not yet frozen.
+I have also considered (and have not completely ruled out) attaching the "clear all" meaning to a bare `f', `c', and `k': i.e., not requiring the explicit `-'. Again, feedback welcome...
 
 Tip: Additive mode is particularly useful when you want to add certain attributes to an entire region, without affecting any existing attributes. Imagine you had a paragraph with lots of words highlighted differently, and you wished to italicize the entire paragraph (without otherwise changing the individual word highlighting). With manual maps, you would have to visit each of the highlighted words and replace the token before it with a new token containing the original attribute(s) *and* italic. In most cases, you'd also need to replace a token *after* the word as well. This would be rather tedious. But with additive mode, you can simply select the entire paragraph (or move over it with an operator-pending map) and specify...
 	fi
@@ -302,20 +306,18 @@ But what if you know exactly how you want an entire region formatted? I.e., inst
 	f=        (set to "no formats" - i.e., remove all fmt attributes)
 Caveat: You cannot mix additive and equals mode within a single format spec: i.e., the following is an error (and wouldn't really make much sense):
 	f=i-b     (ERROR)
-Note: Additive and equals modes are for formats only. Since colors support *only* equals mode, no special characters are required for disambiguation: thus, `=' and `+' are not permitted in fg/bg color specs.
+Note: Additive and equals modes are for formats only. Since colors support *only* equals mode, no special characters are required for disambiguation: thus, `+' is not permitted in fg/bg color specs; `=' is permitted, but only because some users may like some separation between the 'c' or 'k' and the following color name, and whitespace is illegal there.
+Examples:
+	cb      fg color blue
+	cblue   same as above
+	k=b     bg color blue
+	k-      clear bg color
+	k=      same as above
 
-** Note to Alpha testers **
-My original thought was to use `f-' (rather than, or in addition to, `f='), to remove all format attributes, as this seemed the most natural extension of `f-' from manual to auto maps. From a purely logical standpoint, however, `f=' makes more sense than `f-'. Consider that `f-' is simply a degenerate additive mode spec that removes nothing (i.e., leaves formatting as-is); `f=', on the other hand, is a degenerate prescriptive mode spec that sets formatting to nothing (i.e., clears formatting). Finally, `f' by itself would be a degenerate additive mode spec that adds nothing (i.e., leaves formatting as-is). For these reasons, I have opted for the following interpretations:
-	f-    no change
-	f     no change
-	f=    clear all format attributes
-As already mentioned, the `-' is not special in color specs: thus, you can use either a `-' or an empty color name to remove fg/bg colors: E.g.,
-	c-    remove fg color
-	c     same
-	k-    remove bg color
-	k     same
-Note: Previous versions of Txtfmt required explicit `-' to remove colors.
-Also Note: It has occurred to me that users accustomed only to manual maps might expect `f-' to clear all format attributes. I welcome feedback on this point, as I haven't completely ruled out making `f-' a special case that violates consistency in order to avoid surprising some users...
+Note: Earlier versions of Txtfmt required a `,' between the components of a fmt/clr spec. This release permits either comma or whitespace: e.g., both of the following forms should work:
+	fbi,cb
+	fbi cb
+Rationale: Intended to help users with keyboards whose `,' key is not conveniently located.
 
 *** Smart Text Deletion Maps ***
 Although Txtfmt tokens are invisible, they are characters in your buffer like any other: deleting text can delete tokens, which in turn, can affect the highlighting of text beyond the deletion. To see how this could be problematic, consider the following line of bold text (Txtfmt tokens shown as <fb> and <f->):
