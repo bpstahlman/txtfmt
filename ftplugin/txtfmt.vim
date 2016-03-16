@@ -2055,74 +2055,74 @@ fu! s:Get_cur_rgn_info()
 endfu
 " >>>
 " Function: s:Parse_fmt_clr_transformer() <<<
-" Convert the input comma-separated f/c/k transformer spec to a struct.
-" Input Format: In lieu of full grammar, here are some illustrative examples:
-" fubi
-"   Add bold-underline-italic
-" f+ubi
-"   Same as previous (+ is the default).
-" fub-is
-"   Add bold-underline, remove italic-standout
-" fub-isb
-"   Add underline, remove italic-standout-bold
-"   Explanation: When same attr is given more than once, all but last ignored
-" f-ubi
-"   Remove bold-underline-italic
-" fb-i+u-s
-"   Add bold-underline, remove italic-standout
-" f+b-i+u-s
-"   Same as previous
-" f-
-"   NOP (literally, remove nothing)
-" f=ubi
-"   Set formats to exactly bold-underline-italic
-" f=
-"   Clear formatting (literally, set to empty fmt attrs)
-" cr
-"   Set fg color to red
-" k
-"   Remove bg color
-" k-
-"   Same as previous (this was actually the only way pre-vmap Txtfmt)
-" Output Format:
+" Input: <fck-spec>[/<selector>]
+" Convert the input comma-separated f/c/k transformer spec and optional
+" following selector expression to a struct.
+" Input Format: In lieu of full grammar, here are some illustrative examples of
+" both fmt/clr transformer spec and selector expressions.
+" Transformer Spec Examples:
+" fubi        add bold-underline-italic
+" f+ubi       same as previous (+ is the default).
+" fub-is      add bold-underline, remove italic-standout
+" fub-isb     ERROR - conflicting action for 'bold'
+" f-ubi       remove bold-underline-italic
+" fb-i+u-s    add bold-underline, remove italic-standout
+" f+b-i+u-s   same as previous
+" f-          clear formatting
+" f=          same as previous (literally, set to empty fmt attrs)
+" f=-         same as previous (though a bit weird)
+" f=ubi       set formats to exactly bold-underline-italic
+" cr          set fg color to red
+" c=r         same as previous
+" kblue       set bg color to blue
+" k=blue      same as previous
+" Note: 'Clear color' specified same for c/k as for f.
+" Selector Expression Examples:
+" TODO...
+"
+" --- Output Format ---
 " {
-"   fmt:
-"     0-N - {set-fmt-mask}
-"     |
-"     [
-"       0-N - {add-fmt-mask},
-"       0-N - {sub-fmt-mask}
-"     ],
-"   clr: 0-{max-active-clr-num}
-"   bgc: 0-{max-active-bgc-num}
+"   sel: [] | {}
+"   rgns: {
+"     fmt:
+"       0-N - {set-fmt-mask}
+"       |
+"       [
+"         0-N - {add-fmt-mask},
+"         0-N - {sub-fmt-mask}
+"       ],
+"     clr: 0-{max-active-clr-num}
+"     bgc: 0-{max-active-bgc-num}
+"   }
 " }
 " Note: The value 0 in an additive mode fmt mask is a NOP. In non-additive
 " (prescriptive) mode, it clears existing fmts. For colors, 0 means 'no color'.
 fu! s:Parse_fmt_clr_transformer(specs)
-	" ALPHA_TODO: Defer decision on a few aspects of format, possibly till
-	" feedback from alpha users received..
-	let cfg = {'allow_empty': 0, 'allow_override': 0, 'strict_fmts': 0, 'dash_special': 0}
-	" Initalize return object.
-	let ret = {}
-	let specs = TxtfmtUtil_strip(a:specs)
+	" Strip off the selector if it was supplied.
+	" Note: Selector is 'protect-for' at this point: it's being developed on
+	" another branch...
+	" Note: The following patterns strip leading and trailing whitespace on the
+	" components.
+	" TODO: Consider using match() to find any `/' (would be more efficient).
+	let [_, specs, sel; rest] =
+		\matchlist(a:specs, '^\s*\(.\{-}\)\s*\%(/\s*\(.\{-}\)\s*\)\?$')
 	if empty(specs)
 		" Effectively empty spec. Return NOP object.
-		return ret
+		return {}
 	endif
-	" Split the comma-separated f/c/k components
-	" Note: Docs forbid both commas and whitespace in color names, and we're
-	" going to ignore them in fmt specs.
-	" Design Decision: Keepempty won't get empties at head or tail because we've
-	" already stripped; it will, however, allow us to detect empty components.
-	let fcks = split(specs, '\s*,\s*', 1)
+	" Initalize return object.
+	let rgns = {}
+	" Split the comma or space-separated f/c/k components
+	" Note: Use of explicit commas can produce empty components anywhere, even
+	" at end: set keepempty to facilitate detection.
+	" Note: Because we've stripped trailing whitespace, a trailing empty
+	" component can be caused only by comma.
+	let re_sep = '\s*,\s*\|\s\+'
+	let fcks = split(specs, re_sep, 1)
 	" Loop over the f/c/k components
 	for spec in fcks
 		if empty(spec)
-			if cfg.allow_empty
-				continue
-			else
-				throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
-			endif
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
 		endif
 		" Extract token type and remainder of spec
 		let [t, spec] = [spec[0], spec[1:]]
@@ -2130,42 +2130,33 @@ fu! s:Parse_fmt_clr_transformer(specs)
 		if t !~ '[fck]'
 			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
 		endif
-		if has_key(ret, b:txtfmt_rgn_typ_abbrevs[t])
+		if has_key(rgns, b:txtfmt_rgn_typ_abbrevs[t])
 			" We've already processed a component of this type.
-			if cfg.allow_override
-				call remove(ret, b:txtfmt_rgn_typ_abbrevs[t])
-			else
-				throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
-			endif
+			throw "Parse_fmt_clr_transformer: no more than 1 component of"
+				\ . " each type (f|c|k) permitted"
 		endif
-		" Discard any whitespace between type and subsequent spec. (Necessary to
-		" ensure spec itself is 'stripped'.)
-		let spec = TxtfmtUtil_lstrip(spec)
+		if empty(spec)
+			throw "Parse_fmt_clr_transformer: `" . t . "' must be followed by valid "
+				\ . (t == 'f' ? "format attributes" : "color name")
+		endif
 		" Switch on type
 		if t == 'f'
-			" ALPHA_TODO: Should we treat f- as special case meaning clear
-			" formats, or keep things logical (i.e., remove nothing)? For now,
-			" let cfg object decide.
-			" Note: Special case '+' could just as well be handled in loop, as
-			" could '-' when dash not special, but why not short-circuit here?
-			if empty(spec) || spec == '+' || (!cfg.dash_special && spec == '-')
-				" No change
-				let ret.fmt = [0, 0]
-			elseif spec == '=' || (cfg.dash_special && spec == '-')
+			" Design Decision: Keep special meaning of `f-', and support several
+			" other intuitive means of specifying 'no format'.
+			if spec == '=' || spec == '-' || spec == '=-'
 				" Clear all fmt attrs
-				let ret.fmt = 0
+				let rgns.fmt = 0
 			else
 				" Note: Special cases have all been handled.
-				" Design Decision: Discard spaces (even interior), which have no
-				" meaning in fmt specs.
-				let spec = substitute(spec, '\s\+', '', 'g')
 				" Additive or prescriptive mode?
 				let additive = spec[0] != '='
 				let attrs = additive ? spec : spec[1:]
 				" Validate form of the fmt attr list.
-				" Assumption: attrs cannot be simply `-' at this point.
-				if additive && cfg.strict_fmts && attrs !~ '^+\?\([ubisrc]*\)\(-\([ubisrc]*\)\)\?$'
-					\ || attrs =~ '[^' . (additive ? '-+' : '') . b:ubisrc_fmt{b:txtfmt_num_formats-1} . ']'
+				" Design Decision: For now, permit empty segments: e.g., +u--b.
+				" TODO: Does this make sense, or should the -- be treated as
+				" error? (Consider that someone might think of -- as +.)
+				if attrs !~ '^[' . (additive ? '-+' : '')
+					\. b:ubisrc_fmt{b:txtfmt_num_formats-1} . ']\+$'
 					throw "Invalid fmt transformer spec: `f" . spec . "'"
 				endif
 				" Initialize mask(s) to be built in loop.
@@ -2179,44 +2170,48 @@ fu! s:Parse_fmt_clr_transformer(specs)
 					elseif atom == '-'
 						let op = '-'
 					else
-						" Check for ambiguity.
+						" Check for conflict.
 						if additive && and(masks[op == '+' ? '-' : '+'], s:ubisrc_mask[atom])
-							throw "Ambiguous use of fmt attr " . atom . " in both add/sub parts of spec: `f" . spec . "'"
+							throw "Ambiguous use of fmt attr " . atom
+							\ . " in both add/sub parts of spec: `f" . spec . "'"
 						endif
 						let masks[op] = or(masks[op], s:ubisrc_mask[atom])
 					endif
 				endfor
 				if additive
 					" Save list of add/sub masks.
-					let ret.fmt = [masks['+'], masks['-']]
+					let rgns.fmt = [masks['+'], masks['-']]
 				else
 					" Save scalar 'set' mask
-					let ret.fmt = masks['=']
+					let rgns.fmt = masks['=']
 				endif
 			endif
 		elseif t == 'c' || t == 'k'
-			" Note: Unlike fmts, dash is always special for colors.
-			" Rationale: Out of respect for legacy usage, coupled with fact that
-			" there is no other meaning for `-' in color context.
-			if empty(spec) || spec == '-'
+			if t == 'k' && !b:txtfmt_cfg_bgcolor
+				throw "Use of `k' invalid when background colors are disabled"
+			endif
+			" Allow several special forms for default (no) color.
+			if spec == '=' || spec == '-' || spec == '=-'
 				" Return to default.
 				let clr_num = 0
 			else
 				let clr_num = s:Lookup_clr_namepat(t, spec)
 				if clr_num <= 0
 					if clr_num == 0
-						throw "Invalid color name pattern in fmt/clr transformer spec: `" . spec . "'"
+						throw "Invalid color name pattern in fmt/clr transformer spec: `"
+							\ . spec . "'"
 					else
-						throw "Color specified by name pattern in fmt/clr transformer spec is inactive: `" . spec . "'"
+						throw "Color specified by name pattern in fmt/clr"
+							\ . " transformer spec is inactive: `" . spec . "'"
 					endif
 				endif
 			endif
-			let ret[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
+			let rgns[b:txtfmt_rgn_typ_abbrevs[t]] = clr_num
 		else
 			throw "Invalid type specifier in fmt/clr transformer spec: " . t
 		endif
 	endfor
-	return ret
+	return rgns
 endfu
 
 " This version enforced the simpler (Perl regex flag style) format for the fmt
