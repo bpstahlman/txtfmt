@@ -1,4 +1,4 @@
-USER FEEDBACK NEEDED: I would greatly appreciate feedback email, especially on the new "auto map" feature (currently in "Alpha" testing):
+USER FEEDBACK NEEDED: I would greatly appreciate feedback email, especially on the new "auto-maps" feature (currently in "Alpha" testing):
 brettstahlman AT gmail DOT com
 
 === !!! IMPORTANT NOTE TO NEW USERS !!! ===
@@ -94,7 +94,7 @@ This specifier would enter a bold-italic token, followed immediately by the "no 
 === FEEDBACK ===
 I would greatly appreciate your feedback on this plugin. Contact me either at...
 
-brettstahlman AT comcast DOT net
+brettstahlman AT gmail DOT com
 
 ...or by posting to the Vim list with Txtfmt somewhere in the subject or body. 
 Also, please rate this plugin!
@@ -116,7 +116,7 @@ The following applications represent a few of the many possible uses of the Txtf
      regions (e.g., C comments)
      :help txtfmt-'nested'
     -etc. etc...
-Note: If you wish to make your formatted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
+Note: If you wish to make your highlighted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
 
 
 ====================
@@ -199,11 +199,11 @@ With this definition, you could specify the new color with the abbreviation "br"
 Now suppose you wish to continue typing blue text, but would like the text you are about to type to have the bold and italic attributes as well. Assuming you are in normal mode, hit \a to bring up the familiar prompt. (Note that \a differs from \i in that the former will insert the Txtfmt token(s) *after* the cursor location instead of before it.) Now enter the following at the prompt:
     fbi
 
-The text you type after hitting <Enter> will be blue, bold-italic. Notice that it wasn't necessary to do anything special to ensure that the bold-italic text would also be blue. It is blue because the effects of the "blue" foreground color token you entered earlier are not affected in any way by the introduction of a format token. This behavior is a direct consequence of the orthogonality of Txtfmt's various token types. A format token supercedes the preceding format token, but has no effect upon any preceding color regions. Similarly, a foreground color token supercedes the preceding foreground color token, but has no effect upon any preceding format or background color regions.
+The text you type after hitting <Enter> will be blue, bold-italic. Notice that it wasn't necessary to do anything special to ensure that the bold-italic text would also be blue. It is blue because the effects of the "blue" foreground color token you entered earlier are not affected in any way by the introduction of a format token. This behavior is a direct consequence of the orthogonality of Txtfmt's various token types. A format token supersedes the preceding format token, but has no effect upon any preceding color regions. Similarly, a foreground color token supersedes the preceding foreground color token, but has no effect upon any preceding format or background color regions.
 
-Important Note: The fact that format/color tokens "supercede" preceding tokens of the same type means that the "no format"/"no color" tokens are required only when you wish to turn off format or colors completely for subsequent text. To change from one format to another format, or from one color to another color, simply insert the token for the new region.
+Important Note: The fact that format/color tokens "supersede" preceding tokens of the same type means that the "no format"/"no color" tokens are required only when you wish to turn off format or colors completely for subsequent text. To change from one format to another format, or from one color to another color, simply insert the token for the new region.
 
-To verify that we can supercede the blue foreground color token entered earlier, let's enter a red foreground color token by hitting <CTRL-\><CTRL-\> once more (still in insert mode) and entering the following at the prompt:
+To verify that we can supersede the blue foreground color token entered earlier, let's enter a red foreground color token by hitting <CTRL-\><CTRL-\> once more (still in insert mode) and entering the following at the prompt:
     cr
 
 Observe that the text you type after hitting <Enter> still possesses the bold-italic attribute, though its color is red.
@@ -271,7 +271,7 @@ Now suppose you wish to change the highlighting of just one word within the bloc
 	-Remove italic
 	-Add underline
 	-Change color to blue
-Of course, you could accomplish this with manual mappings by inserting "fbu" and "cb" tokens at the start of the word, and "fbi" and "c-" tokens at the end of the word. But this is a bit tedious. Note, for instance, that you would have to think about the current highlighting *after* the region to know what sort of tokens should be inserted at the end of the word. Also, there is no way with manual maps to say "remove italic" and "add underline". You have to think about the existing highlighting to know what sort of token to insert. This is exactly the sort of use-case for which Txtfmt's auto maps were designed...
+You could accomplish this with manual mappings by inserting "fbu" and "cb" tokens at the start of the word, and "fbi" and "c-" tokens at the end of the word. But this is a bit tedious. Note, for instance, that you would have to think about the current highlighting *after* the region to know what sort of tokens should be inserted at the end of the word. Also, there is no way with manual maps to say "remove italic" and "add underline". You have to think about the existing highlighting to know what sort of token to insert. This is exactly the sort of use-case for which Txtfmt's auto maps were designed...
 
 To accomplish the desired highlighting with an operator-pending map, simply position yourself at the start of the word to be changed and type the following:
 	\h
@@ -300,7 +300,7 @@ Tip: Additive mode is particularly useful when you want to add certain attribute
 	fi
 ...and Txtfmt will do everything necessary to italicize the paragraph without affecting existing highlighting.
 
-But what if you know exactly how you want an entire region formatted? I.e., instead of adding to any existing sub-regions, you want to wipe out the existing highlighting and replace it with something new. In that case, you should use "prescriptive" or "equals" mode, which is specified by prepending an equals sign to the format spec: E.g.,
+But what if, instead of adding to existing sub-regions, you simply want to wipe out the existing highlighting and replace it with something new? In such cases, you should use "prescriptive" or "equals" mode, which is specified by prepending an equals sign to the format spec: E.g.,
 	f=i       (set region to italic)
     f=ubi     (set region to underline-bold-italic)
 	f=        (set to "no formats" - i.e., remove all fmt attributes)

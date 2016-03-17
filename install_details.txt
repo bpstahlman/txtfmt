@@ -22,6 +22,20 @@ All of the txtfmt files should be placed in their respective parent directories,
 
 The instructions for extracting the Txtfmt files vary, depending upon the package file format you have chosen to download. Follow the instructions that apply...
 
+--- Gzipped tarfile (.tar.gz) ---
+
+Choose the location where you wish to install the plugin. If you are unsure what location to choose, consider using the first directory in your 'runtimepath' option. You can see what this is by executing `:set rtp'.
+
+Typical values are...
+    ~/.vim (Unix)
+    $HOME/vimfiles or $VIM/vimfiles (Windows)
+
+Go to the selected installation directory and extract the gzipped tarfile with a command similar to the following (replacing <path_to_tar_gz> with the actual path to the downloaded file).
+    tar xzvf <path_to_tar_gz>
+
+To make Txtfmt help topics visible to Vim's :help command, you must now run :helptags, passing as argument the path to the doc folder where you unpacked txtfmt.txt: e.g.,
+    :helptags ~/.vim/doc
+
 --- Vimball (.vba) ---
 
 Extracting a Vimball is easy. Simply edit the file with Vim and execute the following at the Vim command line:
@@ -32,20 +46,6 @@ That's it! If you haven't overridden any of the Vimball defaults, this will extr
 
 Note: If you wish to extract the files somewhere other than the first directory in your 'runtimepath', you can override the default location by setting the g:vimball_home option.
     :help g:vimball_home
-
---- Gzipped tarfile (.tar.gz) ---
-
-Choose the location where you wish to install the plugin. If you are unsure what location to choose, consider using the first directory in your 'runtimepath' option. You can see what this is by executing `:set rtp'.
-
-Typical values are...
-    ~/.vim (Unix)
-    $HOME/vimfiles or $VIM/vimfiles (Windows)
-
-Go to the selected installation directory and extract the gzipped tarfile with a command similar to the following (replacing <path_to_tar_gz> with the actual path to the downloaded file).
-    tar -xzvf <path_to_tar_gz>
-
-To make Txtfmt help topics visible to Vim's :help command, you must now run :helptags, passing as argument the path to the doc folder where you unpacked txtfmt.txt: e.g.,
-    :helptags ~/.vim/doc
 
 === DETECTING OR SETTING TXTFMT FILETYPE ===
 
