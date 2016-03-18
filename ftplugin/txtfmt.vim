@@ -114,6 +114,13 @@ fu! s:Prep_for_single_quotes(s)
 	return substitute(a:s, "'", "''", 'g')
 endfu
 " >>>
+" Function: s:Get_active_rgns() <<<
+fu! s:Get_active_rgns()
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	return extend(extend(['fmt'], clr_active ? ['clr'] : []), bgc_active ? ['bgc'] : [])
+endfu
+" >>>
 " Function: s:Move_cursor() <<<
 " Purpose: Move the cursor right or left (within the current line) by the
 " specified number of characters positions. Note that character positions are
@@ -1992,6 +1999,7 @@ endfu
 
 " Binary progression: ubisrc
 let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
+let s:cfg_color_name_compat = 0
 
 " Function: s:????() <<<
 " >>>
@@ -2099,8 +2107,6 @@ endfu
 " (prescriptive) mode, it clears existing fmts. For colors, 0 means 'no color'.
 fu! s:Parse_fmt_clr_transformer(specs)
 	" Strip off the selector if it was supplied.
-	" Note: Selector is 'protect-for' at this point: it's being developed on
-	" another branch...
 	" Note: The following patterns strip leading and trailing whitespace on the
 	" components.
 	" TODO: Consider using match() to find any `/' (would be more efficient).
@@ -2110,13 +2116,18 @@ fu! s:Parse_fmt_clr_transformer(specs)
 		" Effectively empty spec. Return NOP object.
 		return {}
 	endif
-	" Initalize return object.
-	let rgns = {}
+	" Initalize non-empty return object.
+	let ret = {'sel': {'op': '!', 'val': 1}, 'rgns': {}}
+	let rgns = ret.rgns
+	if !empty(sel)
+		let ret.sel = s:Parse_selector(sel)
+	endif
 	" Split the comma or space-separated f/c/k components
 	" Note: Use of explicit commas can produce empty components anywhere, even
 	" at end: set keepempty to facilitate detection.
 	" Note: Because we've stripped trailing whitespace, a trailing empty
-	" component can be caused only by comma.
+	" component can be caused only by comma; accordingly, the \ze\S is
+	" superfluous.
 	let re_sep = '\s*,\s*\|\s\+'
 	let fcks = split(specs, re_sep, 1)
 	" Loop over the f/c/k components
@@ -2211,7 +2222,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 			throw "Invalid type specifier in fmt/clr transformer spec: " . t
 		endif
 	endfor
-	return rgns
+	return ret
 endfu
 
 " This version enforced the simpler (Perl regex flag style) format for the fmt
@@ -2358,8 +2369,6 @@ fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 			throw "Invalid type specifier in fmt/clr transformer spec: " . tt
 		endif
 	endfor
-	echo "Returning from Parse_fmt_clr_transformer:"
-	echo ret
 	return ret
 endfu
 " TODO: TEMP DEBUG
@@ -2535,29 +2544,23 @@ endfu
 "   tok: <tok-char>
 " }
 " Post Condition: Unless 'n' flag supplied, will be positioned on a found token.
-fu! s:Search_tok(rgn, sflags, ...)
+" REFACTOR_TODO: Modify comments now that this accepts list of rgn types.
+fu! s:Search_tok(rgns, sflags, ...)
 	" Note: For search(), stopline of 0 works like omitting arg.
 	let stopline = a:0 ? a:1 : 0
 	" Initialize return struct.
-	let ret = {'typ': 'eob', 'rgn': a:rgn}
+	let ret = {'typ': 'eob'}
 	" TODO: Consider adding 'loc' somewhere in return struct.
-	let re_tok = empty(a:rgn) ? b:txtfmt_re_any_tok : b:txtfmt_re_{a:rgn}_tok
+	let re_tok = empty(a:rgns)
+		\ ? b:txtfmt_re_any_tok
+		\ : type(a:rgns) == 1
+			\ ? b:txtfmt_re_{a:rgns}_tok
+			\ : join(map(copy(a:rgns), 'b:txtfmt_re_{v:val}_tok'), '\|')
 	" TODO: Consider doing away with sflags, in favor of distinct args.
 	let [lnum, col] = searchpos(re_tok, a:sflags . 'W', stopline)
 	if lnum
 		" Cursor is on found tok (unless 'n' flag was input).
 		let ret.typ = 'tok'
-		" Parse the tok and store in denormalized form.
-		" TODO: Consider nesting all this within a sub-object.
-		" Rationale: Cleaner division between the object returned by this
-		" function (which could be non-tok) and an actual tok object.
-		" TODO: Make this change a separate refactor. There's already a lot on
-		" this one...
-		let ret.chr = s:Get_char([lnum, col])
-		let ti = s:Get_tok_info(ret.chr)
-		let ret.rgn = ti.rgn
-		let ret.idx = ti.idx
-		let ret.pos = [lnum, col]
 	else
 		" No tok within stopline distance; try unbounded search that stops at
 		" tok or hlable, whichever comes first.
@@ -2579,6 +2582,8 @@ fu! s:Search_tok(rgn, sflags, ...)
 		if lnum
 			" Found either tok or hlable (but haven't moved cursor to it).
 			if submatch == 2
+				" IMPORTANT TODO: This case is *very* rare, but possible.
+				" Go over function logic and intended use case again...
 				let ret.typ = 'tok'
 				" Position on found tok unless prevented by input flag.
 				if a:sflags !~ 'n'
@@ -2591,6 +2596,25 @@ fu! s:Search_tok(rgn, sflags, ...)
 				let ret.typ = 'hla'
 			endif
 		endif
+	endif
+	" Do this here for all cases that find tok...
+	" Note: I've just moved this block down here; prior to this, there was a
+	" slight bug whereby tok details didn't get filled in for submatch == 2 case
+	" above.
+	" TODO: Rework this function, perhaps taking advantage of positioning on
+	" cursor when 'n' flag is omitted.
+	if ret.typ == 'tok'
+		" Parse the tok and store in denormalized form.
+		" TODO: Consider nesting all this within a sub-object.
+		" Rationale: Cleaner division between the object returned by this
+		" function (which could be non-tok) and an actual tok object.
+		" TODO: Make this change a separate refactor. There's already a lot on
+		" this one...
+		let ret.chr = s:Get_char([lnum, col])
+		let ti = s:Get_tok_info(ret.chr)
+		let ret.rgn = ti.rgn
+		let ret.idx = ti.idx
+		let ret.pos = [lnum, col]
 	endif
 
 	return ret
@@ -3046,6 +3070,76 @@ fu! s:Vmap_sync_start(rgn, opt)
 		\'tok_infos': tok_infos
 	\}
 endfu
+fu! s:Vmap_sync_start_experimental(rgn, opt)
+	let sel_beg_pos = a:opt.rgn.beg
+	let sel_end_pos = a:opt.rgn.end
+	let stopline_beg = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)[0]
+	" TODO: May not need the end stoppos any more... Actually, we should
+	" probably just get it elsewhere (e.g., in Vmap_collect).
+	let stopline = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)[0]
+	" Start looking at head of vsel.
+	call cursor(sel_beg_pos)
+	" Look backward for an ss_safe tok if we can find it.
+	" REFACTOR_TODO: Perhaps check whether bgc active?
+	" Maintain running list of rgns still 'unsafe'.
+	let rgns_unsafe = ['fmt', 'clr', 'bgc']
+	" Keep up with pos of earliest found token by type.
+	let prev_pos = {'fmt': [], 'clr': [], 'bgc': []}
+	" Maintain mixed list of tokens.
+	" Note: We can stop collecting tokens of a given rgn type once we've found
+	" a supersedence safe token of that type.
+	let tok_infos = []
+	while !empty(rgns_unsafe)
+		" TODO: Change some of the syncing constraint stuff now that the zwa's
+		" are no longer used...
+		" REFACTOR_TODO: Make Search_tok handle list of rgn types.
+		let ti = s:Search_tok(rgns_unsafe, 'b', stopline_beg)
+		if ti.typ != 'tok'
+			" Couldn't find ss safe tok within stop distance.
+			break
+		endif
+		" Add found tok, whether supersedence constraint satisfied or not.
+		call insert(tok_infos, ti)
+		" Has this tok satisfied supersedence constraint? Look only up to next
+		" tok of this type (if one was found) or head of vsel.
+		if s:Contains_hlable(ti.pos, empty(prev_pos[ti.rgn])
+			\? sel_beg_pos : prev_pos[ti.rgn], [0, 0])
+			call remove(rgns_unsafe, index(rgns_unsafe, ti.rgn))
+		endif
+		" Cache last physical tok encountered.
+		let prev_pos[ti.rgn] = ti.pos
+	endwhile
+	" Check for rgn-specific failure to find ss_safe tok.
+	" Note: We're going to have to prepend a virtual tok to satisfy
+	" supersedence constraint.
+	" TODO: Make sure the virtual tok doesn't need more of the stuff
+	" Search_tok normally returns. E.g., what about 'tok'? Should it be set,
+	" or left empty (as for <eob>).
+	" Assumption: We're either on earliest tok found or vsel head.
+	if empty(s:Backward_char())
+		" Already at head of buffer
+		let idxs = {'fmt': 0, 'clr': 0, 'bgc': 0}
+	else
+		" Sitting 1 char prior to earliest point of interest (which could
+		" be either vsel head or actual tok)
+		" Sync on synstack.
+		let idxs = s:Get_cur_rgn_info()
+	endif
+	" TODO: Is actual char really needed in the struct? Remove if not used.
+	for rgn in rgns_unsafe
+		call insert(tok_infos, {
+			\'typ': 'tok', 'pos': [], 'rgn': rgn,
+			\'idx': idxs[rgn], 'chr': s:Idx_to_tok(rgn, idxs[rgn])
+		\})
+	endfor
+	
+	" TODO: May not need the end stopline any more... Actually, we should
+	" probably just get it elsewhere (e.g., in Vmap_collect).
+	return {
+		\'stopline': stopline,
+		\'tok_infos': tok_infos
+	\}
+endfu
 " Note: This function also should augment tok_info with loc and action: i.e.,
 " in addition to the basic tok returned by Search_tok, the toks in the
 " returned list will have the following:
@@ -3055,7 +3149,9 @@ endfu
 "   Note: action may be assigned other values in Vmap_apply, but for now,
 "   phantom head/tail will be set to i/a respectively, with all others null.
 " VMAPS TODO: Update function header.
-fu! s:Vmap_collect(rgn, sync_info, opt)
+" REFACTOR_TODO: other_rgns arg is just for prototyping. Refactor if I keep this
+" approach...
+fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 	let toks = a:sync_info.tok_infos
 	" Mark toks added during sync as being prior to vsel.
 	" TODO: Consider doing this in Search_tok itself...
@@ -3157,6 +3253,39 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 			if ti.loc == '}' | let sel_end_found = 1 | endif
 			if ti.loc == '{' | let sel_beg_found = 1 | endif
 			call add(toks, ti)
+			""""
+			" !!!! UNDER CONSTRUCTION !!!!
+			" REFACTOR_TODO: Validate this logic and remove 'Under Construction'...
+			" Add phantoms for the other rgn types.
+			" Note: Using action 'a' to prevent indices from getting out of sync
+			" when applying changes to buffer.
+			" TODO: Actually necessary only when non-identity selector used.
+			" TODO: Think through this if condition: bottom line is, I need to
+			" append interior phantoms whenever the tok just added is
+			" non-phantom, and it's either at head or within region.
+			" BIG TODO!!!! FIXME!!!! Somehow need to ensure the presence of at
+			" least a phantom head for rgn types not represented in specs:
+			" otherwise, Vmap_apply's selector logic won't work properly. Could
+			" do it here, or could simply ensure that syncing/collecting is done
+			" for *all* region types. (One advantage of the latter approach is
+			" that it permits cleanup on all region types.)
+			if empty(ti.action) && ti.loc =~ '[{=]'
+				for rgn in a:other_rgns
+					" Add a phantom.
+					call add(toks, {
+						\'typ': 'tok',
+						\'rgn': rgn,
+						\'pos': ti.pos,
+						\'idx': -1,
+						\'tok': '',
+						\'loc': '=',
+						\'action': 'a'
+					\})
+				endfor
+			endif
+			""""
+			" Update for next iteration...
+			let sel_cmp_prev = sel_cmp
 		else
 			" No more tokens in range (and hit hlable or end of buffer before
 			" finding one past range).
@@ -3168,6 +3297,9 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 			" sentinel as simple as an empty object for <eob>. Also, consider
 			" changing the 'typ' field to a pair of flags: tok and hla.
 			if ti.typ == 'eob'
+				" Note: Virtual marker 'token' returned by Search_tok doesn't
+				" have rgn type; give it one.
+				let ti.rgn = a:rgn
 				call add(toks, ti)
 			endif
 			if ti.typ == 'eob' || sel_end_found_prev
@@ -3183,100 +3315,167 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 		let sel_cmp_prev = sel_cmp
 		let sel_end_found_prev = sel_end_found
 	endwhile
-
 	return toks
 endfu
 
-fu! s:Vmap_apply(rgn, pspec, toks)
-	let pspec = a:pspec
-	let toks = a:toks
-
+fu! s:Vmap_apply(pspecs, toks)
 	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
+	" REFACTOR_TODO: This comment is old, and somewhat out of date.
 	" Old/new_idx logic: old_idx always represents the idx that would have
 	" been active at a given point prior to the Vmap application. When new_idx
-	" is set, it is set to the value imparted to it by the Vmap application.
-	" (Note that setting of new_idx to non-default value here does not imply
-	" that the token will ultimately be kept: e.g., it could still be
+	" is set, it is set to the value imparted to it by the highlighting spec
+	" application. (Note that setting of new_idx to non-default value here does
+	" not imply that the token will ultimately be kept: e.g., it could still be
 	" discarded during cleanup because of redundancy/supersedence). Leaving
 	" new_idx at default of -1 on a given loop iteration causes the
 	" corresponding token to be marked for deletion. We do this iff we know
 	" (even before running cleanup logic) that the token is going away: e.g.,
 	" clr/bgc tok within region.
-	let old_idx = toks[0].idx
-	let i = 1
-	while i < len(toks)
-		let tok = toks[i]
+	" Initialize to sentinel so that we know when we encounter first of a type.
+	" Note: Having unused keys in old_idx is harmless; rgn types present in
+	" a:toks determines which keys will be used.
+	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1}
+	let new_idx = {}
+	for tok in a:toks
 		" Skip non-tokens (e.g., <eob>).
-		if tok.typ != 'tok' | let i += 1 | continue | endif
-		" TODO: If we guarantee new_idx is set within if/else, remove this...
-		let new_idx = -1
+		if tok.typ != 'tok' | continue | endif
+		" Boot-strap each rgn type.
+		if old_idx[tok.rgn] < 0
+			let old_idx[tok.rgn] = tok.idx
+			" REFACTOR_TODO - How to initialize new_idx[]?????
+			let new_idx[tok.rgn] = tok.idx " or should it be -1
+			continue
+		endif
+		" TODO: If we guarantee set_idx is set within if/else, remove this...
+		let set_idx = -1
 		if tok.loc == '<'
 			" Change nothing prior to region, but do stay in sync.
-			let old_idx = tok.idx
-			let new_idx = old_idx
-		elseif tok.loc == '{'
-			if tok.action != 'i'
-				" Real tok - not phantom
-				let old_idx = tok.idx
+			let old_idx[tok.rgn] = tok.idx
+			let new_idx[tok.rgn] = tok.idx
+		elseif tok.loc == '{' || tok.loc == '='
+			" REFACTOR_TODO: Validate combining { and = cases.
+			if empty(tok.action)
+				" Existing tok - not phantom
+				let old_idx[tok.rgn] = tok.idx
 			endif
-			if a:rgn == 'fmt'
-				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
+			" REFACTOR_TODO: The has_key test below is meant to ensure that we
+			" discard a phantom whose rgn type isn't represented in pspecs, and
+			" that we do so without performing selector test, and even more
+			" importantly, without attempting to apply fmt/clr (since the
+			" attempt might generate error for rgn type not present in pspecs).
+			" Prior to refactor, Vmap_apply wasn't even called for such rgn
+			" types. Falling into the else should cause the right thing to
+			" happen naturally; however, we probably shouldn't even add interior
+			" phantoms we know will be removed here...
+			if has_key(a:pspecs.rgns, tok.rgn)
+				\ && s:Check_selector(a:pspecs.sel, old_idx)
+				" Selected! Apply highlighting.
+				if tok.rgn == 'fmt'
+					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
+				else
+					"clr/bgc
+					let set_idx = a:pspecs.rgns[tok.rgn]
+				endif
 			else
-				let new_idx = pspec
-			endif
-		elseif tok.loc == '='
-			let old_idx = tok.idx
-			" Leave new_idx == -1 for clr/bgc toks to force deletion.
-			if a:rgn == 'fmt'
-				let new_idx = s:Vmap_apply_fmt(pspec, old_idx)
+				" Either tok is unselected or its rgn type isn't represented in
+				" pspec; in either case, ensure that highlighting is unchanged
+				" from what it was before.
+				" Note: Logic for how to accomplish this is deferred to end of
+				" loop; simply record what highlighting should be.
+				let set_idx = old_idx[tok.rgn]
 			endif
 		elseif tok.loc == '}'
 			if tok.action != 'a'
-				" Real tok - not phantom
-				let old_idx = tok.idx
+				" Existing tok - not phantom
+				let old_idx[tok.rgn] = tok.idx
 			endif
-			let new_idx = old_idx
+			let set_idx = old_idx[tok.rgn]
 		else " past vsel
+			" REFACTOR_TODO: At one point, we were breaking out here
+			" prematurely, due to presence of phantom 'interior' toks before the
+			" actual phantom.
+			" TODO: Think whether there's a better way to harmonize interior and
+			" head/tail phantoms...
+			"echomsg "Breaking out on " . string(tok)
 			break
 		endif
-		" Handle any required tok update.
-		if new_idx >= 0
-			" Don't make changes where none are required.
-			" Design Decision: Defer all decisions regarding redundancy and
-			" such.
-			if new_idx != tok.idx
-				let tok.idx = new_idx
-				" Assumption: Phantom toks are the only ones with non-empty
-				" action at this point, and their action shouldn't change.
-				if empty(tok.action)
+		" Handle any required tok update/delete/discard.
+		if set_idx >= 0
+			if empty(tok.action)
+				" Existing tok
+				if set_idx == new_idx[tok.rgn]
+					" This one is redundant.
+					" REFACTOR_TODO: Should we even be considering this here?
+					let tok.action = 'd'
+				elseif set_idx != tok.idx
+					" Different from current.
+					let tok.idx = set_idx
 					let tok.action = 'r'
-				endif
+				endif	   
+			else
+				 " Phantom tok
+				 "echomsg "Comparing " . set_idx . " to " . new_idx[tok.rgn]
+				 if set_idx != new_idx[tok.rgn]
+					 let tok.idx = set_idx
+				 else
+					 " Phantom unnecessary
+					 let tok.action = ''
+				 endif
 			endif
-		else
-			" Delete the tok (intended only for clr/bgc toks)
-			let tok.action = 'd'
+			" Update for next iteration.
+			let new_idx[tok.rgn] = set_idx
 		endif
-		let i += 1
-	endwhile
+	endfor
 endfu
 
 " TODO: Perhaps rename...
-fu! s:Vmap_compute(rgn, pspec, opt)
-	let sync_info = s:Vmap_sync_start(a:rgn, a:opt)
-	" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
-	" start/end indices returned explicitly.
-	" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
-	" predicate for tokens.
-	"
-	" Question: When do we expect empty?
-	let toks = s:Vmap_collect(a:rgn, sync_info, a:opt)
-	call s:dbg_display_toks("Vmap_collect", toks)
-	if !s:Is_empty(a:pspec)
-		" Apply pspec without worrying about whether toks will be kept.
-		call s:Vmap_apply(a:rgn, a:pspec, toks)
+fu! s:Vmap_compute(pspecs, opt)
+	let toks = {}
+	" REFACTOR_TODO: Somehow have list of all rgn types of interest passed in,
+	" and loop over just those: e.g., rgn types involved both in pspecs and any
+	" selector. If nothing else, we need to loop over only *active* rgn types.
+	" REFACTOR_TODO: Prior to refactor, didn't even call Vmap_compute for rgn
+	" type not in pspecs; doing so would have added phantom toks, which, because
+	" Vmap_apply was not run for their rgn type, would have retained the default
+	" tok idx of -1 all the way till Vmap_apply_changes, at which point, attempt
+	" to insert invalid tok would have caused strange things to happen. For
+	" now, therefore, I'm syncing and collecting only for rgn types in pspecs;
+	" however, I can see an advantage to syncing/collecting unconditionally:
+	" namely, it would permit cleanup on all rgn types, even those not in
+	" pspecs. Perhaps adopt logic that permits tok syncing and collection to run
+	" for all rgn types, but (eg) doesn't add phantom toks for rgn types not in
+	" pspecs. Or perhaps even allow the phantom toks up to a point, then ensure
+	" they're deleted before they do any harm...
+	" Design Decision Needed: Read preceding paragraph and decide...
+	"for rgn in keys(a:pspecs.rgns)
+	for rgn in s:Get_active_rgns()
+		let sync_info = s:Vmap_sync_start(rgn, a:opt)
+		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
+		" start/end indices returned explicitly.
+		" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
+		" predicate for tokens.
+		"
+		" Question: When do we expect empty?
+		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:opt, filter(keys(a:pspecs.rgns), 'v:val != l:rgn'))
+		call s:dbg_display_toks("Vmap_collect", toks[rgn])
+	endfor
+
+	" Convert hash keyed by rgn type to single array.
+	" Possible TODO: Decide whether the merge function should record (in
+	" sync_info) the index at which subsequent search should start (i.e., latest
+	" physical tok, or final tok - see note within Vmap_apply on possible
+	" optimization, but this is beyond the scope of this refactor).
+	let mtoks = s:Vmap_merge_toks(toks, sync_info, a:opt)
+	call s:dbg_display_toks("after Vmap_merge_toks", mtoks)
+
+	" REFACTOR_TODO: Consider contents of a:pspecs: can it be empty? When? What
+	" sort of checks should be performed, and where?
+	if !s:Is_empty(a:pspecs.rgns)
+		" Apply pspec without worrying about whether mtoks will be kept.
+		call s:Vmap_apply(a:pspecs, mtoks)
 	endif
-	call s:dbg_display_toks("Vmap_apply", toks)
-	return toks
+	call s:dbg_display_toks("after Vmap_apply", mtoks)
+	return mtoks
 endfu
 
 " Compare input positions (format: [row, col])
@@ -3344,6 +3543,54 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 		throw printf("Internal error: mutually-exclusive actions %s, %s at position [%d, %d].",
 			\act_a, act_b, a:t_a.pos[0], a:t_a.pos[1])
 	endif
+endfu
+
+" Convert hash of tok arrays, keyed by rgn type, to a single, ordered array of
+" toks, with rgn type stored in each element.
+fu! s:Vmap_merge_toks(toks, sync_info, opt)
+	let mtoks = []
+	" Build array of the arrays to be merged.
+	let aofa = []
+	for toks in values(a:toks)
+		if !empty(toks)
+			call add(aofa, toks)
+		endif
+	endfor
+	" As long as there are arrays to be merged...
+	" Possible TODO: There are definitely more efficient ways to do this, but
+	" I'm not convinced optimization is called for.
+	while !empty(aofa)
+		let sel_idx = -1
+		" Find the array whose head tok comes next in buffer.
+		for idx in range(len(aofa))
+			" Compare this one with prev best (if any).
+			" Caveat: Ordering of position-less toks matters only within a rgn
+			" type, but we need to pull them as soon as possible; otherwise,
+			" they can 'trap' normal toks behind them, thereby preventing the
+			" normal toks from being merged into the stream at the right point.
+			" Caveat: Don't pass positionless toks to Vmap_cmp_tok.
+			let cmp = sel_idx < 0
+				\ ? -1
+				\ : empty(aofa[sel_idx][0].pos)
+					\ ? 1
+					\ : empty(aofa[idx][0].pos)
+						\ ? -1
+						\ : s:Vmap_cmp_tok(aofa[idx][0], aofa[sel_idx][0])
+			if cmp < 0
+				let sel_idx = idx
+			endif
+		endfor
+		" Merge selected tok into return array.
+		call add(mtoks, aofa[sel_idx][0])
+		" Remove processed tok (and possibly containing array).
+		if len(aofa[sel_idx]) == 1
+			" Remove tok and containing array, which is now empty.
+			call remove(aofa, sel_idx)
+		else
+			call remove(aofa[sel_idx], 0)
+		endif
+	endwhile
+	return mtoks
 endfu
 
 " Reverse toks and merge with mtoks (assumed to be reversed/merged already).
@@ -3594,7 +3841,7 @@ fu! s:Vmap_apply_changes(toks, opt)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
-			exe 'normal! '.(tok.action == 'r' ? 's' : tok.action)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-R>=l:tokstr\<CR>"
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
@@ -3613,36 +3860,57 @@ endfu
 "     loc: <|{|=|}|>
 " }, ...]
 "
-fu! s:Vmap_cleanup(rgn, toks, opt)
-	let toks = a:toks
-	" Keep up with latest tok that's safe from deletion.
+fu! s:Vmap_cleanup(toks, opt)
+	" Keep up with latest tok (per rgn) that's safe from deletion.
 	" First tok is never deletable (and may not be an actual tok).
-	let ti_safe = toks[0]
-	" Keep up with tok to be used in supersedence tests. Empty means skip
-	" supersedence check. First tok is never superseded.
-	let tip = {}
-	" Start with first tok susceptible to supersedence; i.e., tok *after*
-	" (virtual or actual) sync tok.
-	let idx = 1
-	while idx < len(toks)
-		let ti = toks[idx]
+	let ti_safe_ = {}
+	" Keep up with tok (per rgn) to be used in supersedence tests. Empty means
+	" skip supersedence check. First tok is never superseded (because syncing
+	" logic wouldn't have selected it as first tok if it were).
+	let tip_ = {}
+	" Within each rgn type, we skip all toks up to the first one susceptible to
+	" supersedence; i.e., tok *after* (virtual or actual) sync tok. The presence
+	" of a key in ti_safe indicates when we've found first tok of a rgn type.
+	for idx in range(len(a:toks))
+		let ti = a:toks[idx]
+		if !has_key(ti_safe_, ti.rgn)
+			" Bootstrap some rgn-specific refs, but otherwise skip the first tok
+			" of each rgn type, which is always ss safe.
+			let ti_safe_[ti.rgn] = ti
+			let tip_[ti.rgn] = {}
+			continue
+		endif
 		if ti.typ == 'tok' && ti.action == 'd'
 			" Skip deleted toks, which have no impact on anything.
 			" Note: Won't see 'd' for anything but colors here.
-			let idx += 1
 			continue
 		endif
+		" REFACTOR_TODO: Analyze this...
+		if ti.typ == 'tok' && ti.idx < 0
+			" Skip the interior phantoms that weren't needed (idx == -1)
+			" !!!! UNDER CONSTRUCTION !!!!
+			continue
+		endif
+
+		" Cache some per-rgn refs.
+		" Assumption: The cached refs won't be reassigned till just after the
+		" big supersedence test if block, where they are updated for next
+		" iteration.
+		let tip = tip_[ti.rgn]
+		let ti_safe = ti_safe_[ti.rgn]
+
 		" Ensure that superseded or redundant toks are either discarded
 		" (phantom) or deleted from buffer.
 		" Note: No need to remove anything from list at this point: to ensure
 		" eventual removal, set a phantom's action to null, real tok's action
 		" to 'd'.
 		" TODO: Perhaps an tok_is_phantom() predicate?
-		" TODO: Consider whether superseded/redundant removal logic needs to consider loc { and }: e.g., if there's a choice about which to remove, keep head or tail.
+		" TODO: Consider whether superseded/redundant removal logic needs to
+		" consider loc { and }: e.g., if there's a choice about which to remove,
+		" keep head or tail.
 
 		" Special <eob> tok can supersede, but can't be redundant.
-		"echomsg "Processing ti = " . string(ti)
-		" TODO: Perhaps add a tok/non-tok indicator instead... Or a "virtual" flag.
+		" TODO: Perhaps add a tok/non-tok indicator instead... Or a 'virtual' flag.
 		if ti.typ == 'tok'
 			" Perform 1st redundancy check using tip if it exists, else ti_safe.
 			" Design Decision: When both superseding and redundant toks exist,
@@ -3650,7 +3918,6 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
 				"echomsg "Removing in 1st red test: " . string(ti)
 				let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
-				let idx += 1
 				" Note: Leave tip unchanged, but don't make safe.
 				continue
 			endif
@@ -3691,8 +3958,12 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" would prevent our getting here.
 				if ti.typ != 'eob' && ti_safe.idx && tip.pos[0] != ti.pos[0]
 					" Cap non-default region to prevent bleed through.
-					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
-					if empty(tip.action) | let tip.action = 'r' | endif
+					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip) . " - " . string(ti) . " - ti_safe: " . string(ti_safe)
+					" REFACTOR_TODO: Consider the change to this test... Change
+					" was needed because Vmap_apply can change action 'i' to ''.
+					" We could always leave the phantom and strip it out during
+					" cleanup...
+					if empty(tip.action) && tip.idx >= 0 | let tip.action = 'r' | endif
 					let tip.idx = 0
 					" Design Decision: Once we decide to cap, the decision is
 					" final: though subsequent tok might be rendered
@@ -3700,7 +3971,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 					let ti_safe = tip
 				else
 					" Nothing but maybe toks exposed. Delete superseded tok.
-					"echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip)
+					"echomsg "Nothing but maybe toks exposed. Delete superseded: " . string(tip) . " - " . string(ti)
 					let tip.action = tip.action == 'i' || tip.action == 'a' ? '' : 'd'
 				endif
 				" Supersedence test complete.
@@ -3709,7 +3980,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				"echomsg "Printing safe and other: " . string(ti_safe) . " - " . string(ti)
 				if ti.typ == 'tok' && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
-					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
+					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti) . " - " . string(ti)
 					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
 					let tip_next = {}
 				endif
@@ -3719,9 +3990,9 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 			endif
 		endif
 		" Update for next iter.
-		let tip = tip_next
-		let idx += 1
-	endwhile
+		let tip_[ti.rgn] = tip_next
+		let ti_safe_[ti.rgn] = ti_safe
+	endfor
 endfu
 
 fu! s:Vmap_get_region_info(opt)
@@ -3785,27 +4056,33 @@ endfu
 " thinking just delete the phantom at head, or for that matter, perhaps don't
 " even add it to begin with - it really serves no purpose...
 fu! s:Vmap_delete(toks, ri)
-	" TODO TODO: Clean this up with refactoring...
-	" Important: Currently, this is done by all 3 region types, and the result
-	" is exactly the same!!! At least calculate externally and pass in; however,
-	" a better way is to parameterize the various pipeline functions, which
-	" currently operate independently on the rgn types. This would also simplify
-	" the main controller function.
-
 	" Loop over all tokens, though the we won't really start doing anything till
 	" we get to phantom head.
 	" Possible TODO: If location were cached somewhere, we could start there.
-	let idx = 0
-	for tok in a:toks
+	let [idx_head, idx_tail] = [{}, {}]
+	for idx in range(len(a:toks))
+		let tok = a:toks[idx]
 		if tok.loc == '{'
 			" TODO: Consider whether to skip adding this tok in the 'delete'
 			" case (since we know it will be deleted); in that case, phantom
 			" head pos would correspond to a:opt.rgn.beg.
-			let idx_head = idx
+			let idx_head[tok.rgn] = idx
+			" Note: Record position of *first* phantom head (since delete is
+			" inclusive of head).
+			if !exists('l:del_head')
+				let del_head = idx
+			endif
 		elseif tok.loc == '}' || tok.loc == '>'
 			if tok.loc == '}'
 				" Phantom tail
-				let idx_tail = idx
+				let idx_tail[tok.rgn] = idx
+				" Note: Record position of *first* phantom tail (since delete is
+				" exclusive of phantom tail).
+				" REFACTOR_TODO: Verify that there will always be phantom tail
+				" in delete case.
+				if !exists('l:del_tail')
+					let del_tail = idx
+				endif
 				" Note: Convert append to insert and adjust pos accordingly.
 				" Rationale: Any char at original append position is being
 				" deleted, which precludes append at that location.
@@ -3827,7 +4104,6 @@ fu! s:Vmap_delete(toks, ri)
 				let tok.pos[0] -= a:ri.del_lines
 			endif
 		endif
-		let idx += 1
 	endfor
 
 	" Remove tok elements corresponding to what we deleted.
@@ -3838,7 +4114,8 @@ fu! s:Vmap_delete(toks, ri)
 	" cleanup, and we don't want that either. We want it completely ignored.
 	" Assumption: Upstream logic guarantees existence of both idx_head and
 	" idx_tail.
-	call remove(a:toks, idx_head, idx_tail - 1)
+	" Note: del_tail - 1 reflects exclusive nature of delete at tail.
+	call remove(a:toks, del_head, del_tail - 1)
 endfu
 
 fu! s:Vmap_protect_bslash(opt)
@@ -3887,7 +4164,7 @@ fu! s:dbg_display_toks(context, toks)
 	if !exists('g:dbg_display_on') || !g:dbg_display_on
 		return
 	endif
-	echomsg ""
+	echomsg "\r"
 	echomsg a:context
 	for ti in a:toks
 		if ti.typ == 'eob'
@@ -3899,62 +4176,49 @@ fu! s:dbg_display_toks(context, toks)
 				\, ti.rgn, ti.idx, empty(ti.action) ? ' ' : ti.action , ti.typ, ti.loc)
 		endif
 	endfor
-	echomsg ""
+	echomsg "\r"
 endfu
 
-" TODO: Consider whether is_del is best approach? Perhaps string op arg instead?
-" Or even something within pspecs?
 fu! s:Operate_region(pspecs, opt)
 	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
 	" needed, its return is cached.
-	let mtoks = []
 	if a:opt['op'] == 'delete'
 		" Get info needed for proper delete.
 		let dri = s:Vmap_get_region_info(a:opt)
 	endif
-	" Loop over rgn types.
-	" Big TODO: Parameterize the functions taking rgn; this will obviate the
-	" need for multiple loops (currently, the pipeline is broken up so we can do
-	" the (non-rgn-specific) s:Delete_region_text once-only.
-	let toks = {}
-	for rgn in keys(a:pspecs)
-		" TODO: May change name to calculate or something?
-		let toks[rgn] = s:Vmap_compute(rgn, a:pspecs[rgn], a:opt)
-		if a:opt['op'] == 'delete'
-			" Update list to reflect toks we're going to delete before cleanup.
-			call s:dbg_display_toks("before Vmap_delete " . rgn, toks[rgn])
-			" Issue: Some indices aren't getting updated properly.
-			call s:Vmap_delete(toks[rgn], dri)
-			call s:dbg_display_toks("Vmap_delete " . rgn, toks[rgn])
-		endif
-	endfor
+	" TODO: May change name to calculate or something?
+	" Note: Returned array of toks is merged (all rgns combined).
+	let toks = s:Vmap_compute(a:pspecs, a:opt)
 	if a:opt['op'] == 'delete'
-		" Delete text between phantom head (inclusive) and phantom tail (exclusive).
-		" Note: Phantom tail tok would be *appended* at the stored position: hence,
-		" the 'inclusive' arg.
-		" Important Note: Delete the region text once-only, regardless of number
-		" of rgn types involved.
-		" WHOA!!!! Do I really not need to know # of bytes deleted by the following?
-		" If not, I did a lot of work in Delete_region_text for nothing... Could
-		" probably really simplify things if # deleted bytes isn't needed.
+		" Update list to reflect toks we're going to delete before cleanup.
+		call s:dbg_display_toks("before Vmap_delete", toks)
+		call s:Vmap_delete(toks, dri)
+		call s:dbg_display_toks("Vmap_delete", toks)
+		" Delete text between phantom head (inclusive) and phantom tail
+		" (exclusive).
+		" Note: Phantom tail tok would be *appended* at the stored position:
+		" hence, the 'inclusive' arg.
+		" WHOA!!!! Do I really not need to know # of bytes deleted by the
+		" following? If not, I did a lot of work in Delete_region_text for
+		" nothing. Could probably really simplify things if # of deleted bytes
+		" isn't needed.
 		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Now for cleanup phases...
-	for rgn in keys(a:pspecs)
-		" TODO: Consider call by ref vs return...
-		call s:dbg_display_toks("before Vmap_cleanup " . rgn, toks[rgn])
-		call s:Vmap_cleanup(rgn, toks[rgn], a:opt)
-		call s:dbg_display_toks("Vmap_cleanup " . rgn, toks[rgn])
-		" TODO: Consider integrating this cleanup into Vmap_cleanup, but
-		" probably wait till refactor is complete...
-		call filter(toks[rgn], 'v:val.typ == "tok"')
-		call s:dbg_display_toks("Removed virtual toks " . rgn, toks[rgn])
-		" TODO: Convert to in-place merge.
-		let mtoks = s:Vmap_rev_and_merge(mtoks, toks[rgn], a:opt)
-		call s:dbg_display_toks("Vmap_rev_and_merge " . rgn, mtoks)
-	endfor
-	call s:dbg_display_toks("Vmap_rev_and_merge cum", mtoks)
-	call s:Vmap_apply_changes(mtoks, a:opt)
+	call s:dbg_display_toks("before Vmap_cleanup", toks)
+	call s:Vmap_cleanup(toks, a:opt)
+	call s:dbg_display_toks("after Vmap_cleanup", toks)
+	" Reverse list, discarding action-less toks and non-tok virtual markers (e.g., <eob>).
+	" Rationale: When applying changes to buffer, we work from the end to avoid
+	" invalidating line/col offsets before they're used.
+	" TODO: Consider integrating this cleanup into Vmap_cleanup, but
+	" probably wait till refactor is complete...
+	call reverse(filter(toks, 'v:val.typ == "tok" && !empty(v:val.action)'))
+	call s:dbg_display_toks("Reversed and discarded virtual markers and action-less toks", toks)
+
+	" Apply changes to buffer (in reverse order, to ensure offsets are not
+	" invalidated before use).
+	call s:Vmap_apply_changes(toks, a:opt)
 	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the operation.
@@ -4069,13 +4333,13 @@ fu! s:Highlight_region(rgn, mode)
 	" Prompt user for desired highlighting
 	let tokstr = s:Prompt_fmt_clr_spec()
 	" Parse and validate fmt/clr transformer spec
-	let tokinfo = s:Parse_fmt_clr_transformer(tokstr)
+	let pspecs = s:Parse_fmt_clr_transformer(tokstr)
 	" Check for Cancel request
 	" Note: Nothing about position or mode has changed at this point.
 	" TODO: In event of cancel, should we return {} as a signal to caller who may wish take advantage?
-	if !empty(tokinfo)
+	if !empty(pspecs)
 		" Perform the highlighting.
-		call s:Operate_region(tokinfo, opt)
+		call s:Operate_region(pspecs, opt)
 	endif
 	return opt
 endfu
@@ -4121,6 +4385,295 @@ fu! s:Highlight_operator(mode)
 		" Note: Do so whether termination was normal or abnormal.
 		call cursor(getpos("'[")[1:2])
 	endtry
+endfu
+
+" Prior to v3.0, a color name was permitted to contain whitespace; disallowing
+" it permits us to use whitespace, rather than comma, to separate terms in
+" fmt/clr spec list. It's unlikely anyone is relying upon this, but provide an
+" option just in case.
+" TODO: Need to go back and make Translate_fmt_clr_list handle this.
+let s:cfg_color_name_compat = 0
+
+" EBNF Grammar
+" Whitespace Handling: Within a production rule, 'opt_ws' indicates where
+" whitespace is permitted (but not required).
+"
+" or_expr = and_expr , opt_ws , { ("||" | "|") , opt_ws , and_expr }
+" and_expr = term , opt_ws , { ("&&" | "&") , opt_ws , term }
+"     Note: && and || may be used instead of & and | for visual (unnecessary)
+"     disambiguation.
+" term = f_term
+"      | ck_term
+"      | "(" , opt_ws , or_expr , opt_ws , ")"
+"      | "!" , opt_ws , term
+" f_term = "f" , opt_ws , ( "&" | "|" | [ "=" ] ) , f_attrs
+"        | "f" , opt_ws , [ "=" ] [ "-" ]
+"     Note: An f_term will *never* be recognized when the & or | following the
+"     'f' is the first in a pair: i.e., '&&' is *always* logical AND.
+"     Note: Support all combinations of '=' , '-', even those that seem
+"     silly/rendundant (e.g., `=-')
+" f_attrs = f_attr , { f_attr }
+" f_attr = "u" | "b" | "i" | "s" | "r" | "c"
+" ck_term = ("c" | "k") , opt_ws , color_name
+"         | ("c" | "k")
+" color_name = color_name_char , { opt_ws (* see note *) , color_name_char }
+"     Note: opt_ws applies only when cfg_color_name_compat is set.
+" color_name_char = (? regex: [-_a-zA-Z0-9] ?)
+"     Note: Currently no restrictions on - in name: i.e., `-' means default, and
+"     `--' is an actual color name. Should it be? Or should we require alpha?
+" opt_ws = { ws }
+" ws = ? sequence of 1 or more whitespace chars ?
+"
+" Note: "No format" can be spelled in any of the following ways:
+"   f=, f-, f
+" Caveat: In the final case, there could be ambiguity if the following token
+" is a logical AND: e.g...
+"   f&cbus
+" Is that...
+"     f& undercurl-bold-underline-standout
+" ...or...
+"     f- & fg-color 'bus'
+" Ways to resolve...
+" 1. Put space between the `&' and subsequent chars to prevent attempt to
+"    interpret the latter as f_attrs.
+" 2. Put explicit `-' or `=' after f.
+" 3. Use `&&' (always means logical AND).
+fu! s:Sel_parser_tok_init(sel)
+	let ps = {'sel': a:sel, 'idx': 0}
+	return ps
+endfu
+fu! s:Sel_parser_match(ps, re, ...)
+	if a:0 ? a:1 : 0
+		" Whitespace matched only explicitly.
+		let si = a:ps.idx
+	else
+		" Start (actually anchor) search at first non-whitespace char.
+		let si = match(a:ps.sel, '\S', a:ps.idx)
+	endif
+	if si >= 0
+		" Anchor the match at point.
+		let ms = matchlist(a:ps.sel, '^' . a:re, si)
+		if !empty(ms)
+			" Adjust parse state to consume the match.
+			let a:ps.idx = si + len(ms[0])
+			" Return match and all submatches.
+			return ms
+		endif
+	endif
+	" No match.
+	return {}
+endfu
+" Convenience method used when only boolean success/failure is desired from
+" s:Sel_parser_match. Optional explicit_ws arg defaults to false, but may be
+" overridden.
+fu! s:Sel_parser_accept(ps, re, ...)
+	return !empty(s:Sel_parser_match(a:ps, a:re, a:0 ? a:1 : 0))
+endfu
+" Handle both &[&] and |[|] bool expressions.
+fu! s:Sel_parser_bool_expr(ps, op)
+	let expr = {'op': a:op, 'expr': []}
+	" Need to check for both &/| and &&/||
+	let opop = a:op . a:op
+	while !exists('l:got_op') || !empty(got_op)
+		let sexpr = a:op == '|'
+			\? s:Sel_parser_bool_expr(a:ps, '&')
+			\: s:Sel_parser_term(a:ps)
+		if empty(sexpr)
+			if exists('l:got_op') && !empty(got_op)
+				throw "Expected term following " . got_op
+			else
+				" Let caller decide whether no term at this position is error.
+				return {}
+			endif
+		endif
+		" Accumulate the sub-expression.
+		call add(expr.expr, sexpr)
+		" Check for logical operator.
+		let got_op = s:Sel_parser_accept(a:ps, opop)
+			\? opop : s:Sel_parser_accept(a:ps, a:op) ? a:op : ''
+	endwhile
+	if len(expr.expr) == 1
+		" Remove useless layer (e.g., don't maintain an OR expression whose only
+		" purpose is to contain an AND expression).
+		let expr = expr.expr[0]
+	endif
+	return expr
+endfu
+fu! s:Sel_parser_try_fterm(ps)
+	if s:Sel_parser_accept(a:ps, 'f')
+		let term = {'mask': 0}
+		" Caveat: Don't let the pattern consume the 1st in pair of &'s or |'s
+		" Allow =- though it makes little sense.
+		let m = s:Sel_parser_match(a:ps, '\s*\%(\%(||\|&&\)\)\@!'
+			\. '\%(\([&|]\|=\?\)\([ubisrc]\+\)\|\(=-\|[-=]\)\?\)', 1)
+		if empty(m) || empty(m[2])
+			" Literally or effectively f-
+			let term.op = 'f='
+		else
+			" Non-default attrs
+			let term.op = 'f' . (empty(m[1]) ? '=' : m[1])
+			" TODO: Ensure m[2] is validated somewhere: either prior to this or
+			" in loop below... (Probably wait till I've refactored for latest
+			" format change.)
+			for attr in split(m[2], '\zs')
+				let term.mask = or(term.mask, s:ubisrc_mask[attr])
+			endfor
+		endif
+		return term
+	endif
+	" No fterm
+	return {}
+endfu
+fu! s:Sel_parser_try_ckterm(ps)
+	let m = s:Sel_parser_match(a:ps, '[ck]')
+	if !empty(m)
+		" Looks like fg/bg color.
+		let term = {'op': m[0]}
+		" TODO: Regex for color name chars would simplify things.
+		let re_cname_char = '[-_a-zA-Z0-9]'
+		" Note: Permit interior whitespace in name if cfg_color_name_compat set.
+		let m = s:Sel_parser_match(a:ps, re_cname_char
+			\. '\%(' . (s:cfg_color_name_compat ? '\s*' : '') . re_cname_char . '\)*')
+		let cname = empty(m) ? '-' : m[0]
+
+		" Set color index: 0 = default, with 1 corresponding to first
+		" non-default color.
+		if cname == '-'
+			let term.idx = 0
+		else
+			" TODO!!!!!!!!!!!!!!!! 
+			" Obviate need for boilerplate error-checking after call to
+			" Lookup_clr_namepat - probably just have it throw exception
+			" directly, but there's a legacy case to consider...
+			let term.idx = s:Lookup_clr_namepat(term.op, cname)
+			if term.idx == 0
+				throw "Invalid color name pattern: '" . cname . "'"
+			elseif term.idx < 0
+				" TODO_BG: Make sure the help note below is still valid after
+				" help has been updated.
+				throw "Color ".(-1 * term.idx)." is not an active "
+					\.(term.op ==? 'c' ? "foreground" : "background")
+					\." color. (:help "
+					\.(term.op ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
+			endif
+		endif
+		return term
+	endif
+	" No clr/bgc term
+	return {}
+endfu
+fu! s:Sel_parser_term(ps)
+	let term = s:Sel_parser_try_fterm(a:ps)
+	if !empty(term) | return term | endif
+	" Not f-term
+	let term = s:Sel_parser_try_ckterm(a:ps)
+	if !empty(term) | return term | endif
+	" Neither f nor ck
+	if s:Sel_parser_accept(a:ps, '!')
+		let term = s:Sel_parser_term(a:ps)
+		let term.neg = !has_key(term, 'neg') || !term.neg
+		return term
+	endif
+	" Neither f nor ck nor !term
+	if s:Sel_parser_accept(a:ps, '(')
+		let term = s:Sel_parser_bool_expr(a:ps, '|')
+		if empty(term)
+			throw "Expected term following `('"
+		endif
+		if !s:Sel_parser_accept(a:ps, ')')
+			throw "Expected `&', `|' or `)'"
+		endif
+		return term
+	endif
+	return {}
+endfu
+" Debug function
+fu! s:Sel_parser_expr_to_string(expr, indent)
+	let sw = 2
+	let s = ''
+	" Print recursively.
+	if has_key(a:expr, 'neg') && a:expr.neg
+		let s .= "!"
+	endif
+	if a:expr.op =~ 'f[=&|]'
+		let s .= a:expr.op . '{' . printf('$%02x', a:expr.mask) . '}'
+	elseif a:expr.op =~ '[ck]'
+		let s .= a:expr.op . a:expr.idx
+	elseif a:expr.op =~ '[&|]'
+		let s .= "(\n" . (repeat(' ', (a:indent + 1) * sw))
+		let first_expr = 1
+		for sexpr in a:expr.expr
+			let sep = first_expr
+				\? ''
+				\: (' ' . (a:expr.op[0] =~ '&' ? '&&' : '||') . ' ')
+			let s .= sep . s:Sel_parser_expr_to_string(sexpr, a:indent + 1)
+			let first_expr = 0
+		endfor
+		let s .= "\n" . repeat(' ', a:indent * sw) . ")"
+	endif
+	return s
+endfu
+fu! s:Parse_selector(sel)
+	let ps = s:Sel_parser_tok_init(a:sel)
+	try
+		let expr = s:Sel_parser_bool_expr(ps, '|')
+		if !empty(expr)
+			"Make sure returned expression consumed all input.
+			if !s:Sel_parser_accept(ps, '\s*$', 1)
+				throw "Expected `&&', `||' or end of input"
+			endif
+			" Valid expression
+			"echo s:Sel_parser_expr_to_string(expr, 0)
+		endif
+		return expr
+	catch
+		echoerr "Syntax error in selector at char offset " . ps.idx
+			\. ": " . v:exception . " at " . v:throwpoint
+			\. ", unconsumed input: `" . ps.sel[ps.idx:] . "'"
+	endtry
+endfu
+
+" Evaluate input expression against the input toks, returning 1 if expression
+" evaluates true.
+" Inputs:
+" expr: expression in form returned by Parse_selector
+" toks: {
+"   fmt: <fmt-mask>
+"   clr: <fg-color-number>
+"   bgc: <bg-color-number>
+" }
+fu! s:Check_selector(expr, toks)
+	" Cache inputs for convenience.
+	let [e, t] = [a:expr, a:toks]
+	" Set val within one of the if's below, handling any negation at end.
+	if type(e) == 0
+		let val = e
+	elseif e.op == '!'
+		" Boolean val.
+		let val = e.val
+	elseif e.op =~ '^[&|]$'
+		" Initialize to identity val, toggling in loop on short-circuit.
+		let val = e.op == '&' ? 1 : 0
+		for sexpr in e.expr
+			if !val == !!s:Check_selector(sexpr, t)
+				let val = !val
+				break
+			endif
+		endfor
+	elseif e.op =~ '^f[=&|]$'
+		if e.op[1] == '='
+			let val = e.mask == t.fmt
+		else
+			let val = function(e.op[1] == '&' ? 'and' : 'or')(e.mask, t.fmt)
+		endif
+	elseif e.op =~ '^[ck]$'
+		"echomsg "Color comparison" . e.idx . " -- " . t[b:txtfmt_rgn_typ_abbrevs[e.op]]
+		let val = e.idx == t[b:txtfmt_rgn_typ_abbrevs[e.op]]
+	else
+		throw "Internal Error! Invalid term in selector expression: " . string(e)
+	endif
+	"echomsg "Check_selector returning " . (has_key(e, 'neg') && e.neg ? !val : !!val)
+	return has_key(e, 'neg') && e.neg ? !val : !!val
 endfu
 
 " >>>

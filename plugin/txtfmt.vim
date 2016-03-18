@@ -8,7 +8,7 @@
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "3.0alpha-2"
+let g:Txtfmt_Version = "3.0alpha-3"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -211,7 +211,9 @@ let b:txtfmt_const_tokrange_limit_{'u'} = 0xFFFF
 let b:txtfmt_re_number_atom = '\([1-9]\d*\|0x\x\+\)'
 
 " Map the single-char fmt spec types to their 3-char equivalents.
+" TODO: The abbrevs/names suffixes seem rather backwards...
 let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc'}
+let b:txtfmt_rgn_typ_names = {'fmt': 'f', 'clr': 'c', 'bgc': 'k'}
 
 " >>>
 " General utility functions <<<
