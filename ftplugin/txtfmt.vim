@@ -2497,16 +2497,20 @@ fu! s:Is_escaped_tok()
 endfu
 " >>>
 " Function: s:Search_tok <<<
-" Description: Find and return the next token, taking into account the search
-" flags passed as input and the (optional) stopline.
+" Description: Attempt to find and return the next token, taking into account
+" the search flags passed as input and the (optional) stopline.
 " Stopline Note: If stopline is reached without finding a tok, search
 " transitions to search for hlable or tok, whichever comes first.
-" Motivation: Stopline should always be past end of region; the only reason  so the only reason
-" to find any tok there is to clean
+" Motivation: Stopline should always be past beg/end of region, where any found
+" toks are of interest only to synchronization/cleanup logic, for which presence
+" of hlable can be significant, even in the absence of actual tok.
 " Inputs:
 " rgn
-"     Desired region type: one of the following: 'clr', 'fmt', 'bgc', ''
-"     Note: Empty string means any rgn type.
+"     Desired region type(s), interpreted as follows:
+"     <empty>  all rgn types
+"     string   specified rgn type
+"     list     all rgn types in list
+"
 " sflags
 "     Pass-through for the following Vim search() flags:
 "     b - search backwards
@@ -2521,7 +2525,7 @@ endfu
 "   typ: 'tok'|'hla'|'eob'
 "   Note: When tok is not found, there are 2 possibilities:
 "   1. Found hlable before end of buffer
-"   2. Hit end of buffer looking for hlable
+"   2. Hit end (or start) of buffer looking for hlable
 "   TODO: Consider changing typ enum to 2 flags (either at top level, or nested
 "   within a 'flags' struct), 'tok' and 'eob', which would have the following
 "   correspondences:
@@ -2533,9 +2537,9 @@ endfu
 "   make cleaner boundary between the tok stuff (below) and non-tok-specific
 "   metadata (e.g., flags or enum).
 "   %% type of token found
-"   %% Note: Redundant with a:rgn if the latter is non-empty.
+"   %% Note: Redundant with a:rgn if the latter is a string.
 "   rgn: 'fmt'|'clr'|'bgc'
-"   -- The following are only for typ == 'tok'
+"   -- The following apply only when typ == 'tok'
 "   %% integer value representing the tok found
 "   idx: <color-idx>|<fmt-mask>
 "   %% position of tok match
@@ -2543,12 +2547,14 @@ endfu
 "   %% actual character corresponding to tok
 "   tok: <tok-char>
 " }
-" Post Condition: Unless 'n' flag supplied, will be positioned on a found token.
-" REFACTOR_TODO: Modify comments now that this accepts list of rgn types.
+" Post Condition: Unless 'n' flag supplied, will be positioned on any found tok.
 fu! s:Search_tok(rgns, sflags, ...)
 	" Note: For search(), stopline of 0 works like omitting arg.
 	let stopline = a:0 ? a:1 : 0
 	" Initialize return struct.
+	" Design Decision: Because we don't need to differentiate, 'eob' is
+	" currently used for both start and end of buffer: obviously, if 'b' flag is
+	" passed, it means 'start of buffer'.
 	let ret = {'typ': 'eob'}
 	" TODO: Consider adding 'loc' somewhere in return struct.
 	let re_tok = empty(a:rgns)
@@ -2566,23 +2572,21 @@ fu! s:Search_tok(rgns, sflags, ...)
 		" tok or hlable, whichever comes first.
 		" Note: If user has such an inordinate number of consecutive toks that
 		" this unbounded search takes noticeably long, something is pathological
-		" with his buffer, and he should expect problems...
+		" with his buffer, and he shouldn't be surprised by slowness...
 		" TODO: Make sure this submatch usage isn't affected by Vim's 'p' flag
 		" idiosyncrasies/bugs (documented in correspondence with Bram on
 		" list)...
-		" TODO: Decide about aggressive vs non-aggressive: there's really no way to
-		" do aggressive, even if configured, without passing an idx. I'm thinking
-		" maybe do away with that option/distinction anyways, keeping only the
-		" non-aggressive...
 		let re_hlable = s:Get_hlable_patt({})
 		let re = '\(' . re_tok . '\)\|\(' . re_hlable . '\)'
 		" Note: Cursor has not moved; inhibit move for now; if flags don't
-		" inhibit, we'll move to a tok if we find one.
+		" inhibit and a tok is found, we'll move to it later.
 		let [lnum, col, submatch] = searchpos(re, a:sflags . 'Wpn')
 		if lnum
 			" Found either tok or hlable (but haven't moved cursor to it).
+			" Note: The 'p' flag's submatch value is 1 greater than capture #.
 			if submatch == 2
-				" IMPORTANT TODO: This case is *very* rare, but possible.
+				" IMPORTANT TODO: This case is *very* rare, but possible. (Would
+				" have to be a tok at the end of the line just before stopline.)
 				" Go over function logic and intended use case again...
 				let ret.typ = 'tok'
 				" Position on found tok unless prevented by input flag.
@@ -2597,10 +2601,7 @@ fu! s:Search_tok(rgns, sflags, ...)
 			endif
 		endif
 	endif
-	" Do this here for all cases that find tok...
-	" Note: I've just moved this block down here; prior to this, there was a
-	" slight bug whereby tok details didn't get filled in for submatch == 2 case
-	" above.
+	" If tok was found, augment it here.
 	" TODO: Rework this function, perhaps taking advantage of positioning on
 	" cursor when 'n' flag is omitted.
 	if ret.typ == 'tok'
@@ -2608,15 +2609,12 @@ fu! s:Search_tok(rgns, sflags, ...)
 		" TODO: Consider nesting all this within a sub-object.
 		" Rationale: Cleaner division between the object returned by this
 		" function (which could be non-tok) and an actual tok object.
-		" TODO: Make this change a separate refactor. There's already a lot on
-		" this one...
 		let ret.chr = s:Get_char([lnum, col])
 		let ti = s:Get_tok_info(ret.chr)
 		let ret.rgn = ti.rgn
 		let ret.idx = ti.idx
 		let ret.pos = [lnum, col]
 	endif
-
 	return ret
 endfu
 " >>>
@@ -2982,63 +2980,65 @@ fu! s:Apply_zwa(zwa, patt)
 endfu
 
 " TODO: Determine where to define these constants.
-let s:SYNC_DIST_BYTES = 250
-let s:SYNC_DIST_BYTES_EXTRA = 250
+let s:SYNC_DIST_BYTES = 2500
 
-" Rewrite of preceding...
-" Logic:
-" Ensure that the first tok is one of the following:
-"    -a tok that cannot be superseded: ie, has hlable between it and vsel
-"    -a virtual (positionless) tok, which simply gives the formatting in
-"     effect at one of the following points...
-"         -vsel start
-"         -an actual tok prior to vsel start, which could not be guaranteed to
-"          be non-supersedable. (This tok would be the 2nd tok in the list.)
-"          Note: We could determine the effective highlighting in 1 of 2 ways:
-"              1. Examining synstack
-"              2. Looking for an actual tok, whose position we simply discard
-"                 (this is actually preferable, with synstack being last
-"                 resort)
-" Position Note: Originally, cursor was left on position at which subsequent
-" forward search should start, with curpos_checked flag set to indicate
-" whether search should include cursor position. However, subsequent logic can
-" now know everything it needs to know from tok_infos: if its final tok is
-" actual tok, start on it and disallow match at cursor; otherwise, start at
-" vsel head and allow match at cursor.
-" TODO: Review and refactor the comment above for rewritten function.
-
-" IMPORTANT NOTE!!!! This is the version under development, expected to
-" supersede the preceding 2.
+" Working backwards from start of region, accumulate tokens until we find one
+" that cannot be superseded (i.e., has hlable between it and subsequent tok (or
+" region head); if such a token cannot be found, we prepend a positionless
+" virtual tok that has the correct highlighting (and by definition, cannot be
+" superseded, as it is not an actual tok).
+" Post Condition: First 'tok' in list (possibly virtual) cannot be superseded.
+" Note: If we must prepend a positionless virtual tok, we will need to use
+" synstack to get the effective highlighting unless backwards search hit start
+" of buffer, in which case, we know the effective highlighting without
+" consulting synstack.
+" Position Note: Originally, cursor was left at point at which subsequent
+" forward search should start, with a flag set to indicate whether search should
+" include cursor position. Now, however, subsequent logic can get the
+" information it needs from toks: if final tok is actual tok, start on it and
+" disallow match at cursor; otherwise, start at vsel head and allow match at
+" cursor.
 " TODO: Document inputs, etc...
 fu! s:Vmap_sync_start(rgn, opt)
 	let sel_beg_pos = a:opt.rgn.beg
 	let sel_end_pos = a:opt.rgn.end
 	let stopline_beg = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)[0]
-	" TODO: May not need the end stoppos any more... Actually, we should
-	" probably just get it elsewhere (e.g., in Vmap_collect).
-	let stopline = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)[0]
+	" For good measure, make sure stopline is past current line.
+	let stopline = max([sel_end_pos[0] + 1,
+				\s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)[0]])
 	" Start looking at head of vsel.
 	call cursor(sel_beg_pos)
-	" Look backward for an ss_safe tok if we can find it.
 	let ss_safe = 0
-	let tok_infos = []
+	let toks = []
+	let tip = []
+	" Look backward for an ss_safe tok within stop distance.
+	" Design Decision: Search_tok can return actual tok prior to stopline, but
+	" once we've exceeded stopline, the nearest of hlable and tok will be
+	" returned. The only scenario in which we continue finding toks after having
+	" exceeded stopline is the one involving a run of adjacent toks with no
+	" separating hlable. In such cases, we want to keep going, stopline
+	" notwithstanding, till we hit hlable or start of buffer, at which point,
+	" we'll be prepending a positionless virtual tok with the effective
+	" highlighting at that point. (Note that hlable, if found, won't allow us to
+	" prepend an actual tok, since hlable can make only a *preceding* tok
+	" ss_safe, and we've already given up on finding a preceding tok at that
+	" point.
 	while !ss_safe
-		" Cache last tok encountered (if any).
-		let prev_pos = empty(tok_infos) ? [] : ti.pos
-		" TODO: Change some of the syncing constraint stuff now that the zwa's
-		" are no longer used...
 		let ti = s:Search_tok(a:rgn, 'b', stopline_beg)
 		if ti.typ != 'tok'
-			" Couldn't find ss safe tok within stop distance.
+			" Couldn't find ss safe tok within stop distance: either hit start
+			" of buf, or found hla prior to stopline.
 			break
 		endif
 		" Add found tok, whether supersedence constraint satisfied or not.
-		call insert(tok_infos, ti)
+		call insert(toks, ti)
 		" Has this tok satisfied supersedence constraint?
 		" Look only up to next tok (if one was found) or head of vsel.
-		if s:Contains_hlable(ti.pos, empty(prev_pos) ? sel_beg_pos : prev_pos, [0, 0])
+		if s:Contains_hlable(ti.pos, empty(tip) ? sel_beg_pos : tip.pos, [0, 0])
 			let ss_safe = 1
 		endif
+		" Cache prev for next iteration.
+		let tip = ti
 	endwhile
 	" Did we find ss_safe tok or not?
 	if !ss_safe
@@ -3048,96 +3048,29 @@ fu! s:Vmap_sync_start(rgn, opt)
 		" Search_tok normally returns. E.g., what about 'tok'? Should it be set,
 		" or left empty (as for <eob>).
 		let ti = {'typ': 'tok', 'pos': [], 'rgn': a:rgn}
-		" Assumption: We're either on earliest tok found or vsel head.
-		if empty(s:Backward_char())
-			" Already at head of buffer
+		" Note: 'eob' in this context means *start* of buffer.
+		if ti.typ == 'eob' || empty(s:Backward_char())
+			" Either search hit head of buffer, or we're sitting at it; in
+			" either case, we prepend default tok.
 			let ti.idx = 0
 		else
-			" Sitting 1 char prior to earliest point of interest (which could
-			" be either vsel head or actual tok)
+			" Sitting 1 char prior to either vsel head or actual tok.
+			" Rationale: Backwards searches don't move to hlable or head of buf;
+			" thus, the Backward_char() call above was made either from original
+			" position at start of region or from actual found tok.
 			" Sync on synstack.
 			let ti.idx = s:Get_cur_rgn_info()[a:rgn]
 		endif
 		" TODO: Is actual char really needed in the struct? Remove if not used.
 		let ti.chr = s:Idx_to_tok(a:rgn, ti.idx)
-		call insert(tok_infos, ti)
+		call insert(toks, ti)
 	endif
 	
-	" TODO: May not need the end stopline any more... Actually, we should
-	" probably just get it elsewhere (e.g., in Vmap_collect).
+	" TODO: Consider whether this function should be responsible for fixing
+	" 'stopline'. If not, could simply return the list of toks.
 	return {
 		\'stopline': stopline,
-		\'tok_infos': tok_infos
-	\}
-endfu
-fu! s:Vmap_sync_start_experimental(rgn, opt)
-	let sel_beg_pos = a:opt.rgn.beg
-	let sel_end_pos = a:opt.rgn.end
-	let stopline_beg = s:Add_byte_offset(sel_beg_pos, -s:SYNC_DIST_BYTES)[0]
-	" TODO: May not need the end stoppos any more... Actually, we should
-	" probably just get it elsewhere (e.g., in Vmap_collect).
-	let stopline = s:Add_byte_offset(sel_end_pos, s:SYNC_DIST_BYTES)[0]
-	" Start looking at head of vsel.
-	call cursor(sel_beg_pos)
-	" Look backward for an ss_safe tok if we can find it.
-	" REFACTOR_TODO: Perhaps check whether bgc active?
-	" Maintain running list of rgns still 'unsafe'.
-	let rgns_unsafe = ['fmt', 'clr', 'bgc']
-	" Keep up with pos of earliest found token by type.
-	let prev_pos = {'fmt': [], 'clr': [], 'bgc': []}
-	" Maintain mixed list of tokens.
-	" Note: We can stop collecting tokens of a given rgn type once we've found
-	" a supersedence safe token of that type.
-	let tok_infos = []
-	while !empty(rgns_unsafe)
-		" TODO: Change some of the syncing constraint stuff now that the zwa's
-		" are no longer used...
-		" REFACTOR_TODO: Make Search_tok handle list of rgn types.
-		let ti = s:Search_tok(rgns_unsafe, 'b', stopline_beg)
-		if ti.typ != 'tok'
-			" Couldn't find ss safe tok within stop distance.
-			break
-		endif
-		" Add found tok, whether supersedence constraint satisfied or not.
-		call insert(tok_infos, ti)
-		" Has this tok satisfied supersedence constraint? Look only up to next
-		" tok of this type (if one was found) or head of vsel.
-		if s:Contains_hlable(ti.pos, empty(prev_pos[ti.rgn])
-			\? sel_beg_pos : prev_pos[ti.rgn], [0, 0])
-			call remove(rgns_unsafe, index(rgns_unsafe, ti.rgn))
-		endif
-		" Cache last physical tok encountered.
-		let prev_pos[ti.rgn] = ti.pos
-	endwhile
-	" Check for rgn-specific failure to find ss_safe tok.
-	" Note: We're going to have to prepend a virtual tok to satisfy
-	" supersedence constraint.
-	" TODO: Make sure the virtual tok doesn't need more of the stuff
-	" Search_tok normally returns. E.g., what about 'tok'? Should it be set,
-	" or left empty (as for <eob>).
-	" Assumption: We're either on earliest tok found or vsel head.
-	if empty(s:Backward_char())
-		" Already at head of buffer
-		let idxs = {'fmt': 0, 'clr': 0, 'bgc': 0}
-	else
-		" Sitting 1 char prior to earliest point of interest (which could
-		" be either vsel head or actual tok)
-		" Sync on synstack.
-		let idxs = s:Get_cur_rgn_info()
-	endif
-	" TODO: Is actual char really needed in the struct? Remove if not used.
-	for rgn in rgns_unsafe
-		call insert(tok_infos, {
-			\'typ': 'tok', 'pos': [], 'rgn': rgn,
-			\'idx': idxs[rgn], 'chr': s:Idx_to_tok(rgn, idxs[rgn])
-		\})
-	endfor
-	
-	" TODO: May not need the end stopline any more... Actually, we should
-	" probably just get it elsewhere (e.g., in Vmap_collect).
-	return {
-		\'stopline': stopline,
-		\'tok_infos': tok_infos
+		\'toks': toks
 	\}
 endfu
 " Note: This function also should augment tok_info with loc and action: i.e.,
@@ -3152,7 +3085,7 @@ endfu
 " REFACTOR_TODO: other_rgns arg is just for prototyping. Refactor if I keep this
 " approach...
 fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
-	let toks = a:sync_info.tok_infos
+	let toks = a:sync_info.toks
 	" Mark toks added during sync as being prior to vsel.
 	" TODO: Consider doing this in Search_tok itself...
 	for tok in toks
@@ -3428,26 +3361,23 @@ fu! s:Vmap_apply(pspecs, toks)
 	endfor
 endfu
 
-" TODO: Perhaps rename...
+" TODO: Perhaps rename to Vmap_compute...
 fu! s:Vmap_compute(pspecs, opt)
 	let toks = {}
-	" REFACTOR_TODO: Somehow have list of all rgn types of interest passed in,
-	" and loop over just those: e.g., rgn types involved both in pspecs and any
-	" selector. If nothing else, we need to loop over only *active* rgn types.
-	" REFACTOR_TODO: Prior to refactor, didn't even call Vmap_compute for rgn
-	" type not in pspecs; doing so would have added phantom toks, which, because
-	" Vmap_apply was not run for their rgn type, would have retained the default
-	" tok idx of -1 all the way till Vmap_apply_changes, at which point, attempt
-	" to insert invalid tok would have caused strange things to happen. For
-	" now, therefore, I'm syncing and collecting only for rgn types in pspecs;
-	" however, I can see an advantage to syncing/collecting unconditionally:
-	" namely, it would permit cleanup on all rgn types, even those not in
-	" pspecs. Perhaps adopt logic that permits tok syncing and collection to run
-	" for all rgn types, but (eg) doesn't add phantom toks for rgn types not in
-	" pspecs. Or perhaps even allow the phantom toks up to a point, then ensure
-	" they're deleted before they do any harm...
-	" Design Decision Needed: Read preceding paragraph and decide...
-	"for rgn in keys(a:pspecs.rgns)
+	" At one point, we didn't even call Vmap_compute for rgn type not in pspecs;
+	" doing so would have added phantom toks, which, because Vmap_apply was not
+	" run for their rgn type, would have retained the default tok idx of -1 all
+	" the way till Vmap_apply_changes, at which point, attempt to insert invalid
+	" tok would have caused strange things to happen. Since addition of
+	" selectors, however, it is necessary to perform syncing and collection for
+	" all rgn types represented in either pspecs/selector. We could limit
+	" ourselves to the union of pspecs/selector rgn types, but there's an
+	" advantage to syncing/collecting unconditionally: namely, it permits
+	" cleanup on *all* rgn types, even those not in pspecs/selector.
+	" TODO: Perhaps adopt logic that permits tok syncing and collection to run
+	" for all rgn types, but doesn't add phantom toks for rgn types not in
+	" pspecs. If we do add the phantom toks, we just need to ensure they're
+	" discarded before they do any harm...
 	for rgn in s:Get_active_rgns()
 		let sync_info = s:Vmap_sync_start(rgn, a:opt)
 		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
@@ -4180,13 +4110,10 @@ fu! s:dbg_display_toks(context, toks)
 endfu
 
 fu! s:Operate_region(pspecs, opt)
-	" Note: s:Get_cur_rgn_info gets info for all region types: hence, if
-	" needed, its return is cached.
 	if a:opt['op'] == 'delete'
 		" Get info needed for proper delete.
 		let dri = s:Vmap_get_region_info(a:opt)
 	endif
-	" TODO: May change name to calculate or something?
 	" Note: Returned array of toks is merged (all rgns combined).
 	let toks = s:Vmap_compute(a:pspecs, a:opt)
 	if a:opt['op'] == 'delete'
