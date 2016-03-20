@@ -3328,12 +3328,9 @@ fu! s:Vmap_apply(pspecs, toks)
 			endif
 			let set_idx = old_idx[tok.rgn]
 		else " past vsel
-			" REFACTOR_TODO: At one point, we were breaking out here
-			" prematurely, due to presence of phantom 'interior' toks before the
-			" actual phantom.
-			" TODO: Think whether there's a better way to harmonize interior and
-			" head/tail phantoms...
-			"echomsg "Breaking out on " . string(tok)
+			" Assumption: Once we hit first tok past region, all remaining toks
+			" must also be past region (now that <eob>'s are floated to end by
+			" merge).
 			break
 		endif
 		" Handle any required tok update/delete/discard.
@@ -3417,18 +3414,21 @@ endfu
 " Compare input tokens, considering first pos, then action iff necessary to
 " break tie.
 fu! s:Vmap_cmp_tok(t_a, t_b)
-	" TODO: Do we need to consider virtual <eob> toks? Keep in mind that this
-	" comparison is used for merging (which eventually is going away), and the
-	" relative positioning of <eob> toks shouldn't matter, since we won't even
-	" be doing anything with them after the merge.
-	" For now, just make sure we don't blow up...
+	" <eob> toks are special: they should always be last tok within a rgn type,
+	" and they should all float to the end.
 	if a:t_a.typ == 'eob'
-		"echomsg "FIXME!!!! Internal Error"
 		return 1
 	elseif a:t_b.typ == 'eob'
-		"echomsg "FIXME!!!! Internal Error""
 		return -1
 	endif
+	" Design Decision: If either tok is positionless (but not <eob>), preserve
+	" order.
+	if !has_key(a:t_a, 'pos') || empty(a:t_a.pos)
+		return -1
+	elseif !has_key(a:t_b, 'pos') || empty(a:t_b.pos)
+		return 1
+	endif
+	" No special case: compare actual positions.
 	let cmp = s:Vmap_cmp_pos(a:t_a.pos, a:t_b.pos)
 	if cmp
 		" Position decides.
@@ -3482,18 +3482,18 @@ fu! s:Vmap_merge_toks(toks, sync_info, opt)
 		" Find the array whose head tok comes next in buffer.
 		for idx in range(len(aofa))
 			" Compare this one with prev best (if any).
-			" Caveat: Ordering of position-less toks matters only within a rgn
-			" type, but we need to pull them as soon as possible; otherwise,
-			" they can 'trap' normal toks behind them, thereby preventing the
-			" normal toks from being merged into the stream at the right point.
-			" Caveat: Don't pass positionless toks to Vmap_cmp_tok.
+			" Caveat: In general, ordering of position-less toks matters only
+			" within a rgn type, but we need to pull them as soon as possible;
+			" otherwise, they can 'trap' normal toks behind them, thereby
+			" preventing the normal toks from being merged into the stream at
+			" the right point.
+			" Special Exception: <eob> toks should always float to the end.
+			" TODO: Vmap_cmp_tok handles this special logic, but consider
+			" whether it belongs here, with Vmap_cmp_tok called only for toks
+			" with position...
 			let cmp = sel_idx < 0
 				\ ? -1
-				\ : empty(aofa[sel_idx][0].pos)
-					\ ? 1
-					\ : empty(aofa[idx][0].pos)
-						\ ? -1
-						\ : s:Vmap_cmp_tok(aofa[idx][0], aofa[sel_idx][0])
+				\ : s:Vmap_cmp_tok(aofa[idx][0], aofa[sel_idx][0])
 			if cmp < 0
 				let sel_idx = idx
 			endif
