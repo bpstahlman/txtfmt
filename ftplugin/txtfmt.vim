@@ -3162,18 +3162,27 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 			endif
 		endif
 		if ti.typ == 'tok'
-			" We have an actual (non-phantom) tok; add it unless preceding tok
-			" was past region end and hlable lies between it and this one (in
-			" which case, we already have sufficient toks for cleanup at tail).
+			" We have an actual (non-phantom) tok.
 			" Note: Phantom toks are always added above.
 			let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
 				\: a:opt.rgn.beg == ti.pos ? '{'
 				\: a:opt.rgn.end == ti.pos ? '}' : '='
+			" Finish updating and add the current tok.
+			let ti.action = ''
+			if ti.loc == '}' | let sel_end_found = 1 | endif
+			if ti.loc == '{' | let sel_beg_found = 1 | endif
+			call add(toks, ti)
 			if ti.loc == '>'
-				" Do we already have a candidate 'last tok'?
+				" Now that we're past region, do we already have a candidate
+				" 'last' tok?
+				" Note: ti_last is something of a misnomer now that we're
+				" keeping the final found tok; penultimate would be a better
+				" name now.
 				if !empty(ti_last)
-					" Any hlable between ti_last and this one? If so, current
-					" tok is unnecessary.
+					" Any hlable between ti_last and this one? If so, it's safe
+					" to break out now that we've added this final tok.
+					" Design Decision: Originally, discarded this tok, but since
+					" we've already got it, err on the side of more cleanup.
 					if s:Contains_hlable(ti_last.pos, ti.pos, [0, 0])
 						break
 					endif
@@ -3181,13 +3190,6 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 				" Current tok is needed, and becomes candidate for 'last tok'.
 				let ti_last = ti
 			endif
-			" Finish updating and add the current tok.
-			let ti.action = ''
-			" TODO: We could skip next iteration update if we know we're leaving
-			" loop (e.g. in eob case).
-			if ti.loc == '}' | let sel_end_found = 1 | endif
-			if ti.loc == '{' | let sel_beg_found = 1 | endif
-			call add(toks, ti)
 			""""
 			" !!!! UNDER CONSTRUCTION !!!!
 			" REFACTOR_TODO: Validate this logic and remove 'Under Construction'...
