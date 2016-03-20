@@ -3075,18 +3075,22 @@ fu! s:Vmap_sync_start(rgn, opt)
 		\'toks': toks
 	\}
 endfu
-" Note: This function also should augment tok_info with loc and action: i.e.,
-" in addition to the basic tok returned by Search_tok, the toks in the
-" returned list will have the following:
-" TODO: Consider treating non-phantom `{'s and `}'s as `='
-"   loc    ('<|{|=|}|>')
-"   action ('i', 'a', '')
-"   Note: action may be assigned other values in Vmap_apply, but for now,
-"   phantom head/tail will be set to i/a respectively, with all others null.
-" VMAPS TODO: Update function header.
-" REFACTOR_TODO: other_rgns arg is just for prototyping. Refactor if I keep this
-" approach...
-fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
+" Note: This function should augment tok_info with loc and action: i.e., in
+" addition to the basic tok returned by Search_tok, the toks in the returned
+" list will have the following:
+"   loc    =~ '^[<{=}>]$'
+"          TODO: Consider treating non-phantom `{'s and `}'s as `='
+"   action =~ '^[ia]\?$'
+"          Note: action may be assigned other values in Vmap_apply, but for now,
+"          phantom head/tail will be set to i/a respectively, with all others
+"          empty.
+" VMAPS TODO: Update function header (document inputs, etc.).
+" Possible Refinement TODO: Although it's no longer harmful (now that Vmap_apply
+" knows to discard them), there's no need to add phantom toks (neither head/tail
+" nor interior) for a rgn type represented only in the selector. We're no longer
+" adding unnecessary interior phantoms, but as of 19Mar2016, we still add the
+" head/tail ones unconditionally.
+fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 	let toks = a:sync_info.toks
 	" Mark toks added during sync as being prior to vsel.
 	" TODO: Consider doing this in Search_tok itself...
@@ -3106,6 +3110,9 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 		call cursor(a:opt.rgn.beg)
 		let allow_cmatch = 1
 	endif
+	" Cache rgn types for which we may need to add interior phantoms.
+	let other_rgns = filter(keys(a:pspecs.rgns), 'v:val != a:rgn')
+	" Initialize loop vars.
 	let ti_last = {}
 	let sel_cmp_prev = -1
 	let [sel_beg_found, sel_end_found, sel_end_found_prev] = [0, 0, 0]
@@ -3190,25 +3197,19 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 				" Current tok is needed, and becomes candidate for 'last tok'.
 				let ti_last = ti
 			endif
-			""""
-			" !!!! UNDER CONSTRUCTION !!!!
-			" REFACTOR_TODO: Validate this logic and remove 'Under Construction'...
-			" Add phantoms for the other rgn types.
-			" Note: Using action 'a' to prevent indices from getting out of sync
-			" when applying changes to buffer.
-			" TODO: Actually necessary only when non-identity selector used.
-			" TODO: Think through this if condition: bottom line is, I need to
-			" append interior phantoms whenever the tok just added is
-			" non-phantom, and it's either at head or within region.
-			" BIG TODO!!!! FIXME!!!! Somehow need to ensure the presence of at
-			" least a phantom head for rgn types not represented in specs:
-			" otherwise, Vmap_apply's selector logic won't work properly. Could
-			" do it here, or could simply ensure that syncing/collecting is done
-			" for *all* region types. (One advantage of the latter approach is
-			" that it permits cleanup on all region types.)
+			" Interior Phantom Logic:
+			" If a non-null selector was specified, head/tail phantoms are not
+			" sufficient: we also need 'interior phantoms' for all rgn types
+			" represented in specs, to permit discontinuities at tokens of
+			" 'other' rgn types: for example, if fmt changes are qualified by a
+			" selector matching clr == 'red', simply passing into or out of a
+			" red clr region could entail a change to fmt attrs.
 			if empty(ti.action) && ti.loc =~ '[{=]'
-				for rgn in a:other_rgns
+				for rgn in other_rgns
 					" Add a phantom.
+					" Note: Action 'a' is used (rather than 'i') to ensure that
+					" Vmap_apply has seen the actual tok before it decides how
+					" to disposition the interior phantom.
 					call add(toks, {
 						\'typ': 'tok',
 						\'rgn': rgn,
@@ -3220,7 +3221,6 @@ fu! s:Vmap_collect(rgn, sync_info, opt, other_rgns)
 					\})
 				endfor
 			endif
-			""""
 			" Update for next iteration...
 			let sel_cmp_prev = sel_cmp
 		else
@@ -3365,37 +3365,21 @@ fu! s:Vmap_apply(pspecs, toks)
 	endfor
 endfu
 
-" TODO: Perhaps rename to Vmap_compute...
 fu! s:Vmap_compute(pspecs, opt)
 	let toks = {}
-	" At one point, we didn't even call Vmap_compute for rgn type not in pspecs;
-	" doing so would have added phantom toks, which, because Vmap_apply was not
-	" run for their rgn type, would have retained the default tok idx of -1 all
-	" the way till Vmap_apply_changes, at which point, attempt to insert invalid
-	" tok would have caused strange things to happen. Since addition of
-	" selectors, however, it is necessary to perform syncing and collection for
-	" all rgn types represented in either pspecs/selector. We could limit
-	" ourselves to the union of pspecs/selector rgn types, but there's an
-	" advantage to syncing/collecting unconditionally: namely, it permits
-	" cleanup on *all* rgn types, even those not in pspecs/selector.
-	" TODO: Perhaps adopt logic that permits tok syncing and collection to run
-	" for all rgn types, but doesn't add phantom toks for rgn types not in
-	" pspecs. If we do add the phantom toks, we just need to ensure they're
-	" discarded before they do any harm...
+	" Since the addition of selectors, it is necessary to perform syncing and
+	" collection for all rgn types represented in *either* pspecs *or* selector.
+	" We could limit ourselves to the union of pspecs/selector rgn types, but
+	" there's an advantage to syncing/collecting unconditionally: namely, it
+	" permits cleanup on *all* rgn types, even those not in pspecs/selector.
 	for rgn in s:Get_active_rgns()
 		let sync_info = s:Vmap_sync_start(rgn, a:opt)
-		" Possible TODO: Keep toks_info simple list, passed by ref, with vsel
-		" start/end indices returned explicitly.
-		" TODO: Better test? Keep in mind that 0 is empty... Perhaps add a
-		" predicate for tokens.
-		"
-		" Question: When do we expect empty?
-		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:opt, filter(keys(a:pspecs.rgns), 'v:val != l:rgn'))
+		let toks[rgn] = s:Vmap_collect(rgn, sync_info, a:pspecs, a:opt)
 		call s:dbg_display_toks("Vmap_collect", toks[rgn])
 	endfor
 
 	" Convert hash keyed by rgn type to single array.
-	" Possible TODO: Decide whether the merge function should record (in
+	" Possible TODO: Decide whether the merge function should record (e.g., in
 	" sync_info) the index at which subsequent search should start (i.e., latest
 	" physical tok, or final tok - see note within Vmap_apply on possible
 	" optimization, but this is beyond the scope of this refactor).
