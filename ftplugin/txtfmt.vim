@@ -3042,6 +3042,8 @@ fu! s:Vmap_sync_start(rgn, opt)
 	endwhile
 	" Did we find ss_safe tok or not?
 	if !ss_safe
+		" Did we hit start of buf?
+		let hit_sob = ti.typ == 'eob'
 		" Note: We're going to have to prepend a virtual tok to satisfy
 		" supersedence constraint.
 		" TODO: Make sure the virtual tok doesn't need more of the stuff
@@ -3049,7 +3051,7 @@ fu! s:Vmap_sync_start(rgn, opt)
 		" or left empty (as for <eob>).
 		let ti = {'typ': 'tok', 'pos': [], 'rgn': a:rgn}
 		" Note: 'eob' in this context means *start* of buffer.
-		if ti.typ == 'eob' || empty(s:Backward_char())
+		if hit_sob || empty(s:Backward_char())
 			" Either search hit head of buffer, or we're sitting at it; in
 			" either case, we prepend default tok.
 			let ti.idx = 0
