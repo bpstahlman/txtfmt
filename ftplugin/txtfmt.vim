@@ -3010,7 +3010,7 @@ fu! s:Vmap_sync_start(rgn, opt)
 	call cursor(sel_beg_pos)
 	let ss_safe = 0
 	let toks = []
-	let tip = []
+	let tip = {}
 	" Look backward for an ss_safe tok within stop distance.
 	" Design Decision: Search_tok can return actual tok prior to stopline, but
 	" once we've exceeded stopline, the nearest of hlable and tok will be
