@@ -3872,12 +3872,11 @@ fu! s:Vmap_cleanup(toks, opt)
 			" Caveat: ti.typ == 'eob' implies no actual tok pos.
 			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
 				\[tip.action == 'i', ti.action == 'a'], tip)
-				"echomsg "Not hlable between " . string(tip.pos)
-				"	\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
+				"echomsg "Not hlable between " . string(tip.pos) . ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
-				" Special Case: If bleed-through is from default tok,
-				" superseded tok can be deleted.
+				" Special Case: If bleed-through is from default tok, *or* from
+				" a tok matching current tok, superseded tok can be deleted.
 				" Another Special Case: Never 'cap' to prevent bleed-through
 				" onto end of buffer.
 				" Note: Bleed-through cap scenario has recently become much more
@@ -3888,7 +3887,8 @@ fu! s:Vmap_cleanup(toks, opt)
 				" Assumption: If the toks are separated by more than a single
 				" line, they're separated by nzwbs: hence, Contains_hlable test
 				" would prevent our getting here.
-				if ti.typ != 'eob' && ti_safe.idx && tip.pos[0] != ti.pos[0]
+				if ti.typ != 'eob' && ti_safe.idx && ti_safe.idx != ti.idx
+					\ && tip.pos[0] != ti.pos[0]
 					" Cap non-default region to prevent bleed through.
 					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip) . " - " . string(ti) . " - ti_safe: " . string(ti_safe)
 					" REFACTOR_TODO: Consider the change to this test... Change
