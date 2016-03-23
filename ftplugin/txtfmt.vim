@@ -2860,11 +2860,13 @@ endfu
 " specified by the inc arg) contains anything hlable, given the specified rgn
 " type and tok idx.
 " Note: When option specifies non-aggressive cleanup, tok_info will be ignored.
+" TODO: Remove dependence on optional tok_info, now that I've pretty much ruled
+" out 'aggressive cleanup'.
 " Rationale: For non-aggressive cleanup, anything that occupies non-zero-width
 " buffer space (nzwbs) (even whitespace and newlines) is treated as hlable.
 " Inputs:
-" pos1: <start of region>
-" pos2: <end of region>
+" pos1: start of region to test
+" pos2: end of region to test
 " inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
 " [tok_info]: {
 "   rgn:  'fmt'|'clr'|'bgc',
@@ -2887,9 +2889,11 @@ fu! s:Contains_hlable(pos1, pos2, inc, ...)
 	" Since cursor is positioned at start, inc[0] determines 'c' flag.
 	" Note: Vim does not use line/col zwa's to constrain search - only match;
 	" thus, might make sense to abandon Make_pos_zwa and friends in favor of
-	" approach that uses stopline and a post-search line/col test. Either way,
-	" need to use an actual stopline, rather than relying upon line/col
-	" constraints to short-circuit search.
+	" approach that uses stopline and a post-search line/col test. For now, just
+	" use pos2 as explicit stopline, to avoid reliance upon line/col constraints
+	" to short-circuit search. (Even without the explicit stopline, we wouldn't
+	" need to worry about pathological slowness now that we're starting search
+	" at beginning of search region.)
 	let ret =
 		\!!search(s:Apply_zwa(zwa, hlable), 'nW' . (inc[0] ? 'c' : ''),
 		\a:pos2[0])
@@ -2988,6 +2992,9 @@ let s:SYNC_DIST_BYTES = 2500
 " virtual tok that has the correct highlighting (and by definition, cannot be
 " superseded, as it is not an actual tok).
 " Post Condition: First 'tok' in list (possibly virtual) cannot be superseded.
+" Note: Although Search_tok can return a tok with type 'hla', this function will
+" not: if we hit hlable trying to find ss_safe tok, we prepend a positionless
+" virtual tok.
 " Note: If we must prepend a positionless virtual tok, we will need to use
 " synstack to get the effective highlighting unless backwards search hit start
 " of buffer, in which case, we know the effective highlighting without
@@ -3089,7 +3096,8 @@ endfu
 " knows to discard them), there's no need to add phantom toks (neither head/tail
 " nor interior) for a rgn type represented only in the selector. We're no longer
 " adding unnecessary interior phantoms, but as of 19Mar2016, we still add the
-" head/tail ones unconditionally.
+" head/tail ones unconditionally. Consider simply skipping the call to this
+" function for rgn type's not in pspecs.
 fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 	let toks = a:sync_info.toks
 	" Mark toks added during sync as being prior to vsel.
@@ -3256,18 +3264,29 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 endfu
 
 fu! s:Vmap_apply(pspecs, toks)
-	" UNDER CONSTRUCTION!!!!!!!!!!!!!!!!!!!!
-	" REFACTOR_TODO: This comment is old, and somewhat out of date.
-	" Old/new_idx logic: old_idx always represents the idx that would have
-	" been active at a given point prior to the Vmap application. When new_idx
-	" is set, it is set to the value imparted to it by the highlighting spec
-	" application. (Note that setting of new_idx to non-default value here does
-	" not imply that the token will ultimately be kept: e.g., it could still be
-	" discarded during cleanup because of redundancy/supersedence). Leaving
-	" new_idx at default of -1 on a given loop iteration causes the
-	" corresponding token to be marked for deletion. We do this iff we know
-	" (even before running cleanup logic) that the token is going away: e.g.,
-	" clr/bgc tok within region.
+	" Old/new_idx logic:
+	" old_idx: the idx that *was* active at a given point prior to the
+	"          highlighting operation (considering effect of tok at point).
+	" new_idx: the idx that *will be* active at a given point *after* the
+	"          highlighting operation (ignoring effect of tok at point).
+	"          Important Note: When we process a given tok, new_idx reflects
+	"          what came *before* that tok, not the tok itself. This is why we
+	"          don't update till end of loop.
+	" set_idx: Set upon each iteration to the value a tok will have after the
+	"          highlighting operation is complete (considering effect of tok at
+	"          point).
+	"          Note: Whenever set_idx is assigned a value >=0, that same value
+	"          will be transferred to new_idx at loop end; deferring the new_idx
+	"          assignment allows us to defer the tok update logic (which needs
+	"          to know both prev (new_idx) and next (set_idx) states, because it
+	"          currently handles removal of both redundant toks and unnecessary
+	"          phantom toks).
+	"          Possible TODO: If we didn't bother with redundant/unnecessary tok
+	"          removal here (cleanup already handles), we could probably do away
+	"          with set_idx and the deferred set of new_idx.
+	" Implementation Note: old/new_idx implemented as hashes to facilitate
+	" looping over all rgn types at once.
+	"
 	" Initialize to sentinel so that we know when we encounter first of a type.
 	" Note: Having unused keys in old_idx is harmless; rgn types present in
 	" a:toks determines which keys will be used.
@@ -3275,15 +3294,22 @@ fu! s:Vmap_apply(pspecs, toks)
 	let new_idx = {}
 	for tok in a:toks
 		" Skip non-tokens (e.g., <eob>).
+		" Assumption: Vmap_sync_start guarantees that leading element will
+		" always be of type 'tok' (albeit possibly positionless virtual). There
+		" will be at most one non-tok (an <eob>) of each rgn type, and the
+		" current merge logic ensures any <eob>'s will be at the end of the
+		" list: thus, when we encounter the first, nothing but <eob>'s remains.
 		if tok.typ != 'tok' | continue | endif
+		" REFACTOR_TODO: Consider skipping (with continue) toks whose rgn type
+		" is neither in pspecs nor selector, which have been collected solely to
+		" facilitate cleanup.
+
 		" Boot-strap each rgn type.
 		if old_idx[tok.rgn] < 0
 			let old_idx[tok.rgn] = tok.idx
-			" REFACTOR_TODO - How to initialize new_idx[]?????
-			let new_idx[tok.rgn] = tok.idx " or should it be -1
+			let new_idx[tok.rgn] = tok.idx
 			continue
 		endif
-		" TODO: If we guarantee set_idx is set within if/else, remove this...
 		let set_idx = -1
 		if tok.loc == '<'
 			" Change nothing prior to region, but do stay in sync.
@@ -3295,15 +3321,13 @@ fu! s:Vmap_apply(pspecs, toks)
 				" Existing tok - not phantom
 				let old_idx[tok.rgn] = tok.idx
 			endif
-			" REFACTOR_TODO: The has_key test below is meant to ensure that we
-			" discard a phantom whose rgn type isn't represented in pspecs, and
-			" that we do so without performing selector test, and even more
-			" importantly, without attempting to apply fmt/clr (since the
-			" attempt might generate error for rgn type not present in pspecs).
-			" Prior to refactor, Vmap_apply wasn't even called for such rgn
-			" types. Falling into the else should cause the right thing to
-			" happen naturally; however, we probably shouldn't even add interior
-			" phantoms we know will be removed here...
+			" The has_key test below is meant to ensure that we discard a
+			" phantom whose rgn type isn't represented in pspecs, and that we do
+			" so without performing selector test, and even more importantly,
+			" without attempting to apply fmt/clr (since the attempt would fail
+			" for rgn type not present in pspecs).
+			" Note: I'm no longer adding interior phantoms for rgn types not
+			" present in pspecs, so the has_key test should be superfluous.
 			if has_key(a:pspecs.rgns, tok.rgn)
 				\ && s:Check_selector(a:pspecs.sel, old_idx)
 				" Selected! Apply highlighting.
@@ -3317,8 +3341,6 @@ fu! s:Vmap_apply(pspecs, toks)
 				" Either tok is unselected or its rgn type isn't represented in
 				" pspec; in either case, ensure that highlighting is unchanged
 				" from what it was before.
-				" Note: Logic for how to accomplish this is deferred to end of
-				" loop; simply record what highlighting should be.
 				let set_idx = old_idx[tok.rgn]
 			endif
 		elseif tok.loc == '}'
@@ -3331,24 +3353,29 @@ fu! s:Vmap_apply(pspecs, toks)
 			" Assumption: Once we hit first tok past region, all remaining toks
 			" must also be past region (now that <eob>'s are floated to end by
 			" merge).
+			" Caveat: Since each <eob> affects only its own rgn type, it's not
+			" strictly necessary to float them to the end in this manner, but if
+			" we didn't, we couldn't break here.
 			break
 		endif
 		" Handle any required tok update/delete/discard.
 		if set_idx >= 0
+			" Action *may* be needed w.r.t. current tok.
 			if empty(tok.action)
 				" Existing tok
 				if set_idx == new_idx[tok.rgn]
 					" This one is redundant.
-					" REFACTOR_TODO: Should we even be considering this here?
+					" Design Decision Needed: Should we do this here because
+					" it's easy, even though cleanup would handle if we left it?
+					" Same question for unnecessary phantom logic below.
 					let tok.action = 'd'
 				elseif set_idx != tok.idx
-					" Different from current.
+					" Need to change existing tok.
 					let tok.idx = set_idx
 					let tok.action = 'r'
 				endif	   
 			else
 				 " Phantom tok
-				 "echomsg "Comparing " . set_idx . " to " . new_idx[tok.rgn]
 				 if set_idx != new_idx[tok.rgn]
 					 let tok.idx = set_idx
 				 else
