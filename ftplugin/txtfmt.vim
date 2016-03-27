@@ -3162,12 +3162,18 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 			" finding one past range).
 			" Special Case: If we hit end of buffer without even an hlable, add
 			" a special <eob> tok; what's special about this virtual tok is that
-			" it *always* supersedes.
+			" it *always* supersedes an immediately preceding tok.
 			" TODO: Decide whether <eob> virtual tok should be handled specially
 			" (e.g., built entirely or not at all by Search_tok). Could use a
 			" sentinel as simple as an empty object for <eob>. Also, consider
 			" changing the 'typ' field to a pair of flags: tok and hla.
 			if ti.typ == 'eob'
+				" Note: Setting position and action simplify the cleanup logic,
+				" allowing it to treat <eob> like any other tok for ss test.
+				" Note: This was added as bugfix (hotfix actually); might want
+				" to look at refactoring...
+				let ti.pos = [line('$'), col([line('$'), '$'])]
+				let ti.action = ''
 				call add(toks, ti)
 			endif
 			if ti.typ == 'eob' || sel_end_found_prev
@@ -3649,7 +3655,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 			" prefer to delete redundant.
 			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
 				"echomsg "Removing in 1st red test: " . string(ti)
-				let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+				let ti.action = ti.action == 'i' || ti.action == 'a' ? '' : 'd'
 				let idx += 1
 				" Note: Leave tip unchanged, but don't make safe.
 				continue
@@ -3671,8 +3677,8 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 			" TODO: No longer considering tip means I should probably just move
 			" away from the aggressive cleanup altogether...
 			" Caveat: ti.typ == 'eob' implies no actual tok pos.
-			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
-				\[tip.action == 'i', ti.action == 'a'], tip)
+			if !s:Contains_hlable(tip.pos, ti.pos,
+				\ [tip.action == 'i', ti.action == 'a'], tip)
 				"echomsg "Not hlable between " . string(tip.pos)
 				"	\. ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
@@ -3689,7 +3695,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" Assumption: If the toks are separated by more than a single
 				" line, they're separated by nzwbs: hence, Contains_hlable test
 				" would prevent our getting here.
-				if ti.typ != 'eob' && ti_safe.idx && tip.pos[0] != ti.pos[0]
+				if ti_safe.idx && tip.pos[0] != ti.pos[0]
 					" Cap non-default region to prevent bleed through.
 					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
@@ -3710,7 +3716,7 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				if ti.typ == 'tok' && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
 					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti)
-					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+					let ti.action = ti.action == 'i' || ti.action == 'a' ? '' : 'd'
 					let tip_next = {}
 				endif
 			else
