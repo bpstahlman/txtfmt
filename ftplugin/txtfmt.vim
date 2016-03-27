@@ -2114,6 +2114,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 		\matchlist(a:specs, '^\s*\(.\{-}\)\s*\%(/\s*\(.\{-}\)\s*\)\?$')
 	if empty(specs)
 		" Effectively empty spec. Return NOP object.
+		" TODO: Should we warn if user has specified a selector?
 		return {}
 	endif
 	" Initalize non-empty return object.
@@ -3272,7 +3273,7 @@ fu! s:Vmap_apply(pspecs, toks)
 	"          Important Note: When we process a given tok, new_idx reflects
 	"          what came *before* that tok, not the tok itself. This is why we
 	"          don't update till end of loop.
-	" set_idx: Set upon each iteration to the value a tok will have after the
+	" set_idx: Set upon each iteration to the value a tok will have *after* the
 	"          highlighting operation is complete (considering effect of tok at
 	"          point).
 	"          Note: Whenever set_idx is assigned a value >=0, that same value
@@ -3402,16 +3403,13 @@ fu! s:Vmap_compute(pspecs, opt)
 		call s:dbg_display_toks("Vmap_collect", toks[rgn])
 	endfor
 
-	" Convert hash keyed by rgn type to single array.
-	" Possible TODO: Decide whether the merge function should record (e.g., in
-	" sync_info) the index at which subsequent search should start (i.e., latest
-	" physical tok, or final tok - see note within Vmap_apply on possible
-	" optimization, but this is beyond the scope of this refactor).
+	" Convert hash keyed by rgn type (generated above) to single array.
 	let mtoks = s:Vmap_merge_toks(toks, sync_info, a:opt)
 	call s:dbg_display_toks("after Vmap_merge_toks", mtoks)
 
-	" REFACTOR_TODO: Consider contents of a:pspecs: can it be empty? When? What
-	" sort of checks should be performed, and where?
+	" Note: Currently, pspecs.rgns cannot be empty: if it were,
+	" Parse_fmt_clr_transformer would have returned empty, resulting in
+	" operation cancellation.
 	if !s:Is_empty(a:pspecs.rgns)
 		" Apply pspec without worrying about whether mtoks will be kept.
 		call s:Vmap_apply(a:pspecs, mtoks)
@@ -3796,15 +3794,25 @@ fu! s:Vmap_apply_changes(toks, opt)
 	endfor
 endfu
 
+" Format of toks array:
 " toks: [{
-"     rgn: fmt,
-"     idx: 1,
-"     pos: [1,2],
-"     " Note: d can exist only for clr|bgc before this function.
+"     rgn: 'fmt|clr|bgc',
+"     idx: -1 | 0 | 1..N,
+"     pos: [row, col],
+"     % action == 'd' can exist only for 'clr|bgc' before this function.
 "     action: '[iard]?'
 "     loc: <|{|=|}|>
 " }, ...]
 "
+" Remove superseded and redundant toks.
+" Definitions:
+"   Superseded: A superseded tok is one whose effect is never felt because it is
+"   followed by a tok of the same rgn type (fmt/clr/bgc) with no intervening
+"   hlable.
+"   Example: <fb><fi> (the <fb> is superseded)
+"   Redundant: A redundant tok is one that is unnecessary because its
+"   highlighting is already in effect at the point at which it occurs.
+"   Example: <fb> xxx <fb> (the second <fb> is redundant)
 fu! s:Vmap_cleanup(toks, opt)
 	" Keep up with latest tok (per rgn) that's safe from deletion.
 	" First tok is never deletable (and may not be an actual tok).
@@ -3830,17 +3838,16 @@ fu! s:Vmap_cleanup(toks, opt)
 			" Note: Won't see 'd' for anything but colors here.
 			continue
 		endif
-		" REFACTOR_TODO: Analyze this...
 		if ti.typ == 'tok' && ti.idx < 0
-			" Skip the interior phantoms that weren't needed (idx == -1)
-			" !!!! UNDER CONSTRUCTION !!!!
+			" Skip the interior phantoms that weren't needed (idx == -1).
+			" Assumption: Although head/tail phantoms may ultimately be removed
+			" by cleanup, they always have idx >= 0 at this point.
 			continue
 		endif
 
 		" Cache some per-rgn refs.
-		" Assumption: The cached refs won't be reassigned till just after the
-		" big supersedence test if block, where they are updated for next
-		" iteration.
+		" Assumption: The cached refs won't be reassigned till we update for
+		" next iteration.
 		let tip = tip_[ti.rgn]
 		let ti_safe = ti_safe_[ti.rgn]
 
@@ -3849,10 +3856,10 @@ fu! s:Vmap_cleanup(toks, opt)
 		" Note: No need to remove anything from list at this point: to ensure
 		" eventual removal, set a phantom's action to null, real tok's action
 		" to 'd'.
-		" TODO: Perhaps an tok_is_phantom() predicate?
+		" TODO: Perhaps a tok_is_phantom() predicate?
 		" TODO: Consider whether superseded/redundant removal logic needs to
 		" consider loc { and }: e.g., if there's a choice about which to remove,
-		" keep head or tail.
+		" should we prefer head or tail?
 
 		" Special <eob> tok can supersede, but can't be redundant.
 		" TODO: Perhaps add a tok/non-tok indicator instead... Or a 'virtual' flag.
@@ -3862,21 +3869,19 @@ fu! s:Vmap_cleanup(toks, opt)
 			" prefer to delete redundant.
 			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
 				"echomsg "Removing in 1st red test: " . string(ti)
-				let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+				let ti.action = ti.action == 'i' || ti.action == 'a' ? '' : 'd'
 				" Note: Leave tip unchanged, but don't make safe.
 				continue
 			endif
 		endif
 
-		" If here, we have a tok that is not *currently* redundant, but
-		" could supersede a preceding non-deleted tok (in which case, it could
-		" be redundant with an earlier tok uncovered by the supersedence
-		" delete).
+		" If here, we have a tok that is not *currently* redundant, but could
+		" supersede a preceding non-deleted tok (in which case, it could be
+		" redundant with an earlier tok uncovered by the supersedence delete).
 		" Set default tip for next iter; unset below if we determine that cur
 		" tok is not supersedable (i.e., if it becomes redundant due to
 		" supersedence).
 		let tip_next = ti
-		" TODO: Do we need to test tip.flags or anything else?
 		if !empty(tip)
 			" Need check for supersedence.
 			"echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
@@ -3926,7 +3931,7 @@ fu! s:Vmap_cleanup(toks, opt)
 				if ti.typ == 'tok' && ti_safe.idx == ti.idx
 					" The current tok has become redundant.
 					"echomsg "Removing tok determined redundant by 2nd test: " . string(ti) . " - " . string(ti)
-					let ti.action = ti.action == 'i' || ti.action =='a' ? '' : 'd'
+					let ti.action = ti.action == 'i' || ti.action == 'a' ? '' : 'd'
 					let tip_next = {}
 				endif
 			else
@@ -3989,9 +3994,7 @@ fu! s:Vmap_get_region_info(opt)
 	\}
 endfu
 
-" TODO: Clean up this comment block...
-" Delete everything
-" Delete all text in buffer between phantom tok at head (inclusive) and phantom
+" Delete all toks in buffer between phantom tok at head (inclusive) and phantom
 " tok at tail (exclusive).
 " Note: Could probably leave the phantom tok at head, and let it be cleaned up
 " naturally if necessary. Since region it modifies is empty, it will be
@@ -3999,7 +4002,9 @@ endfu
 " default, the tail phantom would be redundant, but it's a difference without a
 " distinction in that case: i.e., doesn't matter which we delete... Still, I'm
 " thinking just delete the phantom at head, or for that matter, perhaps don't
-" even add it to begin with - it really serves no purpose...
+" even add it to begin with - it really serves no purpose for a delete...
+" Note: This function deletes only toks; the regular text will be deleted later
+" by Delete_region_text.
 fu! s:Vmap_delete(toks, ri)
 	" Loop over all tokens, though the we won't really start doing anything till
 	" we get to phantom head.
@@ -4052,11 +4057,12 @@ fu! s:Vmap_delete(toks, ri)
 	endfor
 
 	" Remove tok elements corresponding to what we deleted.
-	" Rationale: Could introduce an 'action' type that means ignore, but this
-	" will simplify subsequent stages. Note that we couldn't set to 'd', since
-	" that would result in attempt to delete already deleted tok. Similarly,
-	" setting to '' would allow the deleted tok's effect to be felt in (eg) tok
-	" cleanup, and we don't want that either. We want it completely ignored.
+	" Rationale: Could introduce an 'action' type that means ignore, but
+	" removing them from the list simplifies subsequent stages. Note that we
+	" couldn't set to 'd', since that would result in attempt to delete already
+	" deleted tok. Similarly, setting to '' would allow the deleted tok's effect
+	" to be felt in (eg) tok cleanup, and we don't want that either. We want it
+	" completely ignored.
 	" Assumption: Upstream logic guarantees existence of both idx_head and
 	" idx_tail.
 	" Note: del_tail - 1 reflects exclusive nature of delete at tail.
@@ -4146,7 +4152,7 @@ fu! s:Operate_region(pspecs, opt)
 		" isn't needed.
 		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
-	" Now for cleanup phases...
+	" Begin cleanup phase...
 	call s:dbg_display_toks("before Vmap_cleanup", toks)
 	call s:Vmap_cleanup(toks, a:opt)
 	call s:dbg_display_toks("after Vmap_cleanup", toks)
