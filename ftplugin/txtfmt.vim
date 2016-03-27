@@ -3172,6 +3172,7 @@ fu! s:Vmap_collect(rgn, sync_info, opt)
 				" allowing it to treat <eob> like any other tok for ss test.
 				" Note: This was added as bugfix (hotfix actually); might want
 				" to look at refactoring...
+				let ti.idx = -1
 				let ti.pos = [line('$'), col([line('$'), '$'])]
 				let ti.action = ''
 				call add(toks, ti)
@@ -3687,6 +3688,8 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" superseded tok can be deleted.
 				" Another Special Case: Never 'cap' to prevent bleed-through
 				" onto end of buffer.
+				" Update_27Mar2016: TODO - Not sure about this anymore:
+				" reevaluate bleed-through logic...
 				" Note: Bleed-through cap scenario has recently become much more
 				" narrow: in particular, capping occurs only when the superseded
 				" and superseding toks are separated by a newline (possibly with
@@ -3695,7 +3698,8 @@ fu! s:Vmap_cleanup(rgn, toks, opt)
 				" Assumption: If the toks are separated by more than a single
 				" line, they're separated by nzwbs: hence, Contains_hlable test
 				" would prevent our getting here.
-				if ti_safe.idx && tip.pos[0] != ti.pos[0]
+				if ti.typ != 'eob' && ti_safe.idx && ti_safe.idx != ti.idx
+					\ && tip.pos[0] != ti.pos[0]
 					" Cap non-default region to prevent bleed through.
 					"echomsg "Cap non-default region to prevent bleed-through: " . string(tip)
 					if empty(tip.action) | let tip.action = 'r' | endif
