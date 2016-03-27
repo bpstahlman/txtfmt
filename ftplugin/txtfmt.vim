@@ -3237,7 +3237,7 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 			" finding one past range).
 			" Special Case: If we hit end of buffer without even an hlable, add
 			" a special <eob> tok; what's special about this virtual tok is that
-			" it *always* supersedes.
+			" it *always* supersedes an immediately preceding tok.
 			" TODO: Decide whether <eob> virtual tok should be handled specially
 			" (e.g., built entirely or not at all by Search_tok). Could use a
 			" sentinel as simple as an empty object for <eob>. Also, consider
@@ -3246,6 +3246,13 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 				" Note: Virtual marker 'token' returned by Search_tok doesn't
 				" have rgn type; give it one.
 				let ti.rgn = a:rgn
+				let ti.idx = -1
+				" Note: Setting position and action simplify the cleanup logic,
+				" allowing it to treat <eob> like any other tok for ss test.
+				" Note: This was added as bugfix (hotfix actually); might want
+				" to look at refactoring...
+				let ti.pos = [line('$'), col([line('$'), '$'])]
+				let ti.action = ''
 				call add(toks, ti)
 			endif
 			if ti.typ == 'eob' || sel_end_found_prev
@@ -3888,8 +3895,8 @@ fu! s:Vmap_cleanup(toks, opt)
 			" TODO: No longer considering tip means I should probably just move
 			" away from the aggressive cleanup altogether...
 			" Caveat: ti.typ == 'eob' implies no actual tok pos.
-			if ti.typ == 'eob' || !s:Contains_hlable(tip.pos, ti.pos,
-				\[tip.action == 'i', ti.action == 'a'], tip)
+			if !s:Contains_hlable(tip.pos, ti.pos,
+				\ [tip.action == 'i', ti.action == 'a'], tip)
 				"echomsg "Not hlable between " . string(tip.pos) . ' and ' . (ti.typ == 'tok' ? string(ti.pos) : '<eob>')
 				" Either delete superseded tok, or replace it with default (if
 				" necessary to prevent bleed-through from 'last safe' tok).
@@ -3897,6 +3904,8 @@ fu! s:Vmap_cleanup(toks, opt)
 				" a tok matching current tok, superseded tok can be deleted.
 				" Another Special Case: Never 'cap' to prevent bleed-through
 				" onto end of buffer.
+				" Update_27Mar2016: TODO - Not sure about this anymore:
+				" reevaluate bleed-through logic...
 				" Note: Bleed-through cap scenario has recently become much more
 				" narrow: in particular, capping occurs only when the superseded
 				" and superseding toks are separated by a newline (possibly with
