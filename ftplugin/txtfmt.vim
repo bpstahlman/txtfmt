@@ -4621,7 +4621,8 @@ fu! s:Check_selector(expr, toks)
 		if e.op[1] == '='
 			let val = e.mask == t.fmt
 		else
-			let val = function(e.op[1] == '&' ? 'and' : 'or')(e.mask, t.fmt)
+			let val = and(e.mask, t.fmt)
+			let val = e.op[1] == '&' ? val == e.mask : !!val
 		endif
 	elseif e.op =~ '^[ck]$'
 		"echomsg "Color comparison" . e.idx . " -- " . t[b:txtfmt_rgn_typ_abbrevs[e.op]]
