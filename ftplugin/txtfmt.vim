@@ -4049,8 +4049,12 @@ fu! s:Vmap_delete(toks, ri)
 				" deleted region (taking into account any adjustment intended to
 				" include trailing newline in delete region). (Note that
 				" Vmap_apply_changes can handle location past end of line.)
-				let tok.pos = a:ri.pos_end_adj
-				let tok.action = 'i'
+				" Caveat: The action test ensures we don't resuscitate a phantom
+				" tail that has already been removed (action == '') upstream.
+				if tok.action == 'a'
+					let tok.pos = a:ri.pos_end_adj
+					let tok.action = 'i'
+				endif
 			else " tok.loc == '>'
 				" If this tok is on final line in range, adjust for # of bytes
 				" deleted on that line.
@@ -4233,7 +4237,8 @@ fu! s:Delete_region(rgn, mode)
 	" Perform the delete.
 	" TODO VMAPS: Check for active regions, or pass some sort of special
 	" indicator value. Don't hardcode like this...
-	call s:Operate_region({'fmt': 0, 'clr': 0, 'bgc': 0}, opt)
+	call s:Operate_region(
+		\ {'rgns': {'fmt': 0, 'clr': 0, 'bgc': 0}, 'sel': s:Sel_identity()}, opt)
 	" Leave cursor at pos of first deleted char.
 	call cursor(opt.rgn.beg)
 	return opt
@@ -4395,6 +4400,9 @@ let s:cfg_color_name_compat = 0
 "    interpret the latter as f_attrs.
 " 2. Put explicit `-' or `=' after f.
 " 3. Use `&&' (always means logical AND).
+fu! s:Sel_identity()
+	return {'op': '!', 'val': 1}
+endfu
 fu! s:Sel_parser_tok_init(sel)
 	let ps = {'sel': a:sel, 'idx': 0}
 	return ps

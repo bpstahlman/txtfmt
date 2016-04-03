@@ -1,4 +1,4 @@
-USER FEEDBACK NEEDED: I would greatly appreciate feedback email, especially on the new "auto-maps" feature (currently in "Alpha" testing):
+USER FEEDBACK NEEDED: I would greatly appreciate feedback email, especially on the new "auto-maps" feature (currently in "Beta" testing):
 brettstahlman AT gmail DOT com
 
 === !!! IMPORTANT NOTE TO NEW USERS !!! ===
@@ -7,26 +7,17 @@ The Txtfmt help file is large; for a quick (and gentle) introduction, please see
 === SCREENSHOTS ===
 Check out the following link for screenshots showing Txtfmt used...
     -as a standalone filetype for journal entries, notes, documents, etc...
-    -in conjunction with the .otl filetype used by Ned Konz' TVO (The Vim
-     Outliner) plugin
-    -to spruce up a circuit diagram created with the aid of Dr. Charles
-     Campbell's drawit plugin
+    -in conjunction with the .otl filetype used by Ned Konz' TVO (The Vim Outliner) plugin
+    -to spruce up a circuit diagram created with the aid of Dr. Charles Campbell's drawit plugin
     -to spruce up comments in various programming languages
 
     http://www.txtfmt.webs.com
-
-=== !!! AUTO MAPS - ALPHA RELEASE !!! ===
-Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight visually-selected regions. Accordingly, I have added several new types of mappings for highlighting and deleting existing regions of text. These mappings are collectively known as "auto maps" (with the original mappings now known as "manual maps"). Although the feature is not quite complete, I wanted to make an "alpha release" at this point for 2 reasons:
-1. The auto-maps feature is already quite usable, and will be preferred over manual maps by many users.
-2. I wanted users to have the opportunity to provide feedback on the UI before it's frozen.
-
-Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started. However, users who prefer to work with the latest stable release, and don't require the convenience of auto maps, may download version 2.4.
 
 === MOTIVATION ===
 Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are simply using Vim to edit text that doesn't fall into any particular language category: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
 
 === OVERVIEW ===
-Txtfmt (The Vim Highlighter) is a combination syntax/filetype plugin that allows you to highlight plain text in Vim. The highlighting mechanism uses invisible tokens that are inserted into a Txtfmt buffer with the aid of easy to use mappings provided by the filetype plugin. Each token affects either the color or formatting of subsequent text. The plugin supports up to 8 configurable foreground colors, up to 8 configurable background colors, and all combinations of the following formatting attributes: bold, underline, italic, standout, reverse and undercurl.
+Txtfmt (The Vim Highlighter) is a combination syntax/filetype plugin that allows you to highlight plain text in Vim. The highlighting mechanism uses invisible tokens that are inserted into a Txtfmt buffer with the aid of easy to use mappings provided by the filetype plugin. The plugin supports up to 8 configurable foreground colors, up to 8 configurable background colors, and all combinations of the following formatting attributes: bold, underline, italic, standout, reverse and undercurl.
 
 Nearly everything in this plugin is configurable, with defaults that should work for most users "right out of the box". The following is a *partial* list of things that can be configured:
     mappings
@@ -35,6 +26,11 @@ Nearly everything in this plugin is configurable, with defaults that should work
 
 Everything is documented in an extensive Vim help file. Additionally, there is a "Quick-Start Tutorial" at the bottom of this page, designed to help you get up and running quickly with Txtfmt.
 
+=== !!! NEW FEATURE - AUTO MAPS - BETA RELEASE !!! ===
+Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight *visually-selected* regions. Accordingly, I have added several new types of mappings for highlighting and deleting existing regions of text. These mappings are collectively known as "auto maps" (with the original mappings now known as "manual maps").
+
+Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started. However, users who prefer to work with the latest stable release, and don't require the convenience of auto maps, may download version 2.4.
+
 === MANUAL VS AUTO MAPS ===
 Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. Manual maps are still the best choice when you know before entering a piece of text how you want it to be highlighted, but to simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Curently, auto maps fall into 2 basic categories:
 	1. Visual maps: operate on the visually selected text
@@ -42,6 +38,9 @@ Prior to version 3, Txtfmt provided only what are now known as "manual maps". Ma
 Note: I'm also planning to add linewise normal mode maps, which would operate on a range of lines, but the same basic functionality can be achieved today with operator-pending maps.
 
 The following 3 sections give usage examples of visual auto maps, operator-pending auto maps, and manual maps, respectively...
+Note: If you wish to try them, you will need to load the plugin: e.g.,
+	:set ft=txtfmt
+The QUICK-START TUTORIAL (further down) describes other ways to load the plugin.
 
 === USAGE EXAMPLE (VISUAL AUTO MAPS) ===
 Suppose you wish to make a block of text blue, bold-italic.
@@ -68,6 +67,30 @@ At the resulting Txtfmt prompt, type the following and hit Enter:
 	fui
 Note: Because we used "fui" instead of "f=ui", the word you highlighted in the first step has retained the bold attribute.
 
+!!!! NEW FEATURE - SELECTIVE HIGHLIGHTING !!!!
+Txtfmt now allows you to target only specific sub-regions within the visually-selected or operated-on region. To apply highlighting selectively, simply append a `/' to the highlighting spec, followed by the desired selector pattern. E.g.,
+	fu/cr
+This spec adds the underline attribute, but *only* to text with red foreground color. Here are some more complicated examples...
+
+	cb/cr||f&bi
+Changes red text to blue, but only if the text has *both* bold *and* italic attributes.
+
+	fu/cr||f|bi
+Like previous, but use of `f|' instead of `f&' means that *either* bold *or* italic attributes are sufficient to trigger a match.
+
+	fu/cr||f=bi
+Like previous, but use of `f=' means that the red text must have the bold-italic attributes and no others.
+
+	cb,kr,f-i / fbi & !(cr & k-)
+This one sets fg color blue, bg color red, and removes the italic attribute, but only for text that is currently bold-italic, and is NOT red with clear background.
+Points to Note:
+-I've used whitespace (ignored by Txtfmt) to make thinks a bit easier to read.
+-I've used a single `&' instead of `&&' for logical AND.
+ Note: Txtfmt accepts either, but to avoid confusion with the special `f|' and `f&' primitives, some users may prefer the longer forms.
+-I've dropped the optional `=' from `f=bi': the `=' operator is the default in a selector expression.
+
+
+
 === USAGE EXAMPLE (MANUAL MAPS) ===
 Suppose you wish to enter some green text...
 You execute one of Txtfmt's "insert-token" mappings (e.g., \i in normal mode), and enter the following at the prompt:
@@ -92,31 +115,25 @@ Now, the text you type should be plain, unhighlighted text. Notice how multiple 
 This specifier would enter a bold-italic token, followed immediately by the "no format" token, leaving the cursor between the two. (Note that Txtfmt lets you replace one of the commas with a dot to indicate where the cursor should be positioned after the token insertion.)
 
 === FEEDBACK ===
-I would greatly appreciate your feedback on this plugin. Contact me either at...
+I would greatly appreciate your feedback on this plugin: brettstahlman AT gmail DOT com
 
-brettstahlman AT gmail DOT com
-
-...or by posting to the Vim list with Txtfmt somewhere in the subject or body. 
 Also, please rate this plugin!
 
 === SUGGESTED USES ===
 The following applications represent a few of the many possible uses of the Txtfmt plugin:
-    -For taking notes
-     (e.g., notes taken while reviewing large programming projects)
+    -For taking notes (e.g., notes taken while reviewing large programming projects)
     -As part of a personal journaling system
-    -For highlighting .otl files created with Ned Konz' TVO (The Vim Outliner)
-     plugin
-    -For highlighting files created with 'Notes' (Hari Krishna Dara's
-     lightweight note management plugin)
+    -For highlighting .otl files created with Ned Konz' TVO (The Vim Outliner) plugin
+    -For highlighting files created with 'Notes' (Hari Krishna Dara's lightweight note management plugin)
     -For highlighting text files created with Yongping Guo's TxtBrowser plugin
-    -For beautifying block diagrams created with Dr. Charles Campbell's drawit
-     plugin
+    -For beautifying block diagrams created with Dr. Charles Campbell's drawit plugin
     -For sprucing up programming language comments
-     Don't laugh! You can embed Txtfmt formatting regions within other syntax
-     regions (e.g., C comments)
+     Don't laugh! You can embed Txtfmt formatting regions within other syntax regions (e.g., C comments)
      :help txtfmt-'nested'
     -etc. etc...
-Note: If you wish to make your highlighted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
+
+=== EXPORTING HIGHLIGHTED DOCUMENTS ===
+If you wish to make your highlighted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
 
 
 ====================
