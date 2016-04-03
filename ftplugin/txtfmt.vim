@@ -4144,12 +4144,26 @@ fu! s:dbg_display_toks(context, toks)
 endfu
 
 fu! s:Operate_region(pspecs, opt)
+	let pspecs = a:pspecs
 	if a:opt['op'] == 'delete'
+		" Assumption: Caller inputs empty pspecs for delete case; transform to
+		" something that will unconditionally remove all highlighting, and count
+		" on the op == 'delete' in opt to handle things specially.
+		" TODO VMAPS: Consider whether this is the cleanest way... Would prefer
+		" not to have to hardcode the 0 idx's like this, but it simplified the
+		" logic.
+		" IMPORTANT TODO: Consider subsuming pspecs into opt! Can't think of any
+		" reason they'd need to be separate.
+		let pspecs = {'rgns': {}, 'sel': s:Sel_identity()}
+		" Add a key with 0 idx value for all active regions.
+		" Note: This loop is a bit kludgy; unfortunately,VimL doesn't appear to
+		" offer a functional way to transform an array to a dictionary.
+		for r in s:Get_active_rgns() | let pspecs.rgns[r] = 0 | endfor
 		" Get info needed for proper delete.
 		let dri = s:Vmap_get_region_info(a:opt)
 	endif
 	" Note: Returned array of toks is merged (all rgns combined).
-	let toks = s:Vmap_compute(a:pspecs, a:opt)
+	let toks = s:Vmap_compute(pspecs, a:opt)
 	if a:opt['op'] == 'delete'
 		" Update list to reflect toks we're going to delete before cleanup.
 		call s:dbg_display_toks("before Vmap_delete", toks)
@@ -4235,10 +4249,7 @@ fu! s:Delete_region(rgn, mode)
 	" Note: Validation may adjust cur pos, but never alters '< '> or '[ '].
 	call s:Vmap_validate_region(opt)
 	" Perform the delete.
-	" TODO VMAPS: Check for active regions, or pass some sort of special
-	" indicator value. Don't hardcode like this...
-	call s:Operate_region(
-		\ {'rgns': {'fmt': 0, 'clr': 0, 'bgc': 0}, 'sel': s:Sel_identity()}, opt)
+	call s:Operate_region({}, opt)
 	" Leave cursor at pos of first deleted char.
 	call cursor(opt.rgn.beg)
 	return opt
