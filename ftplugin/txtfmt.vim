@@ -2373,11 +2373,11 @@ fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 	return ret
 endfu
 " TODO: TEMP DEBUG
-fu! Parse(specs)
+fu! s:Parse(specs)
 	return s:Parse_fmt_clr_transformer(a:specs)
 endfu
 " >>>
-fu! Test(spec)
+fu! s:Test(spec)
 	unlet! s:err_str
 	echo string(s:Parse_fmt_clr_transformer(a:spec))
 	if (exists('s:err_str'))
@@ -2641,7 +2641,7 @@ fu! s:Get_char(...)
 	let need_move = !!a:0 && !empty(a:1)
 	let z_save = @z
 	if need_move
-		let save_pos = getpos('.')
+		let save_pos = getpos('.')[1:2]
 		call cursor(a:1)
 	endif
 	normal! "zyl
@@ -2883,7 +2883,7 @@ fu! s:Contains_hlable(pos1, pos2, inc, ...)
 	" Note: Originally, generated both start and end were handled with
 	" zwa, but this can be pathologically slow when cursor is past start pos in
 	" very large file.
-	let savepos = getpos('.')
+	let savepos = getpos('.')[1:2]
 	call cursor(a:pos1)
 	" Generate the end of region constraint.
 	let zwa = s:Make_pos_zwa({'end': {'pos': a:pos2, 'inc': inc[1]}})
