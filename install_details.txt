@@ -55,8 +55,8 @@ Txtfmt requires both filetype detection and syntax highlighting to be enabled. T
     :syntax on
     :filetype plugin on
 
-help :syntax-on
-help :filetype-plugin-on
+:help :syntax-on
+:help :filetype-plugin-on
 
 Once you have copied the Txtfmt files to the appropriate directories in 'runtimepath', you can always use the Txtfmt syntax and mappings by manually setting the 'filetype' option. (I am assuming, of course, that you have enabled syntax at some point, most likely in your .vimrc. If you are not sure about this, :help syntax-enable.) The 'filetype' option may be set on the command line: e.g.,
     :set ft=txtfmt
