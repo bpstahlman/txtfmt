@@ -5,19 +5,15 @@ brettstahlman AT gmail DOT com
 The Txtfmt help file is large; for a quick (and gentle) introduction, please see the "USAGE EXAMPLE" sections and the "QUICK-START TUTORIAL" further down the page...
 
 === SCREENSHOTS ===
-Check out the following link for screenshots showing Txtfmt used...
-    -as a standalone filetype for journal entries, notes, documents, etc...
-    -in conjunction with the .otl filetype used by Ned Konz' TVO (The Vim Outliner) plugin
-    -to spruce up a circuit diagram created with the aid of Dr. Charles Campbell's drawit plugin
-    -to spruce up comments in various programming languages
-
-    http://www.txtfmt.webs.com
+http://www.txtfmt.webs.com
 
 === MOTIVATION ===
 Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are using Vim to edit text that doesn't fall into any particular language category: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
 
 === OVERVIEW ===
 Txtfmt (The Vim Highlighter) is a combination syntax/filetype plugin that allows you to highlight plain text in Vim. The highlighting mechanism uses invisible tokens that are inserted into a Txtfmt buffer with the aid of easy to use mappings provided by the filetype plugin. The plugin supports up to 8 configurable foreground colors, up to 8 configurable background colors, and all combinations of the following formatting attributes: bold, underline, italic, standout, reverse and undercurl.
+Note: Standout, reverse and undercurl are supported only in certain configurations. For details...
+	:help txtfmt-formats
 
 Nearly everything in this plugin is configurable, with defaults that should work for most users "right out of the box". The following is a *partial* list of things that can be configured:
     mappings
@@ -26,30 +22,33 @@ Nearly everything in this plugin is configurable, with defaults that should work
 
 Everything is documented in an extensive Vim help file. Additionally, this page contains usage examples and a "Quick-Start Tutorial", designed to help you get up and running quickly with Txtfmt.
 
-=== !!! NEW FEATURE - AUTO MAPS - BETA RELEASE !!! ===
+=== AUTO MAPS ===
+!!! NEW FEATURE (version 3.0 beta) !!!
 Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight visually-selected regions. Accordingly, I have added several new types of mappings for highlighting and deleting existing regions of text. These mappings are collectively known as "auto maps" (with the original mappings now known as "manual maps").
 
 Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started. However, users who prefer to work with the latest stable release, and don't require the convenience of auto maps, may download version 2.4.
 
 === MANUAL VS AUTO MAPS ===
-Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new highlighting token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. Manual maps are still the best choice when you know before entering a piece of text how you want it to be highlighted, but to simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Curently, auto maps fall into 2 basic categories:
-	1. Visual maps: operate on the visually selected text
-	2. Operator-pending maps: operate on the text moved over (or the text included in a "text object")
+Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new highlighting token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. To simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Curently, auto maps fall into 2 basic categories:
+
+1. Visual maps: operate on the visually selected text
+2. Operator-pending maps: operate on the text moved over (or included in a "text object")
+
 Note: I'm also planning to add linewise normal mode maps, which would operate on a range of lines, but the same basic functionality can be achieved today with operator-pending maps.
 
-The next few sections give usage examples of visual/operator-pending auto maps and manual maps...
-Note: If you wish to try them now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location and do...
+The next few sections give usage examples of visual/operator auto maps and manual maps...
+Note: If you wish to try the usage examples now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location and do...
 	:set ft=txtfmt
 The "INSTALL DETAILS" section (further down) discusses plugin load in greater detail...
 
 === USAGE EXAMPLE (VISUAL AUTO MAPS) ===
 Suppose you wish to make a block of text blue, bold-italic.
-Select the text to be highlighted using either mouse or visual mode (e.g., v, V or CTRL-V). Then type...
+Select the text to be highlighted using either mouse or visual mode (e.g., v or V). Then type...
 	\h
 At the resulting Txtfmt prompt, enter the following and hit Enter:
 	f=bi,cb
 Note: You could also have typed "fbi,cb" (without the `='), which would have *added* bold-italic on top of any existing format attributes.
-Mnemonic: The `=' causes any existing format attributes to be overwritten. More on this later...
+Mnemonic: The `=' causes any existing format attributes to be overwritten; `+' (the default) adds to, and `-' subtracts from the existing attributes. More on this later...
 
 === USAGE EXAMPLE (OPERATOR-PENDING AUTO MAPS) ===
 Suppose you wish to make the word under the cursor red, bold-underline.
@@ -60,16 +59,16 @@ Vim is now waiting for a motion or text object. Enter the 'inner word' text obje
 At the resulting Txtfmt prompt, type the following and hit Enter:
 	f=bu,cr
 
-Now, let's italicize and underline the current and subsequent 2 lines. In normal mode, with cursor still on the word we just highlighted, type...
+Now, suppose you wish to italicize and underline the line containing the word just highlighted and the subsequent 2 lines. In normal mode, with cursor still on the previously-highlighted word, type...
 	\h
 Once again, Vim awaits a motion. Enter the normal mode command to move down 2 lines:
 	2j
 At the resulting Txtfmt prompt, type the following and hit Enter:
 	fui
-Note: Because we used "fui" instead of "f=ui", the word you highlighted in the first step has retained the bold attribute.
+Note: Because you used "fui" instead of "f=ui", the word you highlighted in the first step has retained the bold attribute.
 
 === SELECTIVE HIGHLIGHTING ===
-!!!! NEW FEATURE - Version 3.0 beta !!!!
+!!!! NEW FEATURE (version 3.0 beta) !!!!
 
 Txtfmt now allows you to target only specific sub-regions within the visually-selected or operated-on region. To apply highlighting selectively, simply append a `/' to the highlighting spec, followed by a "selector pattern expression": i.e.,
 	<highlighting-spec-list> / <selector-pattern>
@@ -81,37 +80,37 @@ The simplest way to explain selector patterns is with examples...
 
 	cb/cr||f&bi
 		Action: Make foreground color blue
-		Applies To: Text that is red OR text with *both* bold AND italic attributes
-		Note: `f&' should be read as "all of the following attributes"
+		Applies To: Text that is red OR has *both* bold *and* italic attributes
+		Note: `f&' should be read as "has all of the following attributes"
 
 	fu,kg/cr&&f|bi
-		Action: Add underline attribute and make background color green
-		Applies To: Text that is red and has *either* bold OR italic attributes
-		Note: `f|' should be read as "any of the following attributes"
+		Action: Add underline attribute AND make background color green
+		Applies To: Text that is red AND has *either* bold *or* italic attributes
+		Note: `f|' should be read as "has any of the following attributes"
 
 	fi/cr||f=bu
 		Action: Add italic attribute
-		Applies To: Text that is red OR text that has bold-underline attributes and no others
+		Applies To: Text that is red OR has bold-underline attributes and no others
 
-	cb,kr,f-i / fbi & !(cr & k-)
-		Action: Sets fg color blue, bg color red, and removes the italic attribute
+	cb kr f-i / fbi & !(cr & k-)
+		Action: Set fg color blue, bg color red, and remove italic attribute
 		Applies To: Text that is bold-italic AND is NOT red with clear background
 
-Points to Note:
+** Points to Note **
 -Whitespace (ignored by Txtfmt) can be used to make the expressions (both highlighting and selector) easier to read.
  Caveat: `f&<attrs>' and `f|<attrs>' are atomic constructs: don't put space between the `f' and the operator, or between the operator and the list of attributes.
 -For logical AND and OR, you can double the operator if it looks nicer to you.
  Rationale: | and & are equivalent to || and &&, respectively, but to avoid confusion with the special `f|' and `f&' primitives, some users may prefer the longer forms.
 -You can drop the `=' from `f=<attrs>' in a selector expression.
  Rationale: `=' is the default operator in selector expressions: i.e., f=ub is equivalent to fub.
- Caveat: In the auto-map highlighting spec itself (i.e., the action portion of the spec), f=ub and fub mean different things: the former means set to *exactly* underline-bold, whereas fub is a synonum for f+ub, which means add underline-bold on top of existing format attributes.
+ Caveat: In the auto-map highlighting spec itself (i.e., the action portion of the spec), f=ub and fub mean different things: the former means set to *exactly* underline-bold, whereas fub is a synonym for f+ub, which means add underline-bold on top of existing format attributes.
 
 
 === USAGE EXAMPLE (MANUAL MAPS) ===
 Suppose you wish to enter some green text...
-You execute one of Txtfmt's "insert-token" mappings (e.g., \i in normal mode), and enter the following at the prompt:
+You execute one of Txtfmt's "insert-token" mappings (e.g., \i, \I, \a, \A, \o, etc... in normal mode), and enter the following at the prompt:
     cg
-(mnemonic: color green)
+Mnemonic: color green
 Now, the text you type is green.
 
 While typing green text, you wish to emphasize a phrase by making it bold-italic. You execute another mapping (e.g., CTRL-\ CTRL-\ in insert mode) and enter "fbi" or "fib" at the prompt.
@@ -120,10 +119,10 @@ Now, the text you type is green bold-italic.
 Note: Inserting the bold-italic token did not affect the text color, because the color and format regions are completely "orthogonal".
 
 Now you wish to switch to a blue background. Execute another mapping (e.g., CTRL-\ CTRL-\ in insert mode) and enter "kb" at the prompt.
-(mnemonic: bac_k_ground blue)
-Now, the text you type is green bold-italic on a blue background. Notice that, as before, the preceding highight regions are unaffected by the start of the new one.
+Mnemonic: bac_k_ground blue
+Now, the text you type is green bold-italic on a blue background.
 
-At some point, you may wish to return to default (unhighlighted) text. You can terminate the 3 active regions by executing the insert-token mapping one last time and entering the following at the prompt:
+At some point, you may wish to return to default (unhighlighted) text. You can terminate the 3 active regions by executing the insert-token mapping (CTRL-\ CTRL-\) one last time and entering the following at the prompt:
     c-,f-,k-
 Mnemonic: remove color, remove format, remove bac_k_ground color
 Now, the text you type should be plain, unhighlighted text. Notice how multiple format/color specifiers can be concatenated in a comma (or dot) separated list, thereby reducing the number of times you have to execute the mapping. You can use this feature to insert both the start and end tokens of a region at once: e.g.,
@@ -133,7 +132,6 @@ Explanation: Txtfmt lets you replace one of the commas with a dot to indicate wh
 
 === FEEDBACK ===
 I would greatly appreciate your feedback on this plugin: brettstahlman AT gmail DOT com
-
 Also, please rate this plugin!
 
 === SUGGESTED USES ===
@@ -147,7 +145,7 @@ The following applications represent a few of the many possible uses of the Txtf
     -For sprucing up programming language comments
      Don't laugh! You can embed Txtfmt formatting regions within other syntax regions (e.g., C comments)
      :help txtfmt-'nested'
-    -etc. etc...
+    etc. etc...
 
 === EXPORTING HIGHLIGHTED DOCUMENTS ===
 If you wish to make your highlighted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
@@ -160,11 +158,11 @@ After you have installed the plugin, you may wish to generate a "test page", bot
 
     :MakeTestPage<Enter>
 
-Be sure to scroll down and/or enlarge the window to view all sections. Although the primary purpose of the test page is to allow you to visualize the effects of a particular set of option values, the text of the page has been carefully chosen to give the new user an overview of some of the more important Txtfmt options. For information on how to use MakeTestPage to visualize different sets of options,
+Be sure to scroll down and/or enlarge the window to view all sections. Although the primary purpose of the test page is to allow you to visualize the effects of a particular set of option values, the text of the page has been carefully chosen to give the new user an overview of some of the more important Txtfmt options. For information on how to use MakeTestPage to visualize different sets of options...
 
     :help txtfmt-:MakeTestPage
 
-After you have viewed formatting regions in a test page, you will probably want to try creating your own formatting regions. The simplest way to begin is as follows:
+After you have viewed highlighting in a test page, you will probably want to try creating your own highlighting. The simplest way to begin is as follows:
 
     :new<Enter>
     :set ft=txtfmt<Enter>
@@ -180,8 +178,7 @@ For a detailed description of the token insertion mappings,
 For a detailed description of the jump-to-token mappings,
     :help txtfmt-jump-to-tok
 
-To keep this "quick-start tutorial" quick, I'll demonstrate the use of only a few of the available mappings...
-
+Let's begin...
 In your newly-created Txtfmt buffer, execute the following normal mode command:
     \i
 
@@ -194,20 +191,23 @@ At this point, you will be presented with the following prompt:
 At the prompt, type the following string and hit <Enter>:
     fbui
 
-Now, begin typing some text. The text should be highlighted bold-underline-italic. Note that the results would have been the same if you had typed fbiu, fibu, fubi, etc... As you have probably surmised, the letters 'b', 'u', and 'i' are flags indicating bold, underline, and italic, respectively. The leading 'f' indicates that the subsequent flags comprise a "format specification".
+Now, begin typing some text...
+Note: For the sake of subsequent examples, it would be best to type at least a few words whenever you're prompted to enter some text.
+
+The text you just typed should be highlighted bold-underline-italic. Note that the results would have been the same if you had typed fbiu, fibu, fubi, etc... As you have probably surmised, the letters 'b', 'u', and 'i' are flags indicating bold, underline, and italic, respectively. The leading 'f' indicates that what follows constitutes a "format specification".
     :help txtfmt-fmt-spec
 
-To terminate the underline, bold, italic region, execute the following keystroke sequence while still in insert mode:
+To terminate the underline-bold-italic region, execute the following keystroke sequence while still in insert mode:
     <CTRL-\><CTRL-\>
 
 Hint: Hold the Control key down while hitting backslash twice in quick succession.
 
-Once again, you should be presented with the prompt asking for a fmt / clr string. This time, enter the following:
+Once again, you should be presented with the prompt asking for a fmt/clr string. This time, enter the following:
     f-
 
-The dash character indicates "no format"; i.e., a return to the normal (unhighlighted) text. If you continue typing text, you will see that it no longer has any format attributes.
+The dash character indicates "no format"; i.e., a return to the normal (unhighlighted) text. Type some more text, and notice that it no longer has any format attributes.
 
-Now let's see what happens when we bring color into the mix... If you're still in insert mode, hit <Esc> to return to normal mode. Now execute the following normal mode command to insert a token on the line below:
+Now let's see what happens when we bring color into the mix... If you're still in insert mode, hit <Esc> to return to normal mode. Now execute the following normal mode command to insert a token on the line below (mnemonic: like normal mode 'o' command in Vim):
     \o
 
 At the resulting prompt, enter the following:
@@ -217,7 +217,7 @@ The 'c' is analogous to the 'f' in the preceding "format specifications"; it
 indicates that the following text is a "color specification".
     :help txtfmt-clr-spec
 
-Since in this case the color specified is "blue", the text you type after hitting <Enter> will be blue. Although I specified the color as "blue", I could just as well have abbreviated it to "b". As discussed in the Txtfmt help, color names are actually defined as regular expression patterns. The default patterns permit you to abbreviate color names to uniqueness. In practice, this means that for all colors but black, you needn't specify more than the first letter of the color name. (The single letter abbreviation for black is 'k'.) Txtfmt provides 8 distinct colors, each with its own default color name pattern and RGB value. You can view these definitions with the :ShowTokenMap command. Go ahead and try it now... After hitting <Esc> to return to normal mode, execute the following at the command line:
+Type a little blue text now... Although I specified the color as "blue", I could just as well have abbreviated it to "b". As discussed in the Txtfmt help, color names are actually defined as regular expression patterns. The default patterns permit you to abbreviate color names to uniqueness. In practice, this means that for all colors but black, you needn't specify more than the first letter of the color name. (The single letter abbreviation for black is 'k'.) Txtfmt provides 8 distinct colors, each with its own default color name pattern and RGB value. You can view these definitions with the :ShowTokenMap command. Go ahead and try it now... After hitting <Esc> to return to normal mode, execute the following at the command line:
     :ShowTokenMap<Enter>
     
 You may have to page down to see all of the output. The first section shows foreground color definitions, and the last section shows similar definitions for background colors. If you are not happy with either the color name or the RGB value of any of the 8 default colors, Txtfmt provides a very flexible mechanism for overriding the defaults with your own color preferences. The details may be found in the help, but if you're short on time, here's a quick example that shows how easy it is...
@@ -226,44 +226,44 @@ Note: You don't need to try this now.
 Suppose the GUI's default red color (RGB: #FF0000) is too bright for your eyes. You wish to replace this color with a dark brown (RGB: #804000). You see from the output of :ShowTokenMap that red corresponds to index 5 in the default color array. Thus, you could make the desired change by overriding txtfmtColor{5} with the following line in your .vimrc:
     :let txtfmtColor5='^br\\%[own]$,c:DarkRed,g:#804000'
 
-With this definition, you could specify the new color with the abbreviation "br". Of course, you would no longer be able to use the color red in the GUI, and any red highlighting in your existing file(s) would change to dark brown when viewed in the GUI. (Since the "c:DarkRed" is unchanged, color #5 will still be red in a color terminal.)
     :help txtfmt-color-config
     :help txtfmt-:ShowTokenMap
 
-Now suppose you wish to continue typing blue text, but would like the text you are about to type to have the bold and italic attributes as well. Assuming you are in normal mode, hit \a to bring up the familiar prompt. (Note that \a differs from \i in that the former will insert the Txtfmt token(s) *after* the cursor location instead of before it.) Now enter the following at the prompt:
+Now suppose you wish to continue typing blue text, but would like the text you are about to type to have the bold and italic attributes as well. Assuming you are in normal mode, hit \a to bring up the familiar prompt. (Note that \a differs from \i in that the former will insert the Txtfmt token(s) *after* the cursor location instead of before it. Using \A instead of \a would insert the token at the end of the line.)
+Enter the following at the prompt:
     fbi
 
-The text you type after hitting <Enter> will be blue, bold-italic. Notice that it wasn't necessary to do anything special to ensure that the bold-italic text would also be blue. It is blue because the effects of the "blue" foreground color token you entered earlier are not affected in any way by the introduction of a format token. This behavior is a direct consequence of the orthogonality of Txtfmt's various token types. A format token supersedes the preceding format token, but has no effect upon any preceding color regions. Similarly, a foreground color token supersedes the preceding foreground color token, but has no effect upon any preceding format or background color regions.
+Now type some blue, bold-italic text. Notice that it wasn't necessary to do anything special to ensure that the bold-italic text would also be blue. It is blue because the effects of the "blue" foreground color token you entered earlier have not been canceled (either by the "no color" token (c-) or some other fg color token).
 
-Important Note: The fact that format/color tokens "supersede" preceding tokens of the same type means that the "no format"/"no color" tokens are required only when you wish to turn off format or colors completely for subsequent text. To change from one format to another format, or from one color to another color, simply insert the token for the new region.
+Tip: Txtfmt tokens "supersede" preceding tokens of the same type; thus, the "no format" / "no color" tokens are required only when you wish to return to default highlighting. To change from one format to another format, or from one color to another color, simply insert the token for the new region.
 
-To verify that we can supersede the blue foreground color token entered earlier, let's enter a red foreground color token by hitting <CTRL-\><CTRL-\> once more (still in insert mode) and entering the following at the prompt:
+To verify that we can supersede the blue foreground color token entered earlier, let's enter a red foreground color token by hitting <CTRL-\><CTRL-\> once more (assuming you're still in insert mode) and entering the following at the prompt:
     cr
 
-Observe that the text you type after hitting <Enter> still possesses the bold-italic attribute, though its color is red.
+Now type some red bold-italic text.
 Note: You may have noticed that I used the convenient single letter abbreviation for "red". I will use such abbreviations exclusively for the remainder of the tutorial.
 
-Up until now, you have been applying colors only to text; i.e., you have been working exclusively with foreground colors. Txtfmt 2.0 introduced support for background colors as well. For performance reasons, the default configuration enables only 4 background colors: red, green, blue and yellow. It is quite easy, however, to tailor the set of colors enabled via independent foreground and background color mask options.
+Up until now, you have been applying colors only to text; i.e., you have been working exclusively with foreground colors. Txtfmt 2.0 introduced support for background colors as well. For performance reasons, the default configuration enables only 3 background colors: red, green and blue. It is quite easy, however, to tailor the set of colors enabled via independent foreground and background color mask options.
     :help txtfmt-'fgcolormask'
     :help txtfmt-'bgcolormask'
 
 You insert a background color token just as you would a foreground color token, except that the character introducing the color spec is 'k' instead of 'c' (since 'c' was already taken, and the word "background" contains a 'k'). You can try it out by hitting <CTRL-\><CTRL-\> (still in insert mode) and entering the following at the prompt:
     kb
 
-Hit <Enter> and type some text. As you might expect, the text you type now is red bold-italic on a blue background.
+Hit <Enter> and type some text... As you might expect, the text you type now is red bold-italic on a blue background.
 
 To revert to default format and color, hit <CTRL-\><CTRL-\> and enter the following at the prompt:
     f-,c-,k-
 
-You may recognize the "f-" as the special "no format" token we inserted earlier to end the first format region we created. Similarly, the "c-" and "k-" are the special "no fg color" and "no bg color" tokens, respectively . Note that it was not necessary to enter these three tokens with separate mappings and separate prompts. We simply concatenated the token specs together, separating them with a comma. (As of version 3.0, you can alternatively separate with whitespace.) This is an example of a format/color specification list.
+You may recognize the "f-" as the special "no format" token we inserted earlier to end the first format region we created. Similarly, the "c-" and "k-" are the special "no fg color" and "no bg color" tokens, respectively. Note that it was not necessary to enter these three tokens with separate mappings and separate prompts. We simply concatenated the token specs together, separating them with a comma. (As of version 3.0, you can alternatively separate with whitespace.) This is an example of a format/color specification list.
     :help txtfmt-fmt-clr-spec-list
 
-Note that such lists may contain any number of format/color specifications. Ordinarily, the cursor will be left at the end of the sequence of tokens inserted via such a list. You can, however, specify a different cursor position by replacing one of the commas in the list with a single dot ('.'). This is actually a very useful feature. Recall that in our previous example, we inserted the "no format" and "no color" tokens used to terminate our format/color regions only after we had finished typing all the text within them. In the common case, however, you know when you begin a region that you will eventually want to end it. Thus, you can save yourself a mapping invocation by entering both the start and end tokens at the same prompt.
+Note that such lists may contain any number of format/color specifications. Ordinarily, the cursor will be left at the end of the insert tokens. You can, however, specify a different cursor position by replacing one of the commas in the list with a single dot ('.'). This is actually a very useful feature. Recall that in our previous example, we inserted the "no format" and "no color" tokens used to terminate our format/color regions only after we had finished typing all the text within them. In the common case, however, you know when you begin a region that you will eventually want to end it. Thus, you can save yourself a mapping invocation by entering both the start and end tokens at the same prompt.
 
 To see how it works, hit <Esc> to return to normal mode, then hit \o and enter the following at the prompt:
     cr,fi.c-,f-
 
-This format/color specification list comprises both the start and end tokens for a red, italic region. The advantage of using a dot to separate the "italic" format spec from the "no color" spec is that it allows you to begin typing red, italic text immediately after hitting <Enter>. (Go ahead and type a bit of text...) If a comma had been used instead, the cursor would have ended up after the "no format" token, which means you would have had to move the cursor back 2 character positions to get it inside the region before beginning to type the formatted text.
+This format/color specification list comprises both the start and end tokens for a red, italic region. The advantage of using a dot to separate the "italic" format spec from the "no color" spec is that it allows you to begin typing red, italic text immediately after hitting <Enter>. (Go ahead and type a bit of text...) If a comma had been used instead, the cursor would have been placed *after* the "no format" token, which means you would have had to move the cursor back 2 character positions to get it inside the region before beginning to type the formatted text.
 
 Now suppose after typing some red, italic text, you decide that green, underline would have been a better choice. The change is accomplished fairly easily, and will give us an opportunity to introduce the "jump-to-token" mappings...
 
@@ -283,11 +283,12 @@ This is the "substitute" variant of the insert-token command. The numeric argume
     fu,cg
 
 Upon hitting <Enter>, you should observe that the red, italic text has changed to green, underline.
+Important Note: This example was intended only to demonstrate the use of the \s manual map. Auto maps provide a less tedious way to accomplish this sort of highlighting change.
 
 You may have noticed a similarity between several of the normal mode insert-token mappings used above and the native Vim normal mode commands for entering insert mode. This similarity was not by chance, but by design. In addition to the \i, \a, \o, and \s commands that were demonstrated above, Txtfmt also provides the following:
     \I, \O, \A
 
-Although all these commands are described in the help, a regular Vim user can easily intuit where they will insert the Txtfmt tokens relative to the cursor, by analogy with the corresponding enter insert mode commands.
+Although all these commands are described in the help, a regular Vim user can easily intuit where they will insert the Txtfmt tokens relative to the cursor, by analogy with the corresponding Vim commands.
 
 Also note that if you insert a 'v' between the backslash and the subsequent character (e.g., \vI), Txtfmt will exit insert mode after inserting the Txtfmt tokens. This is useful when you are simply highlighting existing text.
 
@@ -313,9 +314,9 @@ To accomplish the desired highlighting with an operator-pending auto map, simply
 	\h
 Vim is now waiting for you to execute a motion to define the region you wish to operate on. Hit e to jump to the end of the current word and bring up the Txtfmt prompt. At the prompt, enter the following:
 	fu-i,cg,kr
-Notice that the word at cursor is now blue bold-underline, and the containing region is unchanged.
+Notice that the word at cursor is now green bold-underline with red background, and the containing region is unchanged.
 
-The fmt/clr spec you just entered used "additive mode" to add underline and subtract italic. An additive mode spec uses `-' to "subtract", or remove, specific attributes. Although an explicit `+' can be used to "add" fmt attributes, it is generally unnecessary, since format attributes are added by default. The following examples should give the idea:
+The fmt spec you just entered used "additive mode" to add underline and subtract italic. An additive mode spec uses `-' to "subtract", or remove, specific attributes. Although an explicit `+' can be used to "add" fmt attributes, it is generally unnecessary, since format attributes are added by default. The following examples should give the idea:
 	fbi        add bold and italic
 	f+bi       same as above (leading `+' is optional)
 	fbi-u      add bold and italic / remove underline
@@ -324,19 +325,19 @@ The fmt/clr spec you just entered used "additive mode" to add underline and subt
 	f-bi       remove bold and italic
 	f-         clear all format attributes
 
-Note: You might have been tempted to think of `f-' as a degenerate additive mode spec that removes nothing (i.e., as a NOP); however, this would have been too confusing for legacy users accustomed to thinking of a `-' by itself as "clear all" formats/colors.
+Note: You might have been tempted to think of `f-' as a degenerate additive mode spec that removes nothing (i.e., as a NOOP); however, this would have been too confusing for legacy users accustomed to thinking of a `-' by itself as "clear all" formats/colors.
 
-Tip: Additive mode is particularly useful when you want to add certain attributes to an entire region, without affecting any existing attributes. Imagine you had a paragraph with lots of words highlighted differently, and you wished to italicize the entire paragraph (without otherwise changing the individual word highlighting). With manual maps, you would have to visit each of the highlighted words and replace the token before it with a new token containing the original attribute(s) *and* italic. In most cases, you'd also need to replace a token *after* the word as well. This would be rather tedious. But with additive mode, you can simply select the entire paragraph (or move over it with an operator-pending map) and specify...
+Tip: Additive mode is particularly useful when you want to add certain attributes to an entire region, without affecting any existing attributes. Imagine you had a paragraph with lots of words highlighted differently, and you wished to italicize the entire paragraph (without otherwise changing the individual word highlighting). With manual maps, you would have to visit each of the highlighted words and replace the token before it with a new token containing the original attribute(s) *and* italic. In most cases, you'd also need to replace a token *after* the word as well. This could be extremely tedious. But with additive mode, you can simply select the entire paragraph (or move over it with an operator-pending map) and specify...
 	fi
-...and Txtfmt will do everything necessary to italicize the paragraph without affecting existing highlighting.
+...and Txtfmt will do everything necessary to italicize the paragraph without affecting any existing highlighting.
 
 But what if, instead of adding to existing sub-regions, you simply want to wipe out the existing highlighting and replace it with something new? In such cases, you should use "prescriptive" or "equals" mode, which is specified by prepending an equals sign to the format spec: E.g.,
 	f=i       (set region to italic)
     f=ubi     (set region to underline-bold-italic)
-	f=        (set to "no formats" - i.e., remove all fmt attributes)
+	f=        (set to "no formats" - i.e., same as f-)
 Caveat: You cannot mix additive and equals mode within a single format spec: i.e., the following is an error (and wouldn't really make much sense):
 	f=i-b     (ERROR)
-Note: Additive and equals modes are for formats only. Since colors support *only* equals mode, no special characters are required for disambiguation: thus, `+' is not permitted in fg/bg color specs; `=' is permitted, but only because some users may like some separation between the 'c' or 'k' and the following color name, and whitespace is illegal there.
+Note: Additive and equals modes are for formats only. Since colors support *only* equals mode, no special characters are required for disambiguation: thus, `+' is not permitted in fg/bg color specs; `=' is permitted, but only because some users may like some separation between the 'c' or 'k' and the following color name (and whitespace is illegal there).
 Examples:
 	cb      fg color blue
 	cblue   same as above
@@ -349,14 +350,43 @@ Note: Earlier versions of Txtfmt required a `,' between the components of a fmt/
 	fbi cb
 Rationale: Intended to help users with keyboards whose `,' key is not conveniently located.
 
+*** Selective Highlighting (!!! New in Version 3.0 !!!) ***
+Now suppose you'd like to change the highlighting of some, but not all, of your bold-italic regions: specifically, text that is underlined and/or has background color should be left as-is, but all other text containing both bold and italic attributes should be un-italicized and colored green. Txtfmt's "selector patterns" make this task quite simple. From normal mode, hit the following key sequence to go to the first line and initiate Txtfmt operator mode highlighting (alternatively, you could visually select the entire buffer, and hit \h):
+	gg\h
+
+Txtfmt is awaiting a motion: hit G to operate on the entire buffer, and enter the following at the resulting Txtfmt prompt:
+	f-i cg / k- && f&bi && !f|u
+
+Note: To avoid confusion, I used whitespace liberally, and used the long form of the logical operator `&&' (which can also be written as `&'). The following spec is unambiguous, and equivalent to the one above:
+	f-i,cg/k-&f&bi&!f|u
+
+After you have executed this highlighting spec, notice how only the targeted bold-italic regions were affected. The red-bold-italic on blue background, for instance, was untouched because its background color prevented the `k-' in the selector pattern from matching. Similarly, the bold-italic-underline region was unaffected because of the `!f|u' in the selector pattern. The following 3 primitives can be used to match format attributes in a selector expression:
+	f&<attrs>
+		Contains ALL OF the listed attributes
+	f|<attrs>
+		Contains ANY OF the listed attributes
+	f=<attrs>
+		Contains EXACTLY the listed attributes (no more, no less)
+	Note: The operator following `f' is optional, with `=' being the default, so f<attrs> and f=<attrs> are equivalent.
+
+Note: You may have noticed that I made that selector pattern a bit more complicated than it needed to be. In particular, I used `f&bi' to select all regions containing bold and italic (including those containing additional attributes, such as underline), then used `!f|u' to exclude regions containing the underline attribute. If I really wanted to operate only on regions that were exactly bold-italic, I could have used the following, simpler selector:
+	f-i cg / k- && f=bi
+Note that in this case, I could alternatively have written the action spec as `f=b cg', since removing italic from a bold-italic region is the same as setting the region to bold.
+
+Note that selector expressions are true boolean expressions, which can be as simple or as complex as you like: use `!', `(' and `)' to build complex expressions: e.g.,
+	!(f&bi || cb) && (f|ui && k-)
+
+
 *** Smart Text Deletion Maps ***
-Although Txtfmt tokens are invisible, they are characters in your buffer like any other: deleting text can delete tokens, which in turn, can affect the highlighting of text beyond the deletion. To see how this could be problematic, consider the following line of bold text (Txtfmt tokens shown as <fb> and <f->):
+Although Txtfmt tokens are invisible, they are characters in your buffer like any other: deleting text can delete tokens, which in turn, can affect the highlighting of text beyond the deletion. To see how this could be problematic, position your cursor at the start of the buffer by hitting gg0. At this point you should be sitting on an underline-bold-italic format token. If you wish to verify this, hit the following map in normal mode:
+	\ga
+	:help txtfmt-get-tok-info
 
-<fb>This is some bold text.<f->
+Because you wish to delete the first two words, enter the following in normal mode:
+	d2w
+Notice how the underline-bold-italic highlighting has been lost! The problem is that the command that deletes the first two words has also deleted the Txtfmt format token. In other words, the deletion had a visible effect on the text beyond the deletion. This is probably not what you wanted. To solve this problem, Txtfmt also provides a "smart delete" command, which is aware of Txtfmt highlighting. Like the auto maps highlighting commands, it can be used in both visual and operator-pending modes. Its default mapping is \d. To use it with the previous example, you could simply have hit \d2w instead of d2w. Try it now (after hitting 'u' to undo the problematic delete, and '0' to be sure you're at the start of the line). Alternatively, you could have highlighted the first two words, then hit \d. The difference between Vim's and Txtfmt's delete commands is that, whereas Vim makes no distinction between text and Txtfmt tokens, Txtfmt's delete assumes your objective is to delete text only, and will do whatever is necessary (possibly inserting new tokens), to preserve the highlighting of text beyond the deletion.
 
-You hit 0 in normal mode to go to the start of the line, then hit d2w in normal mode to delete the first two words. But note that this also deletes the <fb> token, with the result that the remaining portion of the line is no longer bold! In other words, the deletion had a visible effect on the text beyond the deletion. This is probably not what you wanted. To solve this problem, Txtfmt also provides a smart delete command, which is aware of Txtfmt highlighting. Like the auto maps highlighting commands, it can be used in both visual and operator-pending modes. Its default mapping is \d. To use it with the previous example, you could simply have hit \d2w instead of d2w. Alternatively, you could have highlighted the first two words, then hit \d. The difference between Vim's and Txtfmt's delete commands is that, whereas Vim makes no distinction between text and Txtfmt tokens, Txtfmt's delete assumes your objective is to delete text only, and will do whatever is necessary (possibly inserting new tokens), to preserve the highlighting of text beyond the deletion.
-
-This concludes the tutorial. No attempt was made to discuss all of the many Txtfmt options. Detailed information on all options may be found in the Txtfmt help file.
+This concludes the tutorial. No attempt was made to discuss all of the many Txtfmt commands and options. More detailed information may be found in the Txtfmt help file.
     :help txtfmt
 
     vim:ts=4:sw=4:tw=0:linebreak
