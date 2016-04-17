@@ -3601,7 +3601,7 @@ fu! s:Vmap_apply_changes(toks, opt)
 			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
-			exe 'normal! '.(tok.action == 'r' ? 's' : tok.action)."\<C-R>\<C-R>=l:tokstr\<CR>"
+			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-O>=l:tokstr\<CR>"
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
