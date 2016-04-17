@@ -2195,6 +2195,8 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				" Return to default.
 				let clr_num = 0
 			else
+				" Strip optional `=' after c/k.
+				let spec = substitute(spec, '^=', '', '')
 				let clr_num = s:Lookup_clr_namepat(t, spec)
 				if clr_num <= 0
 					if clr_num == 0
