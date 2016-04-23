@@ -1,4 +1,4 @@
-USER FEEDBACK NEEDED: I would greatly appreciate feedback email, especially on the new "auto-maps" feature and associated "selector patterns" (currently in "Beta" testing):
+USER FEEDBACK NEEDED: I would greatly appreciate comments and suggestions, especially on the new "auto-maps" feature and associated "selector patterns" (currently in "Beta" testing):
 brettstahlman AT gmail DOT com
 
 === !!! IMPORTANT NOTE TO NEW USERS !!! ===
@@ -8,33 +8,30 @@ The Txtfmt help file is large; for a quick (and gentle) introduction, please see
 http://www.txtfmt.webs.com
 
 === MOTIVATION ===
-Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are using Vim to edit text that doesn't fall into any particular language category: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
+Vim's syntax highlighting is very useful for editing files in a particular programming language such as C or Perl. But what if you are using Vim to edit plain text: e.g., personal journal entries, miscellaneous notes or generic documents? In such cases, Vim's statically defined syntax regions are not very useful. What is really needed is a word processor's ability to apply highlighting to an arbitrary selection of text. 
 
 === OVERVIEW ===
-Txtfmt (The Vim Highlighter) is a combination syntax/filetype plugin that allows you to highlight plain text in Vim. The highlighting mechanism uses invisible tokens that are inserted into a Txtfmt buffer with the aid of easy to use mappings provided by the filetype plugin. The plugin supports up to 8 configurable foreground colors, up to 8 configurable background colors, and all combinations of the following formatting attributes: bold, underline, italic, standout, reverse and undercurl.
+Txtfmt (The Vim Highlighter) is a combination syntax/filetype plugin that allows you to highlight plain text in Vim. The highlighting mechanism uses invisible tokens that are inserted into a Txtfmt buffer with the aid of intuitive mappings provided by the filetype plugin. The plugin supports up to 8 configurable foreground colors, up to 8 configurable background colors, and all combinations of the following formatting attributes: bold, underline, italic, standout, reverse and undercurl.
 Note: Standout, reverse and undercurl are supported only in certain configurations. For details...
     :help txtfmt-formats
 
-Nearly everything in this plugin is configurable, with defaults that should work for most users "right out of the box". The following is a *partial* list of things that can be configured:
+Nearly everything in this plugin is configurable, with defaults that should work for most users "out of the box". The following is a *partial* list of things that can be configured:
     mappings
     colors
     range of character codes used as (hidden) highlighting tokens
 
 Everything is documented in an extensive Vim help file. Additionally, this page contains usage examples and a "Quick-Start Tutorial", designed to help you get up and running quickly with Txtfmt.
 
-=== AUTO MAPS ===
-!!! NEW FEATURE (version 3.0 beta) !!!
-Since the initial release of Txtfmt, a significant number of users have requested the ability to highlight visually-selected regions. Accordingly, I have added several new types of mappings for highlighting and deleting existing regions of text. These mappings are collectively known as "auto maps" (with the original mappings now known as "manual maps").
-
-Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started. However, users who prefer to work with the latest stable release, and don't require the convenience of auto maps, may download version 2.4.
-
 === MANUAL VS AUTO MAPS ===
+!!!! NEW FEATURE (version 3.0 beta) !!!!
 Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new highlighting token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. To simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Curently, auto maps fall into 2 basic categories:
 
 1. Visual maps: operate on the visually selected text
 2. Operator-pending maps: operate on the text moved over (or included in a "text object")
 
 Note: I'm also planning to add linewise normal mode maps, which would operate on a range of lines, but the same basic functionality can be achieved today with operator-pending maps.
+
+Documentation Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the USAGE EXAMPLE and QUICK-START TUTORIAL sections in this document should be more than sufficient for most users to get started. However, users who prefer to work with the latest stable release, and don't require the convenience of auto maps, may still download version 2.4.
 
 The next few sections give usage examples of visual/operator auto maps and manual maps...
 Note: If you wish to try the usage examples now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location and do...
@@ -70,13 +67,13 @@ Note: Because you used "fui" instead of "f=ui", the word you highlighted in the 
 === SELECTIVE HIGHLIGHTING ===
 !!!! NEW FEATURE (version 3.0 beta) !!!!
 
-Txtfmt now allows you to target only specific sub-regions within the visually-selected or operated-on region. To apply highlighting selectively, simply append a `/' to the highlighting spec, followed by a "selector pattern expression": i.e.,
-    <highlighting-spec-list> / <selector-pattern>
+Txtfmt now allows you to target only specific sub-regions within the visually-selected or operated-on text. To apply highlighting selectively, simply append a `/' to the highlighting spec, followed by a "selector pattern expression": i.e.,
+    <highlighting-spec> / <selector-pattern>
 The simplest way to explain selector patterns is with examples...
 
     fu/cr
         Action: Add underline attribute
-        Applies To: Text with red foreground
+        Applies To: Red text
 
     cb/cr||f&bi
         Action: Make foreground color blue
@@ -114,7 +111,7 @@ Mnemonic: color green
 Now, the text you type is green.
 
 While typing green text, you wish to emphasize a phrase by making it bold-italic. You execute another mapping (e.g., CTRL-\ CTRL-\ in insert mode) and enter "fbi" or "fib" at the prompt.
-(mnemonic: format bold italic)
+Mnemonic: format bold italic
 Now, the text you type is green bold-italic.
 Note: Inserting the bold-italic token did not affect the text color, because the color and format regions are completely "orthogonal".
 
