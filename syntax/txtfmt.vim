@@ -209,6 +209,22 @@ fu! s:Define_syntax()
 	" buffer-specific, but there is a buffer-specific version of txtfmtColor{}
 	let cui = b:txtfmt_color_uniq_idx
 
+	" Determine whether to use gui or cterm definitions.
+	" Neovim Workaround: As part of a poorly-documented feature that provides
+	" 24-bit 'true color' in terminals that support it, Neovim requires gui
+	" definitions when $NVIM_TUI_ENABLE_TRUE_COLOR is set; highlighting in
+	" neovim fails silently if this env var is set in terminals that don't
+	" support true color. (Apparently, neovim does nothing to verify terminal
+	" support.) At any rate, because of this feature, simply checking
+	" has('gui_running') is no longer sufficient.
+	" Caveat: Neovim's check uses an os_getenv() wrapper that treats only
+	" empty string and missing altogether as false.
+	" TODO: Is there any performance cost to just defining both gui and cterm
+	" highlights? If not, doing so might be simpler and safer long-term.
+	let use_gui_defs = has('gui_running') || has('nvim') &&
+		\ exists('$NVIM_TUI_ENABLE_TRUE_COLOR') &&
+		\ $NVIM_TUI_ENABLE_TRUE_COLOR != ''
+	
 	" Concealment group <<<
 	" Create a concealment highlight group, to which others can link
 	" The Ignore group is a preferred group, defined in distributed
@@ -222,7 +238,7 @@ fu! s:Define_syntax()
 	" GUI, and will work for a cterm if the colorscheme has defined ctermbg
 	" for the Normal group. If the attempt fails, simply link to Ignore group,
 	" which may or may not hide text.
-	if has('gui_running')
+	if use_gui_defs
 		hi Tf_conceal guifg=bg
 	else
 		let v:errmsg = ""
@@ -299,7 +315,7 @@ fu! s:Define_syntax()
 	hi link Tf_def_tok Tf_conceal
 	" >>>
 	" Choose cterm or gui versions of color and format assignments
-	if has('gui_running')
+	if use_gui_defs
 		let eq_clr = ' guifg='
 		let eq_bgc = ' guibg='
 		let eq_fmt = ' gui='
