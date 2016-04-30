@@ -195,6 +195,89 @@ fu! s:Get_bytes_per_token()
 	return num_bytes
 endfu
 " >>>
+" Function: s:Get_smart_leading_indent_patt <<<
+fu! s:Get_smart_leading_indent_patt()
+	let sw = shiftwidth()
+	let ts = &ts
+	let sts = &sts < 0 ? sw : &sts
+	if !&expandtab
+		if sw == ts
+			" 1-to-1 correspondence between tabstop and indent
+			return '^\t\+'
+		elseif sw < ts
+			" An indent is less than a tabstop
+			" !!!!! UNDER CONSTRUCTION !!!!!
+			if ts % sw == 0
+				" Note: A tab represents whole number of indents.
+				return '^\t\+\%( \{' . sw . '}\)\{1,' . (ts / sw - 1) . '}'
+			elseif ts % sw != 0
+				" Assumption: ts is not multiple of sw
+				let p = '\%( \{' . sw . '}\)\{1,' . (ts / sw - 1) . '}'
+				let p .= '\|\t\%( \{' . (ts % sw) . '}'
+				return '\%(' . p . '\)\+'
+			endif
+		elseif ts < sw
+			" A shift is more than a tabstop
+			if sw % ts == 0
+				" Note: A shift represents a whole number of tabs.
+				return '^\%(\t\{<sw/ts>}\)\+'
+			elseif sw % ts != 0
+				" Assumption: sw is not multiple of ts
+				" Illustrative Examples: t=tab, s=spc, very magic
+				" sw=8 ts=3 (N=2,M=2)
+				" t{2}s{2}|t{5}s{1}|t{8}s{0}|
+				" t{10}s{2}|t{13}{1}|t{16}{0}|
+				" t{18}s{2}|...
+				" sw=9 ts=2 (N=4,M=1)
+				" t{4}s{1}|t{9}s{0}|
+				" t{13}s{1}|t{18}s{0}|
+				" t{22}s{1}|...
+				" sw=7 ts=5 (N=1,M=2)
+				" t{1}s{2}|t{2}s{4}|t{4}s{1}|t{5}s{3}|t{7}s{0}|
+				" t{8}s{2}|t{9}s{4}|t{11}s{1}|t{12}s{3}|t{14}s{0}|
+				" t{15}s{2}|...
+				" Question: How to patternize that sequence: i.e., 1, 1+2*sw, 1+3*sw
+				" t{<N>}(t{<sw>})*
+				let [N, M] = [sw / ts, sw % ts]
+				let [n, m] = [N, M]
+				let p = ''
+				while 1
+					" TODO: Pick up here...
+					let p .= '\t\{' . n . '}\%(\t\{' . sw . '}\)* \{' . m . '}'
+					" Prepare for next iteration.
+					let n += N
+					let m += M
+					if m >= ts
+						" Free spaces add up to another tab.
+						let n += 1
+						let m = m % ts
+						if m == 0
+							break
+						endif
+						let p .= '\|'
+					endif
+				endwhile
+
+				return '\%(\t\{' . (sw / ts) . '}\%( \{' . (sw % ts) . '}\)'
+			endif
+		endif
+	else
+		" 'expandtab'
+		" Multiple of 'sw' spaces
+		" TODO: Should we handle tabs specially?
+		return '\%( \{' . sw . '}\)\+'
+	endif
+endfu
+" >>>
+" Function: s:Configure_leading_indent <<<
+fu! s:Hide_leading_indent_maybe()
+	let re_li = s:Get_smart_leading_indent_patt()
+
+	" TODO: !!!!!!!!!!!!!!!! UNDER CONSTRUCTION !!!!!!!!!!!!!!!!!!
+	exe 'syn match Tf_leading_indent /' . re_li . '/' contained containedin='Tf*'
+	hi Tf_leading_indent guifg=red gui=none ctermfg=red cterm=none
+endfu
+" >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Define a convenience flag that indicates whether background colors are
