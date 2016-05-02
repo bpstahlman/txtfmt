@@ -203,25 +203,29 @@ fu! s:Get_smart_leading_indent_patt()
 		if sw == ts
 			" 1-to-1 correspondence between tabstop and indent
 			return '^\t\+'
-		elseif sw < ts
-			" An indent is less than a tabstop
-			" !!!!! UNDER CONSTRUCTION !!!!!
+		else
 			if ts % sw == 0
-				" Note: A tab represents whole number of indents.
-				return '^\t\+\%( \{' . sw . '}\)\{1,' . (ts / sw - 1) . '}'
+				if sw < ts
+					" Note: A tab represents whole number of indents.
+					return '^\t\+\%( \{' . sw . '}\)\{1,' . (ts / sw - 1) . '}'
+				else
+					" Note: A shift represents a whole number of tabs.
+					return '^\%(\t\{<sw/ts>}\)\+'
+				endif
 			else
-				" Tab comprises whole number of indents plus some leftover
-				" spaces.
 				" Illustrative Examples: t=tab, s=spc, very magic
+				" ===============
+				" CASE 1: ts > sw
+				" ===============
 				" sw=3 ts=8
-				" t{0}s{3}|t{0}s{6}|t{1}s{1}|t{1}s{4}|t{1}s{7}|t{2}s{2}|t{2}s{5}|t{3}s{0}
-				" t{3}s{3}|t{3}s{6}|t{4}s{1}|t{4}s{4}|t{4}s{7}|t{5}s{2}|t{5}s{5}|t{6}s{0}
+				" t{0}s{3}|t{0}s{6}|t{1}s{1}|t{1}s{4}|t{1}s{7}|t{2}s{2}|t{2}s{5}|t{3}s{0}|
+				" t{3}s{3}|t{3}s{6}|t{4}s{1}|t{4}s{4}|t{4}s{7}|t{5}s{2}|t{5}s{5}|t{6}s{0}|
 				" sw=2 ts=9
-				" t{0}s{2}|t{0}s{4}|t{0}s{6}|t{0}s{8}|t{1}s{1}|t{1}s{3}|t{1}s{5}|t{1}s{7}|t{2}s{0}
-				" t{2}s{2}|t{2}s{4}|t{2}s{6}|t{2}s{8}|t{3}s{1}|t{3}s{3}|t{3}s{5}|t{3}s{7}|t{4}s{0}
+				" t{0}s{2}|t{0}s{4}|t{0}s{6}|t{0}s{8}|t{1}s{1}|t{1}s{3}|t{1}s{5}|t{1}s{7}|t{2}s{0}|
+				" t{2}s{2}|t{2}s{4}|t{2}s{6}|t{2}s{8}|t{3}s{1}|t{3}s{3}|t{3}s{5}|t{3}s{7}|t{4}s{0}|
 				" sw=4 ts=6
-				" t{0}s{4}|t{1}s{2}|t{2}s{0}
-				" t{2}s{4}|t{3}s{2}|t{4}s{0}
+				" t{0}s{4}|t{1}s{2}|t{2}s{0}|
+				" t{2}s{4}|t{3}s{2}|t{4}s{0}|
 				" Pattern: Works conceptually like nested loop, with inner
 				" loop (over i) generating N terms of the following form...
 				"     TAB{nt[i] + j * MOD}SPC{ns[i]}
@@ -237,67 +241,41 @@ fu! s:Get_smart_leading_indent_patt()
 				" I will effectively have determined LCM (# of tabs on final
 				" iteration's term), and can break out of the loop and perform
 				" the appropriate substitutions.
-				let [t, s, p] = [0, sw, '']
-				while 1
-					let p .= '\t\{' . t . '}\%(\t\{MOD}\)* \{' . s . '}'
-					" Prepare for next iteration.
-					let s += sw
-					if s >= ts
-						" Convert ts spaces to tab plus remainder of spaces.
-						let t += 1
-						let s -= ts
-						if s == 0
-							break
-						endif
-						let p .= '\|'
-					endif
-				endwhile
-				return substitute(p, 'MOD', t, '')
-			endif
-		elseif ts < sw
-			" A shift is more than a tabstop
-			if sw % ts == 0
-				" Note: A shift represents a whole number of tabs.
-				return '^\%(\t\{<sw/ts>}\)\+'
-			elseif sw % ts != 0
-				" Assumption: sw is not multiple of ts
-				" Illustrative Examples: t=tab, s=spc, very magic
-				" sw=8 ts=3 (N=2,M=2)
+				" ===============
+				" CASE 2: ts < sw
+				" ===============
+				" sw=8 ts=3
 				" t{2}s{2} |t{5}s{1}|t{8}s{0}|
 				" t{10}s{2}|t{13}{1}|t{16}{0}|
 				" t{18}s{2}|...
-				" sw=9 ts=2 (N=4,M=1)
+				" sw=9 ts=2
 				" t{4}s{1} |t{9}s{0} |
 				" t{13}s{1}|t{18}s{0}|
 				" t{22}s{1}|...
-				" sw=7 ts=5 (N=1,M=2)
+				" sw=7 ts=5
 				" t{1}s{2} |t{2}s{4}|t{4}s{1} |t{5}s{3} |t{7}s{0} |
 				" t{8}s{2} |t{9}s{4}|t{11}s{1}|t{12}s{3}|t{14}s{0}|
 				" t{15}s{2}|...
-				" TODO: Do one where LCM is smaller than sw * ts.
-				" Question: How to patternize that sequence: i.e., 1, 1+2*sw, 1+3*sw
-				" t{<N>}(t{<sw>})*
-				let [N, M] = [sw / ts, sw % ts]
-				let [t, s] = [N, M]
-				let p = ''
+				" sw=6 ts=4
+				" t{1}s{2}|t{3}s{0}
+				" t{4}s{2}|t{6}s{0}
+				" IMPORTANT NOTE: The formulas for the ts < sw case are the
+				" mirror image of those for the preceding case (ts > sw):
+				" i.e., just swap sw and ts. But since we use only MOD, whose
+				" value is equal to the # of loop iterations (which also
+				" happens to be the number of tabs in final term for both
+				" cases), the logic for both cases can be identical.
+				let [es, t, s, p] = [sw, es / ts, es % ts, '']
 				while 1
-					" TODO: Pick up here...
 					let p .= '\t\{' . t . '}\%(\t\{MOD}\)* \{' . s . '}'
 					" Prepare for next iteration.
-					let t += N
-					let s += M
-					if s >= ts
-						" Free spaces add up to another tab.
-						let t += 1
-						let s -= ts
-						if s == 0
-							break
-						endif
-						let p .= '\|'
+					let es += sw
+					let [t, s] = [es / ts, es % ts]
+					if s == 0
+						break
 					endif
+					let p .= '\|'
 				endwhile
-
-				" WRONG!!!! Substitute for MOD.
 				return substitute(p, 'MOD', t, '')
 			endif
 		endif
