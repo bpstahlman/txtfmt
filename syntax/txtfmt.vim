@@ -204,16 +204,21 @@ fu! s:Get_smart_leading_indent_patt()
 			" 1-to-1 correspondence between tabstop and indent
 			return '^\t\+'
 		else
-			if ts % sw == 0
+			if ts % sw == 0 || sw % ts == 0
 				if sw < ts
 					" Note: A tab represents whole number of indents.
 					return '^\t\+\%( \{' . sw . '}\)\{1,' . (ts / sw - 1) . '}'
 				else
 					" Note: A shift represents a whole number of tabs.
-					return '^\%(\t\{<sw/ts>}\)\+'
+					return '^\%(\t\{' . (sw / ts) . '}\)\+'
 				endif
 			else
-				" Illustrative Examples: t=tab, s=spc, very magic
+				" Neither ts nor sw multiple of the other
+				" Note: The following pattern examples are 'very magic', with
+				" the following symbol meanings:
+				" t=TAB, s=SPC, nt=# of tabs
+				" N=# of pattern terms before # of spaces repeats (i.e., the
+				" length of the 'inner loop' discussed below)
 				" ===============
 				" CASE 1: ts > sw
 				" ===============
@@ -223,21 +228,23 @@ fu! s:Get_smart_leading_indent_patt()
 				" sw=2 ts=9
 				" t{0}s{2}|t{0}s{4}|t{0}s{6}|t{0}s{8}|t{1}s{1}|t{1}s{3}|t{1}s{5}|t{1}s{7}|t{2}s{0}|
 				" t{2}s{2}|t{2}s{4}|t{2}s{6}|t{2}s{8}|t{3}s{1}|t{3}s{3}|t{3}s{5}|t{3}s{7}|t{4}s{0}|
+				" t{4}s{2}|t{4}s{4}|t{4}s{6}|t{4}s{8}|t{5}s{1}|t{5}s{3}|t{5}s{5}|t{5}s{7}|t{6}s{0}|
 				" sw=4 ts=6
 				" t{0}s{4}|t{1}s{2}|t{2}s{0}|
 				" t{2}s{4}|t{3}s{2}|t{4}s{0}|
 				" Pattern: Works conceptually like nested loop, with inner
-				" loop (over i) generating N terms of the following form...
-				"     TAB{nt[i] + j * MOD}SPC{ns[i]}
-				" ...and outer loop (over j) never terminating. In practice,
-				" we'll factor the (j * MOD) out of the tab repeat count so
+				" loop (over j) generating N pattern terms of the following
+				" form...
+				"     TAB{nt[j] + i * MOD}SPC{ns[j]}
+				" ...and outer loop (over i) never terminating. In practice,
+				" we'll factor the (i * MOD) out of the tab repeat count so
 				" that a regex repeat can be used in lieu of infinite loop.
 				" LCM = lcm(sw, ts) = nt[N-1] * ts
 				" MOD = LCM / ts = nt[N-1]
 				" N = LCM / sw = nt[N-1] * ts / sw
 				" Implementation Note: Since Vim has no LCM function, I won't
 				" attempt to calculate MOD and N analytically, but will embed
-				" placeholders in the generated pattern. When ns[i] becomes 0,
+				" placeholders in the generated pattern. When ns[j] becomes 0,
 				" I will effectively have determined LCM (# of tabs on final
 				" iteration's term), and can break out of the loop and perform
 				" the appropriate substitutions.
@@ -245,55 +252,121 @@ fu! s:Get_smart_leading_indent_patt()
 				" CASE 2: ts < sw
 				" ===============
 				" sw=8 ts=3
-				" t{2}s{2} |t{5}s{1}|t{8}s{0}|
-				" t{10}s{2}|t{13}{1}|t{16}{0}|
+				" t{2} s{2}|t{5} s{1}|t{8} s{0}|
+				" t{10}s{2}|t{13}s{1}|t{16}s{0}|
 				" t{18}s{2}|...
 				" sw=9 ts=2
-				" t{4}s{1} |t{9}s{0} |
+				" t{4} s{1}|t{9} s{0}|
 				" t{13}s{1}|t{18}s{0}|
 				" t{22}s{1}|...
 				" sw=7 ts=5
-				" t{1}s{2} |t{2}s{4}|t{4}s{1} |t{5}s{3} |t{7}s{0} |
-				" t{8}s{2} |t{9}s{4}|t{11}s{1}|t{12}s{3}|t{14}s{0}|
+				" t{1} s{2}|t{2}s{4}|t{4} s{1}|t{5} s{3}|t{7} s{0}|
+				" t{8} s{2}|t{9}s{4}|t{11}s{1}|t{12}s{3}|t{14}s{0}|
 				" t{15}s{2}|...
 				" sw=6 ts=4
 				" t{1}s{2}|t{3}s{0}
 				" t{4}s{2}|t{6}s{0}
-				" IMPORTANT NOTE: The formulas for the ts < sw case are the
-				" mirror image of those for the preceding case (ts > sw):
-				" i.e., just swap sw and ts. But since we use only MOD, whose
-				" value is equal to the # of loop iterations (which also
-				" happens to be the number of tabs in final term for both
-				" cases), the logic for both cases can be identical.
-				let [es, t, s, p] = [sw, es / ts, es % ts, '']
+
+				" Loop Logic: Increase by single indent level each iteration,
+				" calculating for each level the # of tabs and spaces. Break
+				" out of loop when # of spaces reaches modulo (for some
+				" definition of the term 'modulo' - details to follow).
+				" Combining Cases: Generating term-specific # of tabs/spaces
+				" works the same for both cases (i.e., ts < sw and ts > sw);
+				" the 2 cases' formulas for LCM, MOD and N are the mirror
+				" image of each other (i.e., sw and ts swapped). But since we
+				" use only MOD, whose value is equal to the # of loop
+				" iterations (which also happens to be the number of tabs in
+				" final term for both cases), the logic for both cases can be
+				" nearly identical.
+				let [es, nt, ns, p, MOD] = [sw, sw / ts, sw % ts, '', 0]
+				" Caveat: Generate the pattern in reverse: i.e., earlier
+				" (shorter) terms must come later to prevent a shorter match
+				" taking precedence over a longer. But there's a complication:
+				" read on...
+				" Loop Termination Note: Conceptually, there's nothing new
+				" being generated after # of spaces (ns) first becomes 0 (end
+				" of the first row in the examples above). Unfortunately,
+				" because of the way regex engines work, we must include
+				" additional terms for both sw < ts and sw > ts cases. The
+				" difficulty stems from the fact that Vim's regex engine (like
+				" many) prefers an earlier alternative, even when it's shorter
+				" than a later one. Although we take care to order the
+				" pattern terms descending with respect to effective # of
+				" spaces, there is a peculiarity w.r.t. the final s{0} term in
+				" the earlier examples: namely, because it does not require
+				" the presence of spaces after the tab(s), it will match
+				" instead of a *longer* match with a greater # of tabs, or
+				" even the same # of tabs but more spaces. The problem is that
+				" there's no simple way to instruct the regex engine to prefer
+				" a match with a higher MOD value when its MOD==0 term comes
+				" later in the alternation. Including nearly an extra row of
+				" terms in the alternation (i.e., 2 * MOD - 1 terms) fixes
+				" this issue at the expense of nearly doubling the # of
+				" alternatives.
+				" Optimization: In the sw < ts case, we use a negative
+				" lookahead preventing match when there are additional tabs,
+				" which allows us to dispense with the extra terms beyond
+				" nt==MOD.
+				" TODO: I'm not convinced this optimization is correct:
+				" Problem Case: ts=8 sw=3 Note that a line beginning with
+				" exactly t{4}s{0} would not match t{3}s{0}, though we'd
+				" probably want it to. Keep in mind that if user were
+				" indenting properly (not by hitting TAB), t{4}s{0} would
+				" never happen; it might happen, for instance, if he hit TAB
+				" once after indenting up to t{3}s{0}. In this case, I'm
+				" thinking we'd want to consider the 3 tabs as indent and the
+				" 4th one nothing.
+				" Conclusion: I'm thinking after this checkin, I need to get
+				" rid of the lookaheads and include nearly 2 full rows for
+				" both cases.
+				" Case sw < ts:
+				"   Additional Terms: nt == MOD and ns > 0
+				"   Example: (ts=8 sw=3) Prevents match of (e.g.) t{3}s{0}
+				"   before t{3}s{3}.
+				" Case sw > ts:
+				"   Additional Terms: till ns next goes to 0 (i.e., everything
+				"   up to and including penultimate term on second row in the
+				"   examples)
+				"   Example: (ts=3 sw=8) Prevents match of (e.g.) t{8}s{0}
+				"   before t{10}s{2}.
 				while 1
-					let p .= '\t\{' . t . '}\%(\t\{MOD}\)* \{' . s . '}'
-					" Prepare for next iteration.
+					let p = '\t\{' . nt . '}\%(\t\{MOD}\)* \{' . ns . '}' . p
+					" Assumption: Impossible for ns to become 0 more than once
+					" before we break out of loop.
+					if ns == 0
+						let MOD = nt
+					endif
 					let es += sw
-					let [t, s] = [es / ts, es % ts]
-					if s == 0
+					let [nt, ns] = [es / ts, es % ts]
+					" Have we reached special repeat point? (See earlier note
+					" on loop termination.)
+					if MOD && (sw < ts ? nt > MOD : ns == 0)
 						break
 					endif
-					let p .= '\|'
+					if !empty(p)
+						let p = '\|' . p
+					endif
 				endwhile
-				return substitute(p, 'MOD', t, '')
+				let p = '^\%(' . p . '\)' . (sw < ts ? '\t\@!' : '')
+				return substitute(p, 'MOD', MOD, 'g')
 			endif
 		endif
 	else
 		" 'expandtab'
 		" Multiple of 'sw' spaces
 		" TODO: Should we handle tabs specially?
-		return '\%( \{' . sw . '}\)\+'
+		return '^\%( \{' . sw . '}\)\+'
 	endif
 endfu
 " >>>
-" Function: s:Configure_leading_indent <<<
+" Function: s:Hide_leading_indent_maybe <<<
 fu! s:Hide_leading_indent_maybe()
+	" TODO: Take option 'leadingindent' into account.
 	let re_li = s:Get_smart_leading_indent_patt()
-
-	" TODO: !!!!!!!!!!!!!!!! UNDER CONSTRUCTION !!!!!!!!!!!!!!!!!!
-	exe 'syn match Tf_leading_indent /' . re_li . '/' contained containedin='Tf*'
-	hi Tf_leading_indent guifg=red gui=none ctermfg=red cterm=none
+	exe 'syn match Tf_leading_indent /' . re_li . '/ contained containedin=Tf.*'
+	" Note: No such color as 'none': simply leave it unset.
+	hi Tf_leading_indent gui=none cterm=none
 endfu
 " >>>
 " Function: s:Define_syntax() <<<
@@ -1600,6 +1673,7 @@ fu! s:Define_syntax()
 			hi link Tf_clr_etok_inner_esc Tf_conceal
 		endif
 	endif
+	call s:Hide_leading_indent_maybe()
 endfu	" >>>
 " Function: s:Define_syntax_syncing() <<<
 fu! s:Define_syntax_syncing()
