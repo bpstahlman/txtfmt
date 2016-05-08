@@ -304,36 +304,8 @@ fu! s:Get_smart_leading_indent_patt()
 				" terms in the alternation (i.e., 2 * MOD - 1 terms) fixes
 				" this issue at the expense of nearly doubling the # of
 				" alternatives.
-				" Optimization: In the sw < ts case, we use a negative
-				" lookahead preventing match when there are additional tabs,
-				" which allows us to dispense with the extra terms beyond
-				" nt==MOD.
-				" TODO: I'm not convinced this optimization is correct:
-				" Problem Case: ts=8 sw=3 Note that a line beginning with
-				" exactly t{4}s{0} would not match t{3}s{0}, though we'd
-				" probably want it to. Keep in mind that if user were
-				" indenting properly (not by hitting TAB), t{4}s{0} would
-				" never happen; it might happen, for instance, if he hit TAB
-				" once after indenting up to t{3}s{0}. In this case, I'm
-				" thinking we'd want to consider the 3 tabs as indent and the
-				" 4th one nothing.
-				" Conclusion: I'm thinking after this checkin, I need to get
-				" rid of the lookaheads and include nearly 2 full rows for
-				" both cases.
-				" Case sw < ts:
-				"   Additional Terms: nt == MOD and ns > 0
-				"   Example: (ts=8 sw=3) Prevents match of (e.g.) t{3}s{0}
-				"   before t{3}s{3}.
-				" Case sw > ts:
-				"   Additional Terms: till ns next goes to 0 (i.e., everything
-				"   up to and including penultimate term on second row in the
-				"   examples)
-				"   Example: (ts=3 sw=8) Prevents match of (e.g.) t{8}s{0}
-				"   before t{10}s{2}.
 				while 1
 					let p = '\t\{' . nt . '}\%(\t\{MOD}\)* \{' . ns . '}' . p
-					" Assumption: Impossible for ns to become 0 more than once
-					" before we break out of loop.
 					if ns == 0
 						let MOD = nt
 					endif
@@ -341,14 +313,14 @@ fu! s:Get_smart_leading_indent_patt()
 					let [nt, ns] = [es / ts, es % ts]
 					" Have we reached special repeat point? (See earlier note
 					" on loop termination.)
-					if MOD && (sw < ts ? nt > MOD : ns == 0)
+					if MOD && ns == 0
 						break
 					endif
 					if !empty(p)
 						let p = '\|' . p
 					endif
 				endwhile
-				let p = '^\%(' . p . '\)' . (sw < ts ? '\t\@!' : '')
+				let p = '^\%(' . p . '\)'
 				return substitute(p, 'MOD', MOD, 'g')
 			endif
 		endif
