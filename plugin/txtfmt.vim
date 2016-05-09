@@ -511,6 +511,15 @@ fu! s:Escape_is_valid(optval)
 	return a:optval =~ s:re_escape_optval
 endfu
 " >>>
+" 'leadingindent' utility functions <<<
+" Construct pattern that will validate the option value.
+let s:re_leadingindent_optval = '^\%(none\|legacy\|space\|tab\|smart\)$'
+" Function: s:Leadingindent_is_valid() <<<
+" Purpose: Indicate whether input string is a valid leadingindent option value
+fu! s:Leadingindent_is_valid(optval)
+	return a:optval =~ s:re_leadingindent_optval
+endfu
+" >>>
 " >>>
 " 'concealcursor' utility functions <<<
 " Construct pattern that will validate the option value.
@@ -1399,6 +1408,21 @@ fu! s:Process_txtfmt_modeline(line)
 				let b:txtfmt_cfg_escape = ''
 				let ret_val = -1
 			endif
+		elseif optn == 'leadingindent' || optn == 'li'
+			"format: leadingindent=[none|legacy|space|tab|smart]
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'leadingindent'"
+				let b:txtfmt_cfg_leadingindent = ''
+				let ret_val = -1
+			elseif s:Leadingindent_is_valid(optv)
+				" Note: legacy is synonym for none.
+				let b:txtfmt_cfg_leadingindent = optv == 'legacy' ? 'none' : optv
+			else
+				let s:err_str = "Invalid 'leadingindent' value - must be"
+					\ . " 'none', 'legacy', 'space', 'tab', or 'smart'"
+				let b:txtfmt_cfg_leadingindent = ''
+				let ret_val = -1
+			endif
 		else
 		   let s:err_str = "Unknown txtfmt modeline option: ".optn
 		   let ret_val = -1
@@ -2067,6 +2091,7 @@ fu! s:Do_config_common()
 				\ b:txtfmt_cfg_fgcolormask b:txtfmt_cfg_bgcolormask
 				\ b:txtfmt_cfg_undercurlpref b:txtfmt_cfg_conceal
 				\ b:txtfmt_cfg_concealcursor b:txtfmt_cfg_concealcursor_invalid
+				\ b:txtfmt_cfg_leadingindent
 	" >>>
 	" Attempt to process modeline <<<
 	let ml_status = s:Do_txtfmt_modeline()
@@ -2387,6 +2412,53 @@ fu! s:Do_config_common()
 	" within modeline, there is work yet to be done.
 	call s:Set_syncing()
 	" >>>
+	" 'leadingindent' option <<<
+	if !exists('b:txtfmt_cfg_leadingindent') || strlen(b:txtfmt_cfg_leadingindent) == 0
+		" Either option wasn't set within modeline, or it was set to invalid
+		" value
+		unlet! l:bad_set_by
+		if exists('b:txtfmt_cfg_leadingindent') && strlen(b:txtfmt_cfg_leadingindent) == 0
+			" Bad modeline set
+			let l:bad_set_by = 'm'
+		elseif exists('b:txtfmtLeadingindent')
+			" User overrode buf-local option
+			if s:Leadingindent_is_valid(b:txtfmtLeadingindent)
+				let b:txtfmt_cfg_leadingindent = b:txtfmtLeadingindent
+			else
+				let l:bad_set_by = 'b'
+			endif
+		elseif exists('g:txtfmtLeadingindent')
+			" User overrode global option
+			if s:Leadingindent_is_valid(g:txtfmtLeadingindent)
+				let b:txtfmt_cfg_leadingindent = g:txtfmtLeadingindent
+			else
+				let l:bad_set_by = 'g'
+			endif
+		endif
+		" Warn user if invalid user-setting is about to be overridden
+		if exists('l:bad_set_by')
+			" Note: Display the offending option value for buf-local or global
+			" option, but not for modeline, since modeline processing has
+			" already reported the error.
+			echoerr "Warning: Ignoring invalid ".(
+				\ l:bad_set_by == 'm' ? "modeline" :
+				\ l:bad_set_by == 'b' ? "buf-local" :
+				\ "global") . " value for txtfmt `leadingindent' option" . (
+				\ l:bad_set_by == 'm' ? '' :
+				\ l:bad_set_by == 'b' ? (': ' . b:txtfmtLeadingindent) :
+				\ (': ' . g:txtfmtLeadingindent))
+		endif
+		if !exists('b:txtfmt_cfg_leadingindent') || strlen(b:txtfmt_cfg_leadingindent) == 0
+			" Set to default
+			echomsg "Setting li to default!"
+			let b:txtfmt_cfg_leadingindent = 'smart'
+		elseif b:txtfmt_cfg_leadingindent == 'legacy'
+			" legacy is synonym for none
+			let b:txtfmt_cfg_leadingindent = 'none'
+		endif
+	endif
+	" >>>
+
 	" Define various buffer-specific variables now that fmt/clr ranges are fixed.
 	" TODO: Perhaps combine the following 2 functions in some way...
 	call s:Define_fmtclr_vars()

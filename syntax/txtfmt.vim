@@ -335,7 +335,20 @@ endfu
 " Function: s:Hide_leading_indent_maybe <<<
 fu! s:Hide_leading_indent_maybe()
 	" TODO: Take option 'leadingindent' into account.
-	let re_li = s:Get_smart_leading_indent_patt()
+	if b:txtfmt_cfg_leadingindent == 'none'
+		" Don't create any regions for leading indent.
+		return
+	elseif b:txtfmt_cfg_leadingindent == 'space'
+		let re_li = '^ \+'
+	elseif b:txtfmt_cfg_leadingindent == 'tab'
+		let re_li = '^\t\+'
+	elseif b:txtfmt_cfg_leadingindent == 'smart'
+		" Note: Generate complex pattern that depends upon effective 'sw' and
+		" 'ts' settings.
+		let re_li = s:Get_smart_leading_indent_patt()
+	endif
+	" Create the syntax group that will hide all highlighting in whatever is
+	" considered to be leading indent.
 	exe 'syn match Tf_leading_indent /' . re_li . '/ contained containedin=Tf.*'
 	" Note: No such color as 'none': simply leave it unset.
 	hi Tf_leading_indent gui=none cterm=none
