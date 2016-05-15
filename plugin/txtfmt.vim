@@ -513,7 +513,7 @@ endfu
 " >>>
 " 'leadingindent' utility functions <<<
 " Construct pattern that will validate the option value.
-let s:re_leadingindent_optval = '^\%(none\|legacy\|space\|tab\|smart\)$'
+let s:re_leadingindent_optval = '^\%(none\|space\|tab\|white\|smart\)$'
 " Function: s:Leadingindent_is_valid() <<<
 " Purpose: Indicate whether input string is a valid leadingindent option value
 fu! s:Leadingindent_is_valid(optval)
@@ -1409,17 +1409,16 @@ fu! s:Process_txtfmt_modeline(line)
 				let ret_val = -1
 			endif
 		elseif optn == 'leadingindent' || optn == 'li'
-			"format: leadingindent=[none|legacy|space|tab|smart]
+			"format: leadingindent=[none|space|tab|white|smart]
 			if !has_eq
 				let s:err_str = "Value required for non-boolean txtfmt option 'leadingindent'"
 				let b:txtfmt_cfg_leadingindent = ''
 				let ret_val = -1
 			elseif s:Leadingindent_is_valid(optv)
-				" Note: legacy is synonym for none.
-				let b:txtfmt_cfg_leadingindent = optv == 'legacy' ? 'none' : optv
+				let b:txtfmt_cfg_leadingindent = optv
 			else
 				let s:err_str = "Invalid 'leadingindent' value - must be"
-					\ . " 'none', 'legacy', 'space', 'tab', or 'smart'"
+					\ . " 'none', 'space', 'tab', 'white' or 'smart'"
 				let b:txtfmt_cfg_leadingindent = ''
 				let ret_val = -1
 			endif
@@ -2450,11 +2449,7 @@ fu! s:Do_config_common()
 		endif
 		if !exists('b:txtfmt_cfg_leadingindent') || strlen(b:txtfmt_cfg_leadingindent) == 0
 			" Set to default
-			echomsg "Setting li to default!"
 			let b:txtfmt_cfg_leadingindent = 'smart'
-		elseif b:txtfmt_cfg_leadingindent == 'legacy'
-			" legacy is synonym for none
-			let b:txtfmt_cfg_leadingindent = 'none'
 		endif
 	endif
 	" >>>

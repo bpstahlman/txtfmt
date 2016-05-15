@@ -197,6 +197,7 @@ endfu
 " >>>
 " Function: s:Get_smart_leading_indent_patt <<<
 fu! s:Get_smart_leading_indent_patt()
+	" Cache a few pertinent options for convenience.
 	let sw = shiftwidth()
 	let ts = &ts
 	if !&expandtab
@@ -327,14 +328,14 @@ fu! s:Get_smart_leading_indent_patt()
 	else
 		" 'expandtab'
 		" Multiple of 'sw' spaces
-		" TODO: Should we handle tabs specially?
+		" Design Decision: Ignore tabs, which shouldn't be used for leading
+		" indent when 'expandtab' is set.
 		return '^\%( \{' . sw . '}\)\+'
 	endif
 endfu
 " >>>
 " Function: s:Hide_leading_indent_maybe <<<
 fu! s:Hide_leading_indent_maybe()
-	" TODO: Take option 'leadingindent' into account.
 	if b:txtfmt_cfg_leadingindent == 'none'
 		" Don't create any regions for leading indent.
 		return
@@ -342,6 +343,8 @@ fu! s:Hide_leading_indent_maybe()
 		let re_li = '^ \+'
 	elseif b:txtfmt_cfg_leadingindent == 'tab'
 		let re_li = '^\t\+'
+	elseif b:txtfmt_cfg_leadingindent == 'white'
+		let re_li = '^\s\+'
 	elseif b:txtfmt_cfg_leadingindent == 'smart'
 		" Note: Generate complex pattern that depends upon effective 'sw' and
 		" 'ts' settings.
@@ -349,8 +352,12 @@ fu! s:Hide_leading_indent_maybe()
 	endif
 	" Create the syntax group that will hide all highlighting in whatever is
 	" considered to be leading indent.
+	" TODO: Use pattern that gets only Txtfmt regions. No need to be overly
+	" strict - just don't want to match other plugins' regions...
 	exe 'syn match Tf_leading_indent /' . re_li . '/ contained containedin=Tf.*'
-	" Note: No such color as 'none': simply leave it unset.
+	" Note: No such color as 'none': simply leave color unset.
+	" TODO: Any reason to avoid setting gui in cterm and vice-versa (as we do
+	" in Define_syntax)?
 	hi Tf_leading_indent gui=none cterm=none
 endfu
 " >>>
@@ -492,6 +499,11 @@ fu! s:Define_syntax()
 	" Note: Use cui to ensure that different buffers could have different sets
 	" of background colors in effect
 	" Loop over active colors only (with the aid of index indirection array)
+	" Note: Looking back at this a long time after writing, I wondered why the
+	" background-specific conceal groups were needed; the answer is that,
+	" depending on setting of 'concealcursor' and 'conceallevel' options,
+	" there may be times when tokens are visible, and in such cases, we'd like
+	" the token's background color to match its surroundings.
 	let pi = 1
 	while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 		let i = b:txtfmt_cfg_bgcolor{pi}
@@ -1658,6 +1670,8 @@ fu! s:Define_syntax()
 			hi link Tf_clr_etok_inner_esc Tf_conceal
 		endif
 	endif
+	" Give ourselves a chance to make leading indent immune to highlighting
+	" (as determined by 'leadingindent' option).
 	call s:Hide_leading_indent_maybe()
 endfu	" >>>
 " Function: s:Define_syntax_syncing() <<<
