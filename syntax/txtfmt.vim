@@ -352,9 +352,18 @@ fu! s:Hide_leading_indent_maybe()
 	endif
 	" Create the syntax group that will hide all highlighting in whatever is
 	" considered to be leading indent.
-	" TODO: Use pattern that gets only Txtfmt regions. No need to be overly
+	" Vim Idiosyncrasy: Can't use commas in the group name patterns. This
+	" precludes use of \{...} with MIN,MAX. That's ok - no need to be overly
 	" strict - just don't want to match other plugins' regions...
-	exe 'syn match Tf_leading_indent /' . re_li . '/ contained containedin=Tf.*'
+	" Note: Don't need the background conceal groups (Tf_conceal_{bgc_idx}),
+	" as they can't occur in leading whitespace. Recall that these groups
+	" simply make tokens blend in with their surroundings when 'cocu' renders
+	" them visible.
+	" TODO: Any other groups? Is Tf_conceal used for anything? What about
+	" cluster Tf0_all? Could I use that to simplify here?
+	exe 'syn match Tf_leading_indent /' . re_li . '/ contained'
+		\ . ' containedin=Tf\d\+_\%(clr\|fmt\|bgc\)\+'
+		\ . '\%(_\%(\d\+\)\)\+\%(_rtd\)\?'
 	" Note: No such color as 'none': simply leave color unset.
 	" TODO: Any reason to avoid setting gui in cterm and vice-versa (as we do
 	" in Define_syntax)?
