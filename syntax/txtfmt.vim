@@ -2,7 +2,7 @@
 " displaying formatted text with Vim.
 " File: This is the txtfmt syntax file
 " Creation:	2004 Nov 06
-" Last Change: 2016 Apr 28
+" Last Change: 2016 Jul 30
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 " Let the common code know whether this is syntax file or ftplugin
@@ -209,10 +209,6 @@ fu! s:Define_syntax()
 	" buffer-specific, but there is a buffer-specific version of txtfmtColor{}
 	let cui = b:txtfmt_color_uniq_idx
 
-	" Keep up with which bgc-specific conceal groups have been created to
-	" avoid harmless but annoying duplicate definitions.
-	let conceal_groups = {}
-
 	" Determine whether to use gui or cterm definitions.
 	" Neovim Workaround: As part of a poorly-documented feature that provides
 	" 24-bit 'true color' in terminals that support it, Neovim requires gui
@@ -229,10 +225,21 @@ fu! s:Define_syntax()
 		\ exists('$NVIM_TUI_ENABLE_TRUE_COLOR') &&
 		\ $NVIM_TUI_ENABLE_TRUE_COLOR != ''
 	
+	" Choose cterm or gui versions of color and format assignments.
+	if use_gui_defs
+		let eq_clr = ' guifg='
+		let eq_bgc = ' guibg='
+		let eq_fmt = ' gui='
+	else
+		let eq_clr = ' ctermfg='
+		let eq_bgc = ' ctermbg='
+		let eq_fmt = ' cterm='
+	endif
+
 	" Note: Originally, the skip patterns were assigned to region-specific
 	" vars in the generated code; however, there was no need for this, as the
 	" patterns were invariable, depending only on the txtfmt 'escape' option.
-	" Actually, at one time, I believe the patterns were region- specific, but
+	" Actually, at one time, I believe the patterns were region-specific, but
 	" the non-region-specific patterns are simple and efficient.
 	if b:txtfmt_cfg_escape != 'none'
 		if b:txtfmt_cfg_escape == 'bslash'
@@ -243,30 +250,7 @@ fu! s:Define_syntax()
 	else
 		let skip = ''
 	endif
-	" Concealment group <<<
-	" Create a concealment highlight group, to which others can link
-	" The Ignore group is a preferred group, defined in distributed
-	" syncolor.vim
-	" IMPORTANT NOTE: Some of the distributed colorschemes DO NOT hide text in
-	" the Ignore group. I disagree with this practice, and have posted to the
-	" Vim list on the subject, but the situation is unlikely to change...
-	" Fortunately, there is a workaround that always works for the GUI,and
-	" sometimes works for a cterm.
-	" Workaround: *Attempt* to define fg=bg. This will always work for the
-	" GUI, and will work for a cterm if the colorscheme has defined ctermbg
-	" for the Normal group. If the attempt fails, simply link to Ignore group,
-	" which may or may not hide text.
-	if use_gui_defs
-		hi Tf_conceal guifg=bg
-	else
-		let v:errmsg = ""
-		silent! hi Tf_conceal ctermfg=bg
-		if v:errmsg != ""
-			" Link to Ignore and put suggestions in help file for users of
-			" colorschemes that don't hide Ignore'd text.
-			hi link Tf_conceal Ignore
-		endif
-	endif
+	" Token concealment <<<
 	" Check for existence of 'conceal' patch (and desire on part of user to
 	" use it)
 	if b:txtfmt_cfg_conceal
@@ -275,24 +259,75 @@ fu! s:Define_syntax()
 		let &l:concealcursor = b:txtfmt_cfg_concealcursor
 		" With txtfmt-'conceal' set, we can use a single token concealment
 		" group, with 'conceal' and 'transparent' attributes to ensure that
-		" the tokens will normally be zero-width. Note that if cursor pos and
-		" 'cocu' setting causes them to be shown, transparent ensures they'll
-		" have the correct background color (and we probably want foreground
-		" visible in that case).
-		exe 'syn match Tf_conceal /'.b:txtfmt_re_any_tok.'/ contained transparent contains=NONE conceal'
+		" the tokens will normally be zero-width. Note that if the combination
+		" of cursor pos and 'cocu' setting causes them to be shown,
+		" transparent ensures they'll have the correct background color (and
+		" we probably want foreground visible in that case).
+		exe 'syn match Tf_conceal /'.b:txtfmt_re_any_tok.'/ contained contains=NONE transparent conceal'
 		let conceal = ' conceal'
 	else
 		" With 'conceal' unset, tokens must appear as non-zero-width
 		" whitespace: this entails use of bgc-specific concealment regions.
+		" Rationale: Prior to introduction of 'conceal' patch (subsequently
+		" incorporated into Vim), users might have used Txtfmt tokens as word
+		" separators.
 		" NMG_TODO: Under construction... Do we need contains=NONE (given that
 		" other groups will probably include this in ALLBUT clause)?
 		exe 'syn match Tf_conceal /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'
 		let conceal = ''
+		" Design Decision: No reason to define highlights for the concealment
+		" groups when 'conceal' is set.
+		" Rationale: 'transparent' and 'conceal' attributes obviate the need.
+		" TODO: It doesn't hurt to define the highlights unconditionally.
+		" Should we?
+		" Create a concealment highlight group, to which others can link
+		" The Ignore group is a preferred group, defined in distributed
+		" syncolor.vim
+		" IMPORTANT NOTE: Some of the distributed colorschemes DO NOT hide text in
+		" the Ignore group. I disagree with this practice, and have posted to the
+		" Vim list on the subject, but the situation is unlikely to change...
+		" Fortunately, there is a workaround that always works for the GUI,and
+		" sometimes works for a cterm.
+		" Workaround: *Attempt* to define fg=bg. This will always work for the
+		" GUI, and will work for a cterm if the colorscheme has defined ctermbg
+		" for the Normal group. If the attempt fails, simply link to Ignore group,
+		" which may or may not hide text.
+		if use_gui_defs
+			hi Tf_conceal guifg=bg
+		else
+			let v:errmsg = ""
+			silent! hi Tf_conceal ctermfg=bg
+			if v:errmsg != ""
+				" Link to Ignore and put suggestions in help file for users of
+				" colorschemes that don't hide Ignore'd text.
+				hi link Tf_conceal Ignore
+			endif
+		endif
+		" Create background-color specific concealment groups and associated
+		" highlighting, adding the groups to the special Tf{cui}_conceal
+		" cluster used in containedin's ALLBUT clause.
+		" Note: Use cui to ensure that different buffers could have different sets
+		" of background colors in effect
+		" Loop over active colors only (with the aid of index indirection array)
+		let pi = 1
+		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
+			let i = b:txtfmt_cfg_bgcolor{pi}
+			exe 'syn match Tf'.cui.'_conceal_'.i.' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal
+			exe 'hi Tf'.cui.'_conceal_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
+			" Note: Tf{cui}_conceal name is fine since clusters/groups are in distinct namespaces.
+			exe 'syn cluster Tf'.cui.'_conceal add=Tf'.cui.'_conceal_'.i
+			let pi = pi + 1
+		endwhile
 	endif
-	" Create vars to facilitate switching between normal (toplevel)
+	" Create vars to facilitate switching between normal (top-level)
 	" concealment group and background-color-specific groups
+	" Note: In 'conceal' case, top-level group is used for all.
 	let Tf_top_tok_group = 'Tf_conceal'
 	let Tf_tok_group = 'Tf_conceal'
+	" Add the top-level concealment group to the concealment cluster.
+	" TODO: Consider whether we should clear out with contains=Tf_conceal
+	" prior to adding the bgc-specific token concealment groups (above).
+	exe 'syn cluster Tf'.cui.'_conceal add=Tf_conceal'
 	" >>>
 	" Define match offset that corresponds to a single txtfmt token <<<
 	" Note: This is required because of a Vim bug: as of Vim 7.1, syntax match
@@ -323,7 +358,7 @@ fu! s:Define_syntax()
 	if b:txtfmt_cfg_nested
 		" Ensure that txtfmt top-level item can be contained by a non-txtfmt
 		" syntax group (e.g. C-language comment).
-		" TODO - Perhaps put inner_esc groups into a cluster.
+		" TODO - Consider putting inner_esc groups into a cluster.
 		if b:txtfmt_cfg_escape != 'none'
 			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all'
 						\.',Tf_outer_esc,Tf_any_stok_inner_esc'
@@ -332,38 +367,12 @@ fu! s:Define_syntax()
 		else
 			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all'
 		endif
-		" NMG_TODO: Don't like using Tf.*conceal.* pattern for the conceal groups. Better way?
-		" Solution: Create Tf_conceal cluster and use that instead.
-		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_conceal' : ',Tf.*conceal.*'
+		" Note: In the 'noconceal' case, cluster will be populated later.
+		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_conceal' : ',@Tf'.cui.'_conceal'
 	else
 		let containedin_def = ''
 	endif
 	" >>>
-	" Choose cterm or gui versions of color and format assignments
-	if use_gui_defs
-		let eq_clr = ' guifg='
-		let eq_bgc = ' guibg='
-		let eq_fmt = ' gui='
-	else
-		let eq_clr = ' ctermfg='
-		let eq_bgc = ' ctermbg='
-		let eq_fmt = ' cterm='
-	endif
-	" NOTES TO PRESERVE
-	" TODO - Decide whether the inner_esc regions obviate the need for the
-	" skip-def. (I don't think so...)
-	" UNDER CONSTRUCTION
-
-	" Create background-color specific concealment groups
-	" Note: Use cui to ensure that different buffers could have different sets
-	" of background colors in effect
-	" Loop over active colors only (with the aid of index indirection array)
-	let pi = 1
-	while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
-		let i = b:txtfmt_cfg_bgcolor{pi}
-		exe 'hi Tf'.cui.'_conceal_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
-		let pi = pi + 1
-	endwhile
 
 	" Important Note: The following line may be executed on the Vim command
 	" line to regenerate the code within the BEGIN...<<< / END...>>> markers.
@@ -372,7 +381,7 @@ fu! s:Define_syntax()
 	" :0/BEGIN AUTOGENERATED CODE BLOCK <\{3}/;/END AUTOGENERATED CODE BLOCK >\{3}/d|exe '.-1r !perl -x %'|exe "norm '["
 
 	" BEGIN AUTOGENERATED CODE BLOCK <<<
-	" Last update: Sun Jul 24 08:17:10 2016
+	" Last update: Sat Jul 30 07:54:24 2016
 
 	"============= BEGIN NON-INDENTING BLOCK =============
 	if clr_enabled
@@ -908,11 +917,6 @@ fu! s:Define_syntax()
 			if !b:txtfmt_cfg_conceal
 				" Ensure that this and higher order regions use bgc-specific concealment group
 				let Tf_tok_group = 'Tf'.cui.'_conceal_'.j
-				" Avoid duplicate definitions, which are harmless but annoying.
-				if !has_key(conceal_groups, j)
-					let conceal_groups[j] = 1
-					exe 'syn match Tf'.cui.'_conceal_'.j.' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal
-				endif
 			endif
 			" Cache the nextgroup clause
 			let ng = ' nextgroup=Tf'.cui.'_bgc_'.j.',Tf'.cui.'_clr_'.i.',@Tf'.cui.'_bgcclr_'.j.'_all,@Tf'.cui.'_clrbgc_'.i.'_all,@Tf'.cui.'_clrbgcfmt_'.i.'_'.j.'_all'
@@ -1000,11 +1004,6 @@ fu! s:Define_syntax()
 				if !b:txtfmt_cfg_conceal
 					" Ensure that this and higher order regions use bgc-specific concealment group
 					let Tf_tok_group = 'Tf'.cui.'_conceal_'.k
-					" Avoid duplicate definitions, which are harmless but annoying.
-					if !has_key(conceal_groups, j)
-						let conceal_groups[j] = 1
-						exe 'syn match Tf'.cui.'_conceal_'.k.' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal
-					endif
 				endif
 				" Define region that is begun by a start token
 				exe 'syn region Tf'.cui.'_clrfmtbgc_'.i.'_'.j.'_'.k
@@ -1042,11 +1041,6 @@ fu! s:Define_syntax()
 		if !b:txtfmt_cfg_conceal
 			" Ensure that this and higher order regions use bgc-specific concealment group
 			let Tf_tok_group = 'Tf'.cui.'_conceal_'.i
-			" Avoid duplicate definitions, which are harmless but annoying.
-			if !has_key(conceal_groups, j)
-				let conceal_groups[j] = 1
-				exe 'syn match Tf'.cui.'_conceal_'.i.' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal
-			endif
 		endif
 		" Cache the nextgroup clause
 		let ng = ' nextgroup=@Tf'.cui.'_bgc_all'.(clr_enabled ? ',@Tf'.cui.'_bgcclr_'.i.'_all' : '').',@Tf'.cui.'_bgcfmt_'.i.'_all,Tf_conceal'
@@ -1255,11 +1249,6 @@ fu! s:Define_syntax()
 				if !b:txtfmt_cfg_conceal
 					" Ensure that this and higher order regions use bgc-specific concealment group
 					let Tf_tok_group = 'Tf'.cui.'_conceal_'.k
-					" Avoid duplicate definitions, which are harmless but annoying.
-					if !has_key(conceal_groups, j)
-						let conceal_groups[j] = 1
-						exe 'syn match Tf'.cui.'_conceal_'.k.' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal
-					endif
 				endif
 				" Define region that is begun by a start token
 				exe 'syn region Tf'.cui.'_fmtclrbgc_'.i.'_'.j.'_'.k
@@ -1295,11 +1284,6 @@ fu! s:Define_syntax()
 			if !b:txtfmt_cfg_conceal
 				" Ensure that this and higher order regions use bgc-specific concealment group
 				let Tf_tok_group = 'Tf'.cui.'_conceal_'.j
-				" Avoid duplicate definitions, which are harmless but annoying.
-				if !has_key(conceal_groups, j)
-					let conceal_groups[j] = 1
-					exe 'syn match Tf'.cui.'_conceal_'.j.' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal
-				endif
 			endif
 			" Cache the nextgroup clause
 			let ng = ' nextgroup=Tf'.cui.'_bgc_'.j.',Tf'.cui.'_fmt_'.i.',@Tf'.cui.'_bgcfmt_'.j.'_all,@Tf'.cui.'_fmtbgc_'.i.'_all'.(clr_enabled ? ',@Tf'.cui.'_fmtbgcclr_'.i.'_'.j.'_all' : '')
@@ -1819,12 +1803,14 @@ sub do_lvl($$$)
 				print "\n$il\t", "let Tf_tok_group = 'Tf'.cui.'_conceal_'.$idx{$a1n[-1]}";
 				# Define this concealment group.
 				# NMG_TODO: Think about best way to specify match.
-				print "\n$il\t", '" Avoid duplicate definitions, which are harmless but annoying.';
-				print "\n$il\t", "if !has_key(conceal_groups, j)";
-				print "\n$il\t\t", 'let conceal_groups[j] = 1';
-				print "\n$il\t\t", "exe 'syn match Tf'.cui.'_conceal_'.$idx{$a1n[-1]}",
-					".' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal";
-				print "\n$il\t", 'endif';
+				#print "\n$il\t", '" Avoid duplicate definitions, which are harmless but annoying.';
+				#print "\n$il\t", "if !has_key(conceal_groups, j)";
+				#print "\n$il\t\t", 'let conceal_groups[j] = 1';
+				#print "\n$il\t\t", "exe 'syn match Tf'.cui.'_conceal_'.$idx{$a1n[-1]}",
+				#	".' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal";
+				#print "\n$il\t\t", '" Note: Tf*_conceal name is fine since clusters/groups are in distinct namespaces.';
+				#print "\n$il\t\t", "exe 'syn cluster Tf'.cui.'_conceal' add=Tf'.cui.'_conceal_'.$idx{$a1n[-1]}";
+				#print "\n$il\t", 'endif';
 				print "\n$il", 'endif';
 			}
 
