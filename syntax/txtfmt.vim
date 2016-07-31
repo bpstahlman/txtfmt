@@ -1694,12 +1694,6 @@ finish
 # Define base indentlevel of the entire block
 $init_il = 1;
 
-# Define the various output passes
-use constant {
-	DEFS  => 0,
-	LOOPS => 1,
-};
-
 # This semaphore helps determine when an "if <typ>_enabled" construct in the
 # Vim code would be redundant with a containing one.
 # TODO: Currently unused - remove...
@@ -1773,12 +1767,7 @@ sub do_lvl($$$)
 			push @hor, [ @a1n, $r ];
 		}
 		# Determine initial indent level
-		my $il;
-		if ($section == DEFS) {
-			$il = "\t";
-		} else { # if $section == LOOPS
-			$il = "\t" x ($init_il + $lvl);
-		}
+		my $il = "\t" x ($init_il + $lvl);
 
 		# Set convenience variable $need_r2_guard if and only if all the
 		# region types yet to be pulled in (i.e., the ones whose end tokens
@@ -1797,336 +1786,218 @@ sub do_lvl($$$)
 		}
 
 		# PRE RECURSION
-		if ($section == DEFS) {
-			# Determine current level's indent
-			$il = "\t";
-			print "\n$il\"===";
-			print "\n$il\"*** ", join("-", @a1n);
-			print "\n$il\"===";
+		# Determine current level's indent
+		$il = "\t" x ($init_il + $lvl);
+		print "\n$il\"===";
+		print "\n$il\"*** Loop over ", join("-", @a1n), " levels";
+		print "\n$il\"===";
+		# TODO: Think about cleaning this up a bit and adding comments for
+		# the index indirection...
+		print "\n$il", "let $idx{$a1n[-1]}", ($loopinfo{$a1n[-1]}{indarr} ? 'p' : ''), " = 1";
+		print "\n$il", "while $idx{$a1n[-1]}", ($loopinfo{$a1n[-1]}{indarr} ? 'p' : ''), " <= $loopinfo{$a1n[-1]}{cnt}";
+		$il .= "\t";
+		print "\n$il", "let $idx{$a1n[-1]} = $loopinfo{$a1n[-1]}{indarr}\{$idx{$a1n[-1]}p\}"
+			if $loopinfo{$a1n[-1]}{indarr};
+		print "\n$il", "let ch$idx{$a1n[-1]} = nr2char(b:txtfmt_$a1n[-1]_first_tok + $idx{$a1n[-1]})";
 
-			print "\n$il", "if b:txtfmt_cfg_escape != 'none'";
-			print "\n$il\t", "let contains_", join("", @a1n), "=",
-				"\n$il\t\t\\' contains='",
-				"\n$il\t\t\\.'Tf_any_stok_inner_esc,'",
-				"\n$il\t\t\\.'",
-				join(",'\n$il\t\t\\.'",
-					map { "Tf_${_}_etok_inner_esc" } @a1n
-				),
-				"'"
-			;
-			print "\n$il", "else";
-			print "\n$il\t", "let contains_", join("", @a1n), " = ''";
-			print "\n$il", "endif";
-			print "\n$il", "let end_", join("", @a1n), " =";
-			print "\n$il\t", "\\' end=/['";
-			print "\n$il\t", "\\.b:txtfmt_re_any_stok_atom";
-			print "\n$il\t", "\\.",
-				join("\n$il\t\\.",
-					map { "b:txtfmt_re_${_}_etok_atom" } @a1n
-				),
-				"\n$il\t", "\\.']/me=e-'.tok_off.',he=e-'.tok_off"
-			;
-			# Define r1_<rgn> var
-			print "\n$il", "let r1_", join("", @a1n), " = skip";
-			print "\n$il\t", "\\.contains_", join("", @a1n);
-			print "\n$il\t", "\\.end_", join("", @a1n);
-			if (@a1n == 1) {
-				print "\n$il\t", "\\.containedin_def";
-			} else {
-				print "\n$il\t", "\\.' contained'";
-			}
-			# Don't define r2_<rgn> var if there's not at least 1 higher order
-			# region
-			if (@a2n) {
-				# Ensure that we don't define the r2 region variables if all
-				# of the <typ>'s whose end token could begin the region are
-				# inactive. If at least one of these <typ>'s is active, the
-				# vars will be defined, and <typ>_enabled ternaries will be
-				# used as necessary to ensure that we don't consider end
-				# tokens for inactive region types.
-				if ($need_r2_guard) {
-					print "\n$il", '" Define the r2 region vars if and only if at least one of the';
-					print "\n$il", '" region types whose end token could begin this region is active';
-					print "\n$il", '"============= BEGIN NON-INDENTING BLOCK =============';
-					print "\n$il", "if ",
-						join ' || ', map { "${_}_enabled" } @a2n
-					;
-				}
-				print "\n$il", "let start_", join("", @a1n), " =";
-				print "\n$il\t", "\\' start=/['";
-				print "\n$il\t", "\\.",
-					join(".",
-						map {
-							# Wrap the end token for <typ> in ternary guard
-							# unless a containing `if <typ>_enabled' renders
-							# it redundant.
-							# Note: The ternary is never redundant when
-							# multiple types are logically or'ed in the
-							# containing if: e.g.,
-							# if <typ1>_enabled || <typ2>_enabled
-							# Note: If $need_r2_guard is true, @a2n is
-							# precisely the number of conditions in the if
-							my $typ = $_;
-							my $need_ternary =
-								(grep { $_ eq $typ } @can_dsbl
-								and !$need_r2_guard || @a2n > 1);
-							(
-								$need_ternary
-								? "(${typ}_enabled ? "
-								: ""
-							) .
-							"b:txtfmt_re_${typ}_etok_atom" .
-							(
-								$need_ternary
-								? " : '')"
-								: ""
-							)
-						} @a2n
-					)
-				;
-				print "\n$il\t", "\\.']/'";
-
-				print "\n$il", "let r2_", join("", @a1n), " = skip";
-				print "\n$il\t", "\\.contains_", join("", @a1n);
-				print "\n$il\t", "\\.start_", join("", @a1n);
-				print "\n$il\t", "\\.end_", join("", @a1n);
-				print "\n$il\t", "\\.' contained'";
-				if ($need_r2_guard) {
-					print "\n$il", "endif \" ",
-						join ' || ', map { "${_}_enabled" } @a2n;
-					print "\n$il", '"=============  END NON-INDENTING BLOCK  =============';
-				}
-			}
-		} else { # $section == LOOPS
-			# Determine current level's indent
-			$il = "\t" x ($init_il + $lvl);
-			print "\n$il\"===";
-			print "\n$il\"*** Loop over ", join("-", @a1n), " levels";
-			print "\n$il\"===";
-			# TODO: Think about cleaning this up a bit and adding comments for
-			# the index indirection...
-			print "\n$il", "let $idx{$a1n[-1]}", ($loopinfo{$a1n[-1]}{indarr} ? 'p' : ''), " = 1";
-			print "\n$il", "while $idx{$a1n[-1]}", ($loopinfo{$a1n[-1]}{indarr} ? 'p' : ''), " <= $loopinfo{$a1n[-1]}{cnt}";
-			$il .= "\t";
-			print "\n$il", "let $idx{$a1n[-1]} = $loopinfo{$a1n[-1]}{indarr}\{$idx{$a1n[-1]}p\}"
-				if $loopinfo{$a1n[-1]}{indarr};
-			print "\n$il", "let ch$idx{$a1n[-1]} = nr2char(b:txtfmt_$a1n[-1]_first_tok + $idx{$a1n[-1]})";
-
-			print "\n$il\" Add to appropriate clusters";
-			print "\n$il", "exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_",
-				join("", @a1n), "_'.",
-				join(".'_'.", @idx{@a1n})
-			;
-			print "\n$il", "exe 'syn cluster Tf'.cui.'_",
-				join("", @a1n),
-				(@a1n > 1
-					? "_'." . join(".'_'.", @idx{@a1n[0 .. $#a1n - 1]}) . ".'"
-					: ""
-				),
-				"_all add=Tf'.cui.'_",
-				join("", @a1n),
-				"_'.",
-				join(".'_'.", @idx{@a1n})
-			;
-			# Define matchgroup if background color could be changing (i.e., if
-			# last element of @a1n is 'bgc')
-			# Note: matchgroup will retain setting given until we move back to
-			# a lower order region
-			# Also note: bgc_enabled check would be superfluous here, since
-			# code won't be executed if bgc_enabled is false
-			if ($a1n[-1] eq 'bgc') {
-				# Note: Leave Tf_tok_group at its default when conceal is disabled.
-				print "\n$il", 'if !b:txtfmt_cfg_conceal';
-				print "\n$il\t", '" Ensure that this and higher order regions use bgc-specific concealment group';
-				print "\n$il\t", "let Tf_tok_group = 'Tf'.cui.'_conceal_'.$idx{$a1n[-1]}";
-				# Define this concealment group.
-				# NMG_TODO: Think about best way to specify match.
-				#print "\n$il\t", '" Avoid duplicate definitions, which are harmless but annoying.';
-				#print "\n$il\t", "if !has_key(conceal_groups, j)";
-				#print "\n$il\t\t", 'let conceal_groups[j] = 1';
-				#print "\n$il\t\t", "exe 'syn match Tf'.cui.'_conceal_'.$idx{$a1n[-1]}",
-				#	".' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal";
-				#print "\n$il\t\t", '" Note: Tf*_conceal name is fine since clusters/groups are in distinct namespaces.';
-				#print "\n$il\t\t", "exe 'syn cluster Tf'.cui.'_conceal' add=Tf'.cui.'_conceal_'.$idx{$a1n[-1]}";
-				#print "\n$il\t", 'endif';
-				print "\n$il", 'endif';
-			}
-
-			# Define nextgroup
-			my $ng = "";
-			for my $lor (@lor) {
-				# Transitions to lower-order groups (used to be rtd group)
-				# TODO: Consider whether better way to do this now that no '_rtd' appended.
-				$ng .= ",Tf'.cui.'_" . join("", @$lor) . "_'." . join(".'_'.", @idx{@$lor}) . ".'";
-			}
-			for my $sor (@sor) {
-				$ng .= ",\@Tf'.cui.'_" . join("", @$sor) .
-					(@$sor > 1
-						? "_'." . join(".'_'.", @idx{@{$sor}[0 .. $#$sor - 1]}) . ".'"
-						: ""
-					) .
-					"_all";
-			}
-			# Note: We didn't need to worry about checking <typ>_enabled for
-			# the lor and sor case (since this code will be inside an "if
-			# <typ>_enabled" if <typ> is in either of those arrays); however,
-			# the hor case pulls in a new region type, so we will need to
-			# check it.
-			my $unquoted = 0;
-			for my $hor (@hor) {
-				my $typ;
-				if (($typ) = grep { $_ eq $hor->[-1] } @can_dsbl) {
-					$ng .= ($unquoted ? '' : "'") . ".(${typ}_enabled ? '";
-				}
-				elsif ($unquoted) {
-					$ng .= ".'";
-				}
-				$ng .= ",\@Tf'.cui.'_" . join("", @$hor) . "_'." .
-					join(".'_'.", @idx{@a1n}) .
-					".'_all";
-				if ($typ) {
-					$ng .= "' : '')";
-					$unquoted = 1;
-				}
-				else {
-					$unquoted = 0;
-				}
-			}
-			if (@a1n == 1) {
-				$ng .= ($unquoted ? ".'" : '') . ",Tf_conceal'";
-			} elsif (!$unquoted) {
-				$ng .= "'";
-			}
-			# Use substr to strip off the leading comma at the head of $ng
-			$ng = "' nextgroup=" . substr($ng, 1);
-
-			# Build shared portion of syn region command.
-			my $rgn_body = 
-				"skip" .
-				"\n$il\t\\.' contains='.Tf_tok_group" .
-				"\n$il\t\\.(b:txtfmt_cfg_escape != 'none'" .
-				"\n$il\t\\\t? ',Tf_any_stok_inner_esc," .
-				join(",", map { "Tf_" . $_ . "_etok_inner_esc" } @a1n) . "'" .
-				"\n$il\t\\\t: '')" .
-				"\n$il\t\\.' end=/['.b:txtfmt_re_any_stok_atom." .
-				join(".", map { "b:txtfmt_re_${_}_etok_atom" } @a1n) .
-				".']/me=e-'.tok_off.',he=e-'.tok_off" .
-				"\n$il\t\\.$ng";
-
-			# If shared body is about to be used in 2 region definitions (r1
-			# r2), assign it to a variable for efficiency. (Many
-			# concatenations are required to build the entire nextgroup
-			# clause.)
-			# Note: If there are no more regions to pull in, the shared stuff
-			# will be used only once, so it's more efficient to build it
-			# within the region definition itself.
-			if (@a2n) {
-				print "\n$il\" Cache the shared stuff";
-				print "\n$il", "let rgn_body = ", $rgn_body;
-				# Obviate the need for subsequent logic within this script to
-				# know whether we're caching nextgroup clause or not
-				$rgn_body = 'rgn_body';
-			}
-
-			# Define the rgn that is begun with an stok
-			print "\n$il\" Define region that is begun by a start token";
-			# Save the beginning of the `syn region' statement, which is
-			# common to both the region begun by start tok and the region
-			# begun by end tok. (Note that they diverge where there *once*
-			# was - but no longer is - an `_rtd' in the latter's region name.)
-			my $rgn_head = "\n$il" .
-				"exe 'syn region " .
-				"Tf'.cui.'_" . join("", @a1n) . "_'." . join(".'_'.", @idx{@a1n});
-			print "$rgn_head",
-				"\n$il\t\\.' start=/'.ch$idx{$a1n[-1]}.'/'",
-				"\n$il\t\\.", $rgn_body,
-				"\n$il\t\\.",
-				# TODO: containedin_def only for single regions!!!
-				@a1n == 1 ? "containedin_def" : "' contained'";
-
-			# Define the region introduced by 'no rgn' token (if it exists)
-			if (@a2n) {
-				# Ensure that we don't define the region if all of the <typ>'s
-				# whose end token could begin the region are inactive. If at
-				# least one of these <typ>'s is active, the region will be
-				# defined, and <typ>_enabled ternaries will be used as
-				# necessary to ensure that we don't consider end tokens for
-				# inactive region types.
-				if ($need_r2_guard) {
-					print "\n$il", '" Define the following region if and only if at least one of the';
-					print "\n$il", '" region types whose end token could begin this region is active';
-					print "\n$il", '"============= BEGIN NON-INDENTING BLOCK =============';
-					print "\n$il", "if ",
-						join ' || ', map { "${_}_enabled" } @a2n
-					;
-				}
-				print "\n$il\" Define region that is begun by an end token";
-				print "\n$il\" (when permitted by a nextgroup)";
-				print "$rgn_head",
-					"\n$il\t\\.", $rgn_body,
-					"\n$il\t\\.' start=/['.",
-					join(".", map {
-						# Ternary redundant when inside single-region type guard.
-						# E.g., no need for "bgc_enabled ? ..." inside "if bgc_enabled"
-						$_ =~ 'bgc|clr' && @a2n > 1
-							? "(${_}_enabled ? b:txtfmt_re_${_}_etok_atom : '')"
-							: "b:txtfmt_re_${_}_etok_atom"
-					} @a2n),
-					".']/'",
-					"\n$il\t\\.' contained'";
-
-				if ($need_r2_guard) {
-					print "\n$il", "endif \" ",
-						join ' || ', map { "${_}_enabled" } @a2n;
-					print "\n$il", '"=============  END NON-INDENTING BLOCK  =============';
-				}
-			}
-			# Define the highlighting region
-			print "\n$il\" Define highlighting for this region";
-			print "\n$il\" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is";
-			print "\n$il\" handled correctly in a cterm.";
-			print "\n$il\"\t:help cterm-colors";
-			print "\n$il", "exe 'hi Tf'.cui.'_", join("", @a1n), "_'.",
-				join(".'_'.", @idx{@a1n}),
-				"\n$il\t\\.",
-				join(".", map {
-					"eq_$_.b:txtfmt_$rhs{$_}\{$idx{$_}\}"
-					} sort { $ord{$a} <=> $ord{$b} } @a1n
-				),
-			;
-			# Define the highlighting region for the rtd group (if it exists)
-			# Note: No longer necessary, since rtd group is same as non-rtd.
-			# TODO: Get rid of this block.
-			#if (@a2n) {
-			#	# Link rtd to non-rtd group, since highlighting is identical
-			#	print "\n$il\" Link rtd to non-rtd group";
-			#	print "\n$il", "exe 'hi link Tf'.cui.'_", join("", @a1n), "_'.",
-			#		join(".'_'.", @idx{@a1n}), ".'_rtd",
-			#		" Tf'.cui.'_", join("", @a1n), "_'.",
-			#		join(".'_'.", @idx{@a1n})
-			#	;
-
-			#}
+		print "\n$il\" Add to appropriate clusters";
+		print "\n$il", "exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_",
+			join("", @a1n), "_'.",
+			join(".'_'.", @idx{@a1n})
+		;
+		print "\n$il", "exe 'syn cluster Tf'.cui.'_",
+			join("", @a1n),
+			(@a1n > 1
+				? "_'." . join(".'_'.", @idx{@a1n[0 .. $#a1n - 1]}) . ".'"
+				: ""
+			),
+			"_all add=Tf'.cui.'_",
+			join("", @a1n),
+			"_'.",
+			join(".'_'.", @idx{@a1n})
+		;
+		# Define matchgroup if background color could be changing (i.e., if
+		# last element of @a1n is 'bgc')
+		# Note: matchgroup will retain setting given until we move back to
+		# a lower order region
+		# Also note: bgc_enabled check would be superfluous here, since
+		# code won't be executed if bgc_enabled is false
+		if ($a1n[-1] eq 'bgc') {
+			# Note: Leave Tf_tok_group at its default when conceal is disabled.
+			print "\n$il", 'if !b:txtfmt_cfg_conceal';
+			print "\n$il\t", '" Ensure that this and higher order regions use bgc-specific concealment group';
+			print "\n$il\t", "let Tf_tok_group = 'Tf'.cui.'_conceal_'.$idx{$a1n[-1]}";
+			# Define this concealment group.
+			# NMG_TODO: Think about best way to specify match.
+			#print "\n$il\t", '" Avoid duplicate definitions, which are harmless but annoying.';
+			#print "\n$il\t", "if !has_key(conceal_groups, j)";
+			#print "\n$il\t\t", 'let conceal_groups[j] = 1';
+			#print "\n$il\t\t", "exe 'syn match Tf'.cui.'_conceal_'.$idx{$a1n[-1]}",
+			#	".' /'.b:txtfmt_re_any_tok.'/ contained contains=NONE'.conceal";
+			#print "\n$il\t\t", '" Note: Tf*_conceal name is fine since clusters/groups are in distinct namespaces.';
+			#print "\n$il\t\t", "exe 'syn cluster Tf'.cui.'_conceal' add=Tf'.cui.'_conceal_'.$idx{$a1n[-1]}";
+			#print "\n$il\t", 'endif';
+			print "\n$il", 'endif';
 		}
+
+		# Define nextgroup
+		my $ng = "";
+		for my $lor (@lor) {
+			# Transitions to lower-order groups (used to be rtd group)
+			# TODO: Consider whether better way to do this now that no '_rtd' appended.
+			$ng .= ",Tf'.cui.'_" . join("", @$lor) . "_'." . join(".'_'.", @idx{@$lor}) . ".'";
+		}
+		for my $sor (@sor) {
+			$ng .= ",\@Tf'.cui.'_" . join("", @$sor) .
+				(@$sor > 1
+					? "_'." . join(".'_'.", @idx{@{$sor}[0 .. $#$sor - 1]}) . ".'"
+					: ""
+				) .
+				"_all";
+		}
+		# Note: We didn't need to worry about checking <typ>_enabled for
+		# the lor and sor case (since this code will be inside an "if
+		# <typ>_enabled" if <typ> is in either of those arrays); however,
+		# the hor case pulls in a new region type, so we will need to
+		# check it.
+		my $unquoted = 0;
+		for my $hor (@hor) {
+			my $typ;
+			if (($typ) = grep { $_ eq $hor->[-1] } @can_dsbl) {
+				$ng .= ($unquoted ? '' : "'") . ".(${typ}_enabled ? '";
+			}
+			elsif ($unquoted) {
+				$ng .= ".'";
+			}
+			$ng .= ",\@Tf'.cui.'_" . join("", @$hor) . "_'." .
+				join(".'_'.", @idx{@a1n}) .
+				".'_all";
+			if ($typ) {
+				$ng .= "' : '')";
+				$unquoted = 1;
+			}
+			else {
+				$unquoted = 0;
+			}
+		}
+		if (@a1n == 1) {
+			$ng .= ($unquoted ? ".'" : '') . ",Tf_conceal'";
+		} elsif (!$unquoted) {
+			$ng .= "'";
+		}
+		# Use substr to strip off the leading comma at the head of $ng
+		$ng = "' nextgroup=" . substr($ng, 1);
+
+		# Build shared portion of syn region command.
+		my $rgn_body = 
+			"skip" .
+			"\n$il\t\\.' contains='.Tf_tok_group" .
+			"\n$il\t\\.(b:txtfmt_cfg_escape != 'none'" .
+			"\n$il\t\\\t? ',Tf_any_stok_inner_esc," .
+			join(",", map { "Tf_" . $_ . "_etok_inner_esc" } @a1n) . "'" .
+			"\n$il\t\\\t: '')" .
+			"\n$il\t\\.' end=/['.b:txtfmt_re_any_stok_atom." .
+			join(".", map { "b:txtfmt_re_${_}_etok_atom" } @a1n) .
+			".']/me=e-'.tok_off.',he=e-'.tok_off" .
+			"\n$il\t\\.$ng";
+
+		# If shared body is about to be used in 2 region definitions (r1
+		# r2), assign it to a variable for efficiency. (Many
+		# concatenations are required to build the entire nextgroup
+		# clause.)
+		# Note: If there are no more regions to pull in, the shared stuff
+		# will be used only once, so it's more efficient to build it
+		# within the region definition itself.
+		if (@a2n) {
+			print "\n$il\" Cache the shared stuff";
+			print "\n$il", "let rgn_body = ", $rgn_body;
+			# Obviate the need for subsequent logic within this script to
+			# know whether we're caching nextgroup clause or not
+			$rgn_body = 'rgn_body';
+		}
+
+		# Define the rgn that is begun with an stok
+		print "\n$il\" Define region that is begun by a start token";
+		# Save the beginning of the `syn region' statement, which is
+		# common to both the region begun by start tok and the region
+		# begun by end tok. (Note that they diverge where there *once*
+		# was - but no longer is - an `_rtd' in the latter's region name.)
+		my $rgn_head = "\n$il" .
+			"exe 'syn region " .
+			"Tf'.cui.'_" . join("", @a1n) . "_'." . join(".'_'.", @idx{@a1n});
+		print "$rgn_head",
+			"\n$il\t\\.' start=/'.ch$idx{$a1n[-1]}.'/'",
+			"\n$il\t\\.", $rgn_body,
+			"\n$il\t\\.",
+			# TODO: containedin_def only for single regions!!!
+			@a1n == 1 ? "containedin_def" : "' contained'";
+
+		# Define the region introduced by 'no rgn' token (if it exists)
+		if (@a2n) {
+			# Ensure that we don't define the region if all of the <typ>'s
+			# whose end token could begin the region are inactive. If at
+			# least one of these <typ>'s is active, the region will be
+			# defined, and <typ>_enabled ternaries will be used as
+			# necessary to ensure that we don't consider end tokens for
+			# inactive region types.
+			if ($need_r2_guard) {
+				print "\n$il", '" Define the following region if and only if at least one of the';
+				print "\n$il", '" region types whose end token could begin this region is active';
+				print "\n$il", '"============= BEGIN NON-INDENTING BLOCK =============';
+				print "\n$il", "if ",
+					join ' || ', map { "${_}_enabled" } @a2n
+				;
+			}
+			print "\n$il\" Define region that is begun by an end token";
+			print "\n$il\" (when permitted by a nextgroup)";
+			print "$rgn_head",
+				"\n$il\t\\.", $rgn_body,
+				"\n$il\t\\.' start=/['.",
+				join(".", map {
+					# Ternary redundant when inside single-region type guard.
+					# E.g., no need for "bgc_enabled ? ..." inside "if bgc_enabled"
+					$_ =~ 'bgc|clr' && @a2n > 1
+						? "(${_}_enabled ? b:txtfmt_re_${_}_etok_atom : '')"
+						: "b:txtfmt_re_${_}_etok_atom"
+				} @a2n),
+				".']/'",
+				"\n$il\t\\.' contained'";
+
+			if ($need_r2_guard) {
+				print "\n$il", "endif \" ",
+					join ' || ', map { "${_}_enabled" } @a2n;
+				print "\n$il", '"=============  END NON-INDENTING BLOCK  =============';
+			}
+		}
+		# Define the highlighting region
+		print "\n$il\" Define highlighting for this region";
+		print "\n$il\" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is";
+		print "\n$il\" handled correctly in a cterm.";
+		print "\n$il\"\t:help cterm-colors";
+		print "\n$il", "exe 'hi Tf'.cui.'_", join("", @a1n), "_'.",
+			join(".'_'.", @idx{@a1n}),
+			"\n$il\t\\.",
+			join(".", map {
+				"eq_$_.b:txtfmt_$rhs{$_}\{$idx{$_}\}"
+				} sort { $ord{$a} <=> $ord{$b} } @a1n
+			),
+		;
 
 		# RECURSE
 		# Call ourself recursively to handle the next level
-		do_lvl($section, \@a1n, \@a2n);
+		do_lvl(\@a1n, \@a2n);
 
 		# POST RECURSION
-		if ($section == DEFS) {
-		} else { # if $section == LOOPS
-			# Update for next iteration
-			my $idx = $idx{$a1n[-1]};
-			if ($a1n[-1] eq 'fmt') {
-				print "\n$il", "let $idx = $idx + 1";
-			} else {
-				print "\n$il", "let ${idx}p = ${idx}p + 1";
-			}
-			# Strip a level of indent
-			chop $il;
-			print "\n$il", "endwhile";
+		# Update for next iteration
+		my $idx = $idx{$a1n[-1]};
+		if ($a1n[-1] eq 'fmt') {
+			print "\n$il", "let $idx = $idx + 1";
+		} else {
+			print "\n$il", "let ${idx}p = ${idx}p + 1";
 		}
+		# Strip a level of indent
+		chop $il;
+		print "\n$il", "endwhile";
 		# Handle departure from blocks corresponding to <typ>'s that can be
 		# disabled
 		if (my ($typ) = grep { $_ eq $a1n[-1] } @can_dsbl) {
@@ -2134,7 +2005,7 @@ sub do_lvl($$$)
 				# Revert to toplevel (no bgc) matchgroup
 				# Note: Code emitted won't be reached if bgc_enabled is false
 				print "\n$il", '" Revert to toplevel (no background color) matchgroup';
-				print "\n$il", "let Tf_tok_group = Tf_top_tok_group" if $section eq LOOPS;
+				print "\n$il", "let Tf_tok_group = Tf_top_tok_group";
 			}
 			print "\n$il", "endif \" ${typ}_enabled";
 			print "\n$il", '"=============  END NON-INDENTING BLOCK  =============';
@@ -2142,15 +2013,11 @@ sub do_lvl($$$)
 	}
 }
 
-# Top level recursion for both sections
-# When the following call returns, the entire DEFS section will have been
-# output
+# Top level recursion
+# When the following call returns, all of the loops will have been output
 print "\t\" BEGIN AUTOGENERATED CODE BLOCK ", "<<<";
 print "\n\t\" Last update: ", scalar(localtime), "\n";
-do_lvl(DEFS, [], \@rgn);
-# When the following call returns, the entire LOOPS section will have been
-# output
-do_lvl(LOOPS, [], \@rgn);
+do_lvl([], \@rgn);
 print "\n\t\" END AUTOGENERATED CODE BLOCK ", ">>>";
 
 __END__
