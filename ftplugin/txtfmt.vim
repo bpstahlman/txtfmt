@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2008 May 10
+" Last Change: 2016 May 14
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
