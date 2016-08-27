@@ -655,65 +655,68 @@ fu! s:Define_syntax()
 			\{'name': 'bgc', 'max': b:txtfmt_cfg_numbgcolors})
 	endif
 
-	fu! Is_uniq_combo(ls)
-		let [i, n] = [0, len(a:ls)]
-		while i < n - 1
-			if index(a:ls, a:ls[i], i + 1) >= 0
-				return 0
-			endif
-			let i += 1
-		endwhile
-		return 1
-	endfu
-
 	let num_rgn_typs = len(rgn_info)
 	let ir = 0
 	while ir < num_rgn_typs
-		echo "-- " . (ir + 1) . " type regions --"
 		" Initialize lists.
-		let [idxs, jdxs] = [[], []]
+		let [mods, jdxs] = [[], []]
 		let i = 0
 		while i <= ir
-			call add(idxs, i)
+			" Modulo governing when rotation at this position is followed by
+			" carry leftward
+			" Note: Something's wrong with the logic here; modulo is too small
+			" - not resetting often enough.
+			call add(mods, num_rgn_typs - i)
+			" All clr/fmt/bgc indices start at 1 (i.e., skip end tok)
 			call add(jdxs, 1)
 			let i += 1
 		endwhile
-		" Main loop for this # of rgns
+		" Increment the multi-ary 'odometer'.
+		" Note: i will become < 0 only when carry occurs at index 0
 		let i = 0
 		while i >= 0
-			" Skip combinations in which same idx appears in multiple spots:
-			" e.g., bgc fmt bgc
-			if Is_uniq_combo(idxs)
-				let rgns = map(deepcopy(idxs), 'rgn_info[v:val].name')
-				"echo "i=" . i . ", ir=" . ir
-				echo join(rgns, "-")
-			endif
+			" TODO: Split up name/max for efficient reasons.
+			let rgns = map(rgn_info[0:ir], 'v:val.name')
+			"echo "i=" . i . ", ir=" . ir
+			echo join(rgns, "") . "_" . join(jdxs, "_")
 
 			" Update indices, working from right to left in counter fashion.
+			" Note: When ir < num_rgn_typs, we rotate every time j rolls over,
+			" as there's an implicit carry from positions to the right (which
+			" we're not bothering to iterate over, as the positions themselves
+			" are unused).
 			let i = ir
 			while i >= 0
-				"echo "jdxs[i]=" . jdxs[i] . ", idxs[i]=" . idxs[i] . ", rgn_info[idxs[i]]=" . rgn_info[idxs[i]].max
 				let jdxs[i] += 1
-				if jdxs[i] > rgn_info[idxs[i]].max
-					"echo "jdxs[i] = " . jdxs[i]
+				if jdxs[i] > rgn_info[i].max
 					let jdxs[i] = 1
-					" UNDER CONSTRUCTION !!!!!!!
-					" Move to next rgn type in this position.
-					let idxs[i] += 1
-					if idxs[i] >= num_rgn_typs
-						" Finished types for this position.
-						let idxs[i] = 0
+					" Skip pointless rotation of single element
+					if i < num_rgn_typs - 1
+						" Rotate i to end
+						" Optimization Possibility: Don't really need to rotate
+						" when i == ir, since there are no affected positions
+						" rightward.
+						let r = remove(rgn_info, i)
+						call add(rgn_info, r)
+					endif
+					echo "i=" . i . ", mods[i]=" . mods[i] . ", mods[]=" . string(mods)
+					let mods[i] -= 1
+					if mods[i] <= 0
+						" Carry leftward and reset modulo down counter
+						let mods[i] = num_rgn_typs - i
 					else
 						" No need to go further left.
-						"echo "stopping leftward"
 						break
 					endif
 					" Keep going leftward unless we're done
 					let i -= 1
 					if i < 0
-						"echo "Breaking..."
+						" Hit modulo in 1st position: we're done.
 						break
 					endif
+				else
+					" j hasn't rolled over
+					break
 				endif
 			endwhile
 		endwhile
