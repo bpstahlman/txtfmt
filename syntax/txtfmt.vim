@@ -684,15 +684,18 @@ fu! s:Define_syntax()
 			" Skip combinations in which same idx appears in multiple spots:
 			" e.g., bgc fmt bgc
 			if Is_uniq_combo(idxs)
-				let rgns = map(idxs, 'rgn_info[v:val].name')
+				let rgns = map(deepcopy(idxs), 'rgn_info[v:val].name')
+				"echo "i=" . i . ", ir=" . ir
 				echo join(rgns, "-")
 			endif
 
 			" Update indices, working from right to left in counter fashion.
 			let i = ir
 			while i >= 0
+				"echo "jdxs[i]=" . jdxs[i] . ", idxs[i]=" . idxs[i] . ", rgn_info[idxs[i]]=" . rgn_info[idxs[i]].max
 				let jdxs[i] += 1
 				if jdxs[i] > rgn_info[idxs[i]].max
+					"echo "jdxs[i] = " . jdxs[i]
 					let jdxs[i] = 1
 					" UNDER CONSTRUCTION !!!!!!!
 					" Move to next rgn type in this position.
@@ -702,16 +705,19 @@ fu! s:Define_syntax()
 						let idxs[i] = 0
 					else
 						" No need to go further left.
+						"echo "stopping leftward"
+						break
+					endif
+					" Keep going leftward unless we're done
+					let i -= 1
+					if i < 0
+						"echo "Breaking..."
 						break
 					endif
 				endif
-				" Keep going leftward unless we're done
-				let i -= 1
-				if i < 0
-					break
-				endif
 			endwhile
 		endwhile
+		"echo "Incrementing ir"
 		let ir += 1
 	endwhile
 	" TEMP DEBUG
