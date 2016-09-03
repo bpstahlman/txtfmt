@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2016 May 14
+" Last Change: 2016 Sep 03
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
@@ -3619,6 +3619,11 @@ fu! s:Tok_nr_to_char(rgn, idx)
 endfu
 
 " TODO: Remove if this ends up not being needed.
+" Caveat: It's come to my attention that calls to getpos() with a mark of '>
+" will cause large negative number to be reported for column, so if this is ever
+" resurrected, will need to take that into account (probably by replacing call
+" to getpos() with line()/col() equivalents, as was done in Highlight_visual and
+" Delete_visual).
 fu! s:Get_pos_past_rgn(opt)
 	let mark = a:opt.mode == 'visual' ? "'>" : "']"
 	let pos = getpos(mark)[1:2]
@@ -4263,8 +4268,14 @@ fu! s:Delete_visual()
 		throw "Delete_visual: blockwise-visual mode not supported"
 	endif
 	try
+		let [l1, l2] = [line("'<"), line("'>")]
 		" TODO: Perhaps switch to call form, since return not used.
-		let opt = s:Delete_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2]}, 'visual')
+		" TODO: Refactor the line/col workaround for problematic getpos("'>")
+		" into separate function, since it's also used in Highlight_visual.
+		let opt = s:Delete_region({
+			\'beg': [l1, col([l1, col("'<")])],
+			\'end': [l2, col([l2, col("'>")])]},
+			\'visual')
 	catch
 		throw "Delete_visual: Unable to delete selection: "
 			\. v:exception . " occurred at " . v:throwpoint
@@ -4325,7 +4336,13 @@ fu! s:Highlight_visual()
 		throw "Highlight_visual: blockwise-visual mode not supported"
 	endif
 	try
-		let opt = s:Highlight_region({'beg': getpos("'<")[1:2], 'end': getpos("'>")[1:2]}, 'visual')
+		" Caveat: Use line() and col() to work around idiosyncrasy/bug with
+		" getpos(), which returns very large negative column number for '> mark.
+		let [l1, l2] = [line("'<"), line("'>")]
+		let opt = s:Highlight_region({
+			\'beg': [l1, col([l1, col("'<")])],
+			\'end': [l2, col([l2, col("'>")])]},
+			\'visual')
 		" Adjust '< and '> to account for any modifications.
 		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
 	catch
