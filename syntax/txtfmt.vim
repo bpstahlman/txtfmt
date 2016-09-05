@@ -523,6 +523,9 @@ fu! s:Define_syntax()
 		" we probably want foreground visible in that case).
 		exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok
 			\.'/ contained transparent conceal nextgroup=Tf_rgn_body'
+		" Special group for rtd tok that returns us to top level.
+		exe 'syn match Tf_tok_rtd /'.b:txtfmt_re_any_etok
+			\.'/ contained transparent conceal'
 		let conceal = ' conceal'
 	else
 		" Initialize tok concealment cluster with top-level group.
@@ -536,6 +539,8 @@ fu! s:Define_syntax()
 		" incorporated into Vim), users might have used Txtfmt tokens as word
 		" separators.
 		exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/ contained'
+		" Special group for rtd tok that returns us to top level.
+		exe 'syn match Tf_tok_rtd /'.b:txtfmt_re_any_etok.'/ contained'
 		let conceal = ''
 		" Design Decision: No reason to define highlights for the concealment
 		" groups when 'conceal' is set.
@@ -572,6 +577,7 @@ fu! s:Define_syntax()
 		" open, the Tf_conceal highlight is shared, but has no effect on the
 		" 'conceal' buffers.
 		hi link Tf_tok Tf_conceal
+		hi link Tf_tok_rtd Tf_conceal
 		" Create bgc-specific tok concealment groups and associated
 		" highlighting, adding the groups to the special Tf{cui}_tok
 		" cluster used in containedin's ALLBUT clause.
@@ -717,7 +723,6 @@ fu! s:Define_syntax()
 			let sidxs = sort(range(ir + 1),
 				\function('Sort_rgn_types'), {'rgn_info': rgn_info})
 
-			" <<<<<<<<<<<<<<<
 			" Add to appropriate clusters
 			let rgn_name = 'Tf' . cui . '_' . join(rgns, "") . "_" . join(offs, "_")
 			let cluster_name = 'Tf' . cui . '_'.join(rgns, "")
@@ -758,9 +763,10 @@ fu! s:Define_syntax()
 					\."_all"
 				let idx += 1
 			endwhile
+			" Make sure an end token ending an O1 region is concealed.
 			if ir == 0
 				" 1st order rgn
-				let ng .= ",Tf_tok'"
+				let ng .= ",Tf_tok_rtd"
 			endif
 			" Use substr to strip off the leading comma at the head of ng
 			let ng = " nextgroup=" . strpart(ng, 1)
@@ -790,16 +796,18 @@ fu! s:Define_syntax()
 				\	: '')
 				\.' end=/['
 				\.b:txtfmt_re_any_stok_atom
-				\.b:txtfmt_re_{rgns[-1]}_etok_atom
+				\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
 				\.']/me=e-'.tok_off.',he=e-'.tok_off
 				\.ng
 			" Differences:
 			" O1 has containedin_def in lieu of contained
 			" O3 has no rtd
 			" Define region that is begun by a start token
+			" TODO: Use 'extend' arg to enable removal of escape checking on
+			" various tokens.
 			exe 'syn region '.rgn_name
 				\.rgn_body
-				\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + jdxs[-1]).'/'
+				\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
 				\.(ir == 0
 				\ ? containedin_def
 				\ : ' contained')
@@ -828,7 +836,6 @@ fu! s:Define_syntax()
 				\.join(map(sidxs,
 				\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
 
-			" >>>>>>>>>>>>>>>
 			" Update indices, working from right to left in counter fashion.
 			" Note: When ir < num_rgn_typs, we rotate every time j rolls over,
 			" as there's an implicit carry from positions to the right (which
