@@ -680,28 +680,15 @@ fu! s:Define_syntax()
 	let num_rgn_typs = len(rgn_info)
 	let ir = 0
 	while ir < num_rgn_typs
-		" Initialize lists.
-		let [mods, jdxs] = [[], []]
-		let i = 0
-		while i <= ir
-			" Modulo governing when rotation at this position is followed by
-			" carry leftward
-			" Note: Something's wrong with the logic here; modulo is too small
-			" - not resetting often enough.
-			call add(mods, num_rgn_typs - i)
-			" All clr/fmt/bgc indices start at 1 (i.e., skip end tok)
-			call add(jdxs, 1)
-			let i += 1
-		endwhile
+		" TODO: Check this logic. Replaced loop in previous version.
+		" TODO: Refactor this up higher if it's even still needed.
+		let mods = range(num_rgn_typs, num_rgn_typs - ir, -1)
 		" Increment the multi-ary 'odometer'.
 		" Note: i will become < 0 only when carry occurs at index 0
 		let i = 0
 		while i >= 0
 			" TODO: Split up name/max for efficiency reasons.
 			let rgns = map(rgn_info[0:ir], 'v:val.name')
-			" Convert 0-based offset to token offset
-			let offs = map(range(ir + 1), 'rgn_info[v:val].name == "fmt"'
-				\.' ? jdxs[v:val] : rgn_info[v:val].offs[jdxs[v:val] - 1]')
 			let rest = map(rgn_info[ir + 1:], 'v:val.name')
 			" Sort indices into the order required by cterm=
 			" Note: dict attribute is used simply to allow us to pass data to
@@ -724,11 +711,8 @@ fu! s:Define_syntax()
 				\function('Sort_rgn_types'), {'rgn_info': rgn_info})
 
 			" Add to appropriate clusters
-			let rgn_name = 'Tf' . cui . '_' . join(rgns, "") . "_" . join(offs, "_")
-			let cluster_name = 'Tf' . cui . '_'.join(rgns, "")
-				\. (ir > 0 ? "_" : "") . join(offs[:-2], "_") . "_all"
-			exe 'syn cluster Tf' . cui . '_all add=' . rgn_name
-			exe 'syn cluster ' . cluster_name . ' add=' . rgn_name
+			let rgn_name_tpl = 'Tf' . cui . '_' . join(rgns, "")
+			let cluster_name_tpl = 'Tf' . cui . '_'.join(rgns, "")
 
 			" Description of lors, sors, hors
 			" These 3 arrays are a convenience. They are 2D arrays containing
@@ -736,51 +720,53 @@ fu! s:Define_syntax()
 			" preceding level, the current level, and the next level, respectively.
 
 			" Define nextgroup
-			let ng = ""
+			let ng_tpl = ""
 			let idx = 0
 			while ir && idx <= ir
 				let lors = range(idx) + range(idx + 1, ir)
 				" Transitions to lower-order groups (used to be rtd group)
 				" TODO: Consider whether better way to do this now that no '_rtd' appended.
-				let ng .= ",Tf".cui."_" . join(map(copy(lors), 'rgns[v:val]'), "") . "_"
-					\. join(map(copy(lors), 'offs[v:val]'), "_")
+				let ng_tpl .= ",Tf".cui."_" . join(map(copy(lors), 'rgns[v:val]'), "") . "_"
+					\. join(map(copy(lors), '"{" . v:val . "}"'), "_")
 				let idx += 1
 			endwhile
 			let idx = 0
 			while idx <= ir
 				let sors = range(0, idx - 1) + range(idx + 1, ir) + [idx]
-				let ng .= ",@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), "") . (
+				let ng_tpl .= ",@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), "") . (
 					\len(sors) > 1
-					\? "_" . join(map(copy(sors[0:-2]), 'offs[v:val]'), "_")
+					\? "_" . join(map(copy(sors[0:-2]), '"{" . v:val . "}"'), "_")
 					\: ""
 					\) . "_all"
 				let idx += 1
 			endwhile
 			let idx = ir + 1
 			while idx < num_rgn_typs
-				let ng .= ",@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_"
-					\.join(offs, "_")
+				let ng_tpl .= ",@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_"
+					\.join(map(range(ir + 1), '"{" . v:val . "}"'), "_")
 					\."_all"
 				let idx += 1
 			endwhile
+			"echo rgn_name_tpl . ": ng_tpl = " . ng_tpl
 			" Make sure an end token ending an O1 region is concealed.
 			if ir == 0
 				" 1st order rgn
-				let ng .= ",Tf_tok_rtd"
+				let ng_tpl .= ",Tf_tok_rtd"
 			endif
-			" Use substr to strip off the leading comma at the head of ng
-			let ng = " nextgroup=" . strpart(ng, 1)
+			" Use substr to strip off the leading comma at the head of ng_tpl
+			let ng_tpl = " nextgroup=" . strpart(ng_tpl, 1)
 
 			" Determine tok group and esc group.
 			" TODO: Create somewhere in single loop, or perhaps on first encounter.
 			let bgc_idx = index(rgns, 'bgc')
+			" TODO: Embed this logic later, changing only when necessary...
 			if bgc_idx >= 0
 				" This region contains bg color; use appropriate tok/esc
 				" concealment regions.
 				if !b:txtfmt_cfg_conceal
-					let Tf_tok_group = 'Tf'.cui.'_tok_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
+					"let Tf_tok_group = 'Tf'.cui.'_tok_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
 					if b:txtfmt_cfg_escape != 'none'
-						let Tf_esc_group = 'Tf'.cui.'_esc_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
+						"let Tf_esc_group = 'Tf'.cui.'_esc_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
 					endif
 				endif
 			else
@@ -788,93 +774,155 @@ fu! s:Define_syntax()
 				let Tf_esc_group = 'Tf_esc'
 			endif
 
-			" Cache the shared stuff
-			let rgn_body = skip
-				\.' keepend contains='.Tf_tok_group
-				\.(b:txtfmt_cfg_escape != 'none'
-				\	? ','.Tf_esc_group
-				\	: '')
-				\.' end=/['
-				\.b:txtfmt_re_any_stok_atom
-				\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-				\.']/me=e-'.tok_off.',he=e-'.tok_off
-				\.ng
-			" Differences:
-			" O1 has containedin_def in lieu of contained
-			" O3 has no rtd
-			" Define region that is begun by a start token
-			" TODO: Use 'extend' arg to enable removal of escape checking on
-			" various tokens.
-			exe 'syn region '.rgn_name
-				\.rgn_body
-				\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
-				\.(ir == 0
-				\ ? containedin_def
-				\ : ' contained')
-			" Define region that is begun by an end token
-			" (when permitted by a nextgroup)
-			" TODO: Use a2n
-			" Highest order regions have no rtd groups.
-			if ir < num_rgn_typs - 1
-				exe 'syn region '.rgn_name
-					\.rgn_body
-					\.' start=/['
-					\.join(map(rest, 'b:txtfmt_re_{v:val}_etok_atom'), "")
-					\.']/'
-					\.' contained'
-			endif
-			" Define highlighting for this region
-			" Note: cterm= MUST come *after* ctermfg= to ensure that bold
-			" attribute is handled correctly in a cterm.
-			"	:help cterm-colors
-			" Explanation: Having the term= after cterm= ensures that
-			" cterm=bold really means bold, and not bright color; note that
-			" bright colors can be achieved other ways (e.g., color # above 8)
-			" in terminals that support them.
-			" TODO: Can't hardcode like this...
-			exe 'hi '.rgn_name
-				\.join(map(sidxs,
-				\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
 
 			" Update indices, working from right to left in counter fashion.
 			" Note: When ir < num_rgn_typs, we rotate every time j rolls over,
 			" as there's an implicit carry from positions to the right (which
 			" we're not bothering to iterate over, as the positions themselves
 			" are unused).
+			let jdxs = repeat([1], ir + 1)
+			" Convert 0-based offset to token offset
+			let offs = map(range(ir + 1), 'rgn_info[v:val].name == "fmt"'
+				\.' ? 1 : rgn_info[v:val].offs[0]')
 			let i = ir
 			while i >= 0
-				let jdxs[i] += 1
-				if jdxs[i] > rgn_info[i].max
-					let jdxs[i] = 1
-					" Skip pointless rotation of single element
-					if i < num_rgn_typs - 1
-						" Rotate i to end
-						" Optimization Possibility: Don't really need to rotate
-						" when i == ir, since there are no affected positions
-						" rightward.
-						let r = remove(rgn_info, i)
-						call add(rgn_info, r)
+				" BEGIN TEMPLATE PROCESSING
+				let j = 0
+				let ng = ng_tpl
+				let rgn_name = rgn_name_tpl
+				let cluster_name = cluster_name_tpl
+				while j <= ir
+					"echo 'j=' . j . ', ir=' . ir . ', ' . string(jdxs) . ' ' . string(offs)
+					let ng = substitute(ng, '{'.j.'}', offs[j], 'g')
+					let rgn_name .= '_' . offs[j]
+					if j < ir
+						let cluster_name .= '_' . offs[j]
 					endif
-					let mods[i] -= 1
-					if mods[i] <= 0
-						" Carry leftward and reset modulo down counter
-						let mods[i] = num_rgn_typs - i
+					let j += 1
+				endwhile
+				let cluster_name .= '_all'
+				exe 'syn cluster Tf' . cui . '_all add=' . rgn_name
+				exe 'syn cluster ' . cluster_name . ' add=' . rgn_name
+				" ng, rgn_name
+				" Cache the shared stuff
+				let rgn_body = skip
+					\.' keepend contains='.Tf_tok_group
+					\.(b:txtfmt_cfg_escape != 'none'
+					\	? ','.Tf_esc_group
+					\	: '')
+					\.' end=/['
+					\.b:txtfmt_re_any_stok_atom
+					\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
+					\.']/me=e-'.tok_off.',he=e-'.tok_off
+					\.ng
+				" Differences:
+				" O1 has containedin_def in lieu of contained
+				" O3 has no rtd
+				" Define region that is begun by a start token
+				" TODO: Use 'extend' arg to enable removal of escape checking on
+				" various tokens.
+				exe 'syn region '.rgn_name
+					\.rgn_body
+					\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
+					\.(ir == 0
+					\ ? containedin_def
+					\ : ' contained')
+				" Define region that is begun by an end token
+				" (when permitted by a nextgroup)
+				" TODO: Use a2n
+				" Highest order regions have no rtd groups.
+				"echo "ir=" . ir . ", rest=" . string(rest)
+				if ir < num_rgn_typs - 1
+					exe 'syn region '.rgn_name
+						\.rgn_body
+						\.' start=/['
+						\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
+						\.']/'
+						\.' contained'
+				endif
+				" Define highlighting for this region
+				" Note: cterm= MUST come *after* ctermfg= to ensure that bold
+				" attribute is handled correctly in a cterm.
+				"	:help cterm-colors
+				" Explanation: Having the term= after cterm= ensures that
+				" cterm=bold really means bold, and not bright color; note that
+				" bright colors can be achieved other ways (e.g., color # above 8)
+				" in terminals that support them.
+				" TODO: Can't hardcode like this...
+				exe 'hi '.rgn_name
+					\.join(map(sidxs,
+					\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
+
+				" END TEMPLATE PROCESSING
+
+				" Update jdxs[]
+				let i = ir
+				while i >= 0
+					"echo "About to inc jdxs: " . jdxs[i] . ", offs[i] = " . offs[i]
+					let jdxs[i] += 1
+					"echo "i=" . i . ", jdxs[i]=" . jdxs[i] . ", rgn_info[i].max=" . rgn_info[i].max
+					if jdxs[i] > rgn_info[i].max
+						let jdxs[i] = 1
+						let offs[i] = rgn_info[i].name == "fmt"
+							\? 1 : rgn_info[i].offs[0]
+						" Keep going leftward unless we're done
+						let i -= 1
+						if i < 0
+							" Hit modulo in 1st position: we're done.
+							break
+						endif
 					else
-						" No need to go further left.
+						" j hasn't rolled over
+						if rgn_info[i].name == "fmt"
+							let offs[i] += 1
+						else
+							let offs[i] = rgn_info[i].offs[jdxs[i] - 1]
+						endif
 						break
 					endif
-					" Keep going leftward unless we're done
-					let i -= 1
-					if i < 0
-						" Hit modulo in 1st position: we're done.
-						break
-					endif
+				endwhile
+
+			endwhile
+
+			" =============
+			" Update indices, working from right to left in counter fashion.
+			" Note: When ir < num_rgn_typs, we rotate every time j rolls over,
+			" as there's an implicit carry from positions to the right (which
+			" we're not bothering to iterate over, as the positions themselves
+			" are unused).
+
+			" Modulo governing when rotation at this position is followed by
+			" carry leftward
+			let i = ir
+			while i >= 0
+				" Skip pointless rotation of single element
+				if i < num_rgn_typs - 1
+					" Rotate i to end
+					" Optimization Possibility: Don't really need to rotate
+					" when i == ir, since there are no affected positions
+					" rightward.
+					let r = remove(rgn_info, i)
+					call add(rgn_info, r)
+				endif
+				let mods[i] -= 1
+				"echo "Decremented mods[i]: " . mods[i]
+				if mods[i] <= 0
+					" Carry leftward and reset modulo down counter
+					let mods[i] = num_rgn_typs - i
 				else
-					" j hasn't rolled over
+					" No need to go further left.
+					break
+				endif
+				" Keep going leftward unless we're done
+				let i -= 1
+				if i < 0
+					" Hit modulo in 1st position: we're done.
 					break
 				endif
 			endwhile
+			"echo "Got out of mod loop!!!!!, i=" . i
 		endwhile
+		"echo "Incrementing ir!!!!"
 		let ir += 1
 	endwhile
 
