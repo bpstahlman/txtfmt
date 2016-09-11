@@ -679,6 +679,8 @@ fu! s:Define_syntax()
 	endfor
 	let num_rgn_typs = len(rgn_info)
 	let ir = 0
+	let profs = {'all': 0, 'prelim': 0, 'ng-pre': 0, 'cmn': 0, 'tpl-processing': 0, 'jdx-update': 0, 'all-perms': 0, 'build-ng': 0, 'build-rgn-body': 0, 'syn-region': 0, 'build-highlight': 0, 'build-clusters': 0}
+	let ts_all = reltime()
 	while ir < num_rgn_typs
 		" TODO: Check this logic. Replaced loop in previous version.
 		" TODO: Refactor this up higher if it's even still needed.
@@ -687,6 +689,7 @@ fu! s:Define_syntax()
 		" Note: i will become < 0 only when carry occurs at index 0
 		let i = 0
 		while i >= 0
+			let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
 			let rgns = map(rgn_info[0:ir], 'v:val.name')
 			let rest = map(rgn_info[ir + 1:], 'v:val.name')
@@ -718,7 +721,9 @@ fu! s:Define_syntax()
 			" These 3 arrays are a convenience. They are 2D arrays containing
 			" specific useful combinations of token type names corresponding to the
 			" preceding level, the current level, and the next level, respectively.
+			let profs['prelim'] += str2float(reltimestr(reltime(ts)))
 
+			let ts = reltime()
 			" Define nextgroup
 			let ng_tpl = ""
 			let idx = 0
@@ -755,6 +760,8 @@ fu! s:Define_syntax()
 			endif
 			" Use substr to strip off the leading comma at the head of ng_tpl
 			let ng_tpl = " nextgroup=" . strpart(ng_tpl, 1)
+			let rel = reltime(ts)
+			let profs['ng-pre'] += str2float(reltimestr(reltime(ts)))
 
 			" Determine tok group and esc group.
 			" TODO: Create somewhere in single loop, or perhaps on first encounter.
@@ -774,7 +781,24 @@ fu! s:Define_syntax()
 				let Tf_esc_group = 'Tf_esc'
 			endif
 
-
+			let ts = reltime()
+			" Common stuff...
+			let rgn_cmn = skip
+				\.' end=/['
+				\.b:txtfmt_re_any_stok_atom
+				\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
+				\.']/me=e-'.tok_off.',he=e-'.tok_off
+			let rgn_cmn1 = 
+				\(ir == 0
+				\ ? containedin_def
+				\ : ' contained')
+			let rgn_cmn2 =
+				\' start=/['
+				\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
+				\.']/'
+				\.' contained'
+			let profs['cmn'] += str2float(reltimestr(reltime(ts)))
+			let ts = reltime()
 			" Update indices, working from right to left in counter fashion.
 			" Note: When ir < num_rgn_typs, we rotate every time j rolls over,
 			" as there's an implicit carry from positions to the right (which
@@ -787,10 +811,13 @@ fu! s:Define_syntax()
 			let i = ir
 			while i >= 0
 				" BEGIN TEMPLATE PROCESSING
+				let ts1 = reltime()
+				let ts2 = reltime()
 				let j = 0
 				let ng = ng_tpl
 				let rgn_name = rgn_name_tpl
 				let cluster_name = cluster_name_tpl
+				" HOTSPOT - This loop takes around half the template time.
 				while j <= ir
 					"echo 'j=' . j . ', ir=' . ir . ', ' . string(jdxs) . ' ' . string(offs)
 					let ng = substitute(ng, '{'.j.'}', offs[j], 'g')
@@ -800,46 +827,49 @@ fu! s:Define_syntax()
 					endif
 					let j += 1
 				endwhile
+				let profs['build-ng'] += str2float(reltimestr(reltime(ts2)))
+				let ts2 = reltime()
 				let cluster_name .= '_all'
 				exe 'syn cluster Tf' . cui . '_all add=' . rgn_name
 				exe 'syn cluster ' . cluster_name . ' add=' . rgn_name
+				let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
+
 				" ng, rgn_name
 				" Cache the shared stuff
-				let rgn_body = skip
-					\.' keepend contains='.Tf_tok_group
+				" Factor out the unvarying portion, which includes end= !!!
+				let ts2 = reltime()
+				let rgn_body =
+					\' keepend contains='.Tf_tok_group
 					\.(b:txtfmt_cfg_escape != 'none'
 					\	? ','.Tf_esc_group
 					\	: '')
-					\.' end=/['
-					\.b:txtfmt_re_any_stok_atom
-					\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-					\.']/me=e-'.tok_off.',he=e-'.tok_off
+					\.rgn_cmn
 					\.ng
+				let profs['build-rgn-body'] += str2float(reltimestr(reltime(ts2)))
 				" Differences:
 				" O1 has containedin_def in lieu of contained
 				" O3 has no rtd
 				" Define region that is begun by a start token
 				" TODO: Use 'extend' arg to enable removal of escape checking on
 				" various tokens.
+				" Factor out the unvarying portion, which includes start= !!!
+				let ts2 = reltime()
 				exe 'syn region '.rgn_name
 					\.rgn_body
 					\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
-					\.(ir == 0
-					\ ? containedin_def
-					\ : ' contained')
+					\.rgn_cmn1
 				" Define region that is begun by an end token
 				" (when permitted by a nextgroup)
 				" TODO: Use a2n
 				" Highest order regions have no rtd groups.
 				"echo "ir=" . ir . ", rest=" . string(rest)
+				" Templatize this one.
 				if ir < num_rgn_typs - 1
 					exe 'syn region '.rgn_name
 						\.rgn_body
-						\.' start=/['
-						\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-						\.']/'
-						\.' contained'
+						\.rgn_cmn2
 				endif
+				let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
 				" Define highlighting for this region
 				" Note: cterm= MUST come *after* ctermfg= to ensure that bold
 				" attribute is handled correctly in a cterm.
@@ -849,12 +879,17 @@ fu! s:Define_syntax()
 				" bright colors can be achieved other ways (e.g., color # above 8)
 				" in terminals that support them.
 				" TODO: Can't hardcode like this...
+				" Templatize this somehow.
+				let ts2 = reltime()
 				exe 'hi '.rgn_name
 					\.join(map(sidxs,
 					\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
+				let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 
 				" END TEMPLATE PROCESSING
+				let profs['tpl-processing'] += str2float(reltimestr(reltime(ts1)))
 
+				let ts1 = reltime()
 				" Update jdxs[]
 				let i = ir
 				while i >= 0
@@ -881,8 +916,10 @@ fu! s:Define_syntax()
 						break
 					endif
 				endwhile
+				let profs['jdx-update'] += str2float(reltimestr(reltime(ts1)))
 
 			endwhile
+			let profs['all-perms'] += str2float(reltimestr(reltime(ts)))
 
 			" =============
 			" Update indices, working from right to left in counter fashion.
@@ -926,6 +963,9 @@ fu! s:Define_syntax()
 		let ir += 1
 	endwhile
 
+	let profs['all'] += str2float(reltimestr(reltime(ts_all)))
+
+	echo "Profile results: " . string(profs)
 	" Important Note: The following line may be executed on the Vim command
 	" line to regenerate the code within the BEGIN...<<< / END...>>> markers.
 	" The script generating the code is a perl script appended to the end of
