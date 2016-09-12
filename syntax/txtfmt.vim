@@ -732,7 +732,7 @@ fu! s:Define_syntax()
 				" Transitions to lower-order groups (used to be rtd group)
 				" TODO: Consider whether better way to do this now that no '_rtd' appended.
 				let ng_tpl .= ",Tf".cui."_" . join(map(copy(lors), 'rgns[v:val]'), "") . "_"
-					\. join(map(copy(lors), '"{" . v:val . "}"'), "_")
+					\. join(map(copy(lors), '"${idx" . v:val . "}"'), "_")
 				let idx += 1
 			endwhile
 			let idx = 0
@@ -740,7 +740,7 @@ fu! s:Define_syntax()
 				let sors = range(0, idx - 1) + range(idx + 1, ir) + [idx]
 				let ng_tpl .= ",@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), "") . (
 					\len(sors) > 1
-					\? "_" . join(map(copy(sors[0:-2]), '"{" . v:val . "}"'), "_")
+					\? "_" . join(map(copy(sors[0:-2]), '"${idx" . v:val . "}"'), "_")
 					\: ""
 					\) . "_all"
 				let idx += 1
@@ -748,7 +748,7 @@ fu! s:Define_syntax()
 			let idx = ir + 1
 			while idx < num_rgn_typs
 				let ng_tpl .= ",@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_"
-					\.join(map(range(ir + 1), '"{" . v:val . "}"'), "_")
+					\.join(map(range(ir + 1), '"${idx" . v:val . "}"'), "_")
 					\."_all"
 				let idx += 1
 			endwhile
@@ -772,8 +772,10 @@ fu! s:Define_syntax()
 				" concealment regions.
 				if !b:txtfmt_cfg_conceal
 					"let Tf_tok_group = 'Tf'.cui.'_tok_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
+					let Tf_tok_group = 'Tf'.cui.'_tok_${idx'.bgc_idx.'}'
 					if b:txtfmt_cfg_escape != 'none'
 						"let Tf_esc_group = 'Tf'.cui.'_esc_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
+						let Tf_esc_group = 'Tf'.cui.'_esc_${idx'.bgc_idx.'}'
 					endif
 				endif
 			else
@@ -783,11 +785,28 @@ fu! s:Define_syntax()
 
 			let ts = reltime()
 			" Common stuff...
-			let rgn_cmn = skip
+			let rgn_name_tpl = 'Tf' . cui . '_' . join(rgns, "")
+				\.'_'.join(map(range(ir + 1), '"${idx".v:val."}"'), "_")
+			let cls_exe_tpls = repeat([''], ir + 2)
+			let cls_exe_tpls[0] = 'syn cluster Tf'.cui.'_'.join(rgns, "")
+				\.(ir > 0
+				\  ?'_'.join(map(range(ir), '"${idx".v:val."}"'), "_")
+				\  :'').'_all add='.rgn_name_tpl
+			let cls_all_exe_tpls = repeat([''], ir + 2)
+			let cls_all_exe_tpls[0] = 'syn cluster Tf'.cui.'_all'
+				\.' add='.rgn_name_tpl
+			let rgn_cmn =
+				\'syn region '.rgn_name_tpl
+				\.skip
 				\.' end=/['
 				\.b:txtfmt_re_any_stok_atom
 				\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
 				\.']/me=e-'.tok_off.',he=e-'.tok_off
+				\.' keepend contains='.Tf_tok_group
+				\.(b:txtfmt_cfg_escape != 'none'
+				\	? ','.Tf_esc_group
+				\	: '')
+				\.ng_tpl
 			let rgn_cmn1 = 
 				\(ir == 0
 				\ ? containedin_def
@@ -797,6 +816,23 @@ fu! s:Define_syntax()
 				\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
 				\.']/'
 				\.' contained'
+			let rgn1_tpls = repeat([''], ir + 2)
+			let rgn1_tpls[0] = rgn_cmn.rgn_cmn1
+				\.' start=/${stok}/'
+				"\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
+			" Special Case: hi{n}
+			let hi_tpls = repeat([''], ir + 2)
+			let hi_tpls[0] = 'hi '.rgn_name_tpl
+				\.join(map(sidxs,
+				\    'eq_{rgns[v:val]}."${hi".v:val."}"'))
+				"b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
+			if ir < num_rgn_typs - 1
+				let rgn2_tpls = repeat([''], ir + 2)
+				let rgn2_tpls[0] = rgn_cmn.rgn_cmn2
+			else
+				" TODO: Decide on this...
+				let rgn2_tpls = []
+			endif
 			let profs['cmn'] += str2float(reltimestr(reltime(ts)))
 			let ts = reltime()
 			" Update indices, working from right to left in counter fashion.
@@ -809,42 +845,26 @@ fu! s:Define_syntax()
 			let offs = map(range(ir + 1), 'rgn_info[v:val].name == "fmt"'
 				\.' ? 1 : rgn_info[v:val].offs[0]')
 			let i = ir
+			" Force substs on all positions first time.
+			let min_i = 0
 			while i >= 0
 				" BEGIN TEMPLATE PROCESSING
+				" Indices: ${idx[n]}
+				" Special:
+				"   ${stok}   changes every iteration
+				"   ${hi[n]}  changes like index, but only in hi stuff
 				let ts1 = reltime()
 				let ts2 = reltime()
-				let j = 0
-				let ng = ng_tpl
-				let rgn_name = rgn_name_tpl
-				let cluster_name = cluster_name_tpl
-				" HOTSPOT - This loop takes around half the template time.
-				while j <= ir
-					"echo 'j=' . j . ', ir=' . ir . ', ' . string(jdxs) . ' ' . string(offs)
-					let ng = substitute(ng, '{'.j.'}', offs[j], 'g')
-					let rgn_name .= '_' . offs[j]
-					if j < ir
-						let cluster_name .= '_' . offs[j]
-					endif
-					let j += 1
-				endwhile
 				let profs['build-ng'] += str2float(reltimestr(reltime(ts2)))
 				let ts2 = reltime()
-				let cluster_name .= '_all'
-				exe 'syn cluster Tf' . cui . '_all add=' . rgn_name
-				exe 'syn cluster ' . cluster_name . ' add=' . rgn_name
+				"exe 'syn cluster Tf' . cui . '_all add=' . rgn_name
+				"exe 'syn cluster ' . cluster_name . ' add=' . rgn_name
 				let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 
 				" ng, rgn_name
 				" Cache the shared stuff
 				" Factor out the unvarying portion, which includes end= !!!
 				let ts2 = reltime()
-				let rgn_body =
-					\' keepend contains='.Tf_tok_group
-					\.(b:txtfmt_cfg_escape != 'none'
-					\	? ','.Tf_esc_group
-					\	: '')
-					\.rgn_cmn
-					\.ng
 				let profs['build-rgn-body'] += str2float(reltimestr(reltime(ts2)))
 				" Differences:
 				" O1 has containedin_def in lieu of contained
@@ -854,21 +874,46 @@ fu! s:Define_syntax()
 				" various tokens.
 				" Factor out the unvarying portion, which includes start= !!!
 				let ts2 = reltime()
-				exe 'syn region '.rgn_name
-					\.rgn_body
-					\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
-					\.rgn_cmn1
+				"exe 'syn region '.rgn_name
+				"	\.rgn_body
+				"	\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
+				"	\.rgn_cmn1
 				" Define region that is begun by an end token
 				" (when permitted by a nextgroup)
 				" TODO: Use a2n
 				" Highest order regions have no rtd groups.
 				"echo "ir=" . ir . ", rest=" . string(rest)
 				" Templatize this one.
+				" Perform only the required substitutions.
+				let ii = min_i
+				while ii <= ir
+					let rgn1_tpls[ii + 1] = substitute(rgn1_tpls[ii],
+						\'\${idx'.ii.'}', offs[ii], 'g')
+					if ir < num_rgn_typs - 1
+						let rgn2_tpls[ii + 1] = substitute(rgn2_tpls[ii],
+							\'\${idx'.ii.'}', offs[ii], 'g')
+					endif
+					let cls_exe_tpls[ii + 1] = substitute(cls_exe_tpls[ii],
+						\'\${idx'.ii.'}', offs[ii], 'g')
+					let cls_all_exe_tpls[ii + 1] = substitute(cls_all_exe_tpls[ii],
+						\'\${idx'.ii.'}', offs[ii], 'g')
+					let hi_tpls[ii + 1] = substitute(hi_tpls[ii],
+						\'\${idx'.ii.'}', offs[ii], 'g')
+					let hi_tpls[ii + 1] = substitute(hi_tpls[ii + 1],
+						\'\${hi'.ii.'}', b:txtfmt_{rgns[ii]}{offs[ii]}, 'g')
+					let ii += 1
+				endwhile
+				" Note: No need for global on this.
+				let rgn1_tpls[-1] = substitute(rgn1_tpls[-1],
+					\'\${stok}', nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]), '')
+				"b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
+				echo rgn1_tpls[-1]
 				if ir < num_rgn_typs - 1
-					exe 'syn region '.rgn_name
-						\.rgn_body
-						\.rgn_cmn2
+					echo rgn2_tpls[-1]
 				endif
+				echo cls_exe_tpls[-1]
+				echo cls_all_exe_tpls[-1]
+				echo hi_tpls[-1]
 				let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
 				" Define highlighting for this region
 				" Note: cterm= MUST come *after* ctermfg= to ensure that bold
@@ -881,9 +926,10 @@ fu! s:Define_syntax()
 				" TODO: Can't hardcode like this...
 				" Templatize this somehow.
 				let ts2 = reltime()
-				exe 'hi '.rgn_name
-					\.join(map(sidxs,
-					\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
+				echo hi_tpls[-1]
+				"exe 'hi '.rgn_name
+				"	\.join(map(sidxs,
+				"	\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
 				let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 
 				" END TEMPLATE PROCESSING
@@ -916,6 +962,9 @@ fu! s:Define_syntax()
 						break
 					endif
 				endwhile
+				" Note: Record the min position changed so we can avoid
+				" unnecessary substs.
+				let min_i = i
 				let profs['jdx-update'] += str2float(reltimestr(reltime(ts1)))
 
 			endwhile
