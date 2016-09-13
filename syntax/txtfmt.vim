@@ -679,7 +679,7 @@ fu! s:Define_syntax()
 	endfor
 	let num_rgn_typs = len(rgn_info)
 	let ir = 0
-	let profs = {'all': 0, 'prelim': 0, 'ng-pre': 0, 'cmn': 0, 'tpl-processing': 0, 'jdx-update': 0, 'all-perms': 0, 'build-ng': 0, 'build-rgn-body': 0, 'syn-region': 0, 'build-highlight': 0, 'build-clusters': 0}
+	let profs = {'all': 0, 'prelim': 0, 'ng-pre': 0, 'cmn': 0, 'subst': 0, 'tpl-processing': 0, 'jdx-update': 0, 'all-perms': 0, 'build-ng': 0, 'build-rgn-body': 0, 'syn-region': 0, 'build-highlight': 0, 'build-clusters': 0}
 	let ts_all = reltime()
 	while ir < num_rgn_typs
 		" TODO: Check this logic. Replaced loop in previous version.
@@ -689,7 +689,7 @@ fu! s:Define_syntax()
 		" Note: i will become < 0 only when carry occurs at index 0
 		let i = 0
 		while i >= 0
-			let ts = reltime()
+			"let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
 			let rgns = map(rgn_info[0:ir], 'v:val.name')
 			let rest = map(rgn_info[ir + 1:], 'v:val.name')
@@ -721,9 +721,9 @@ fu! s:Define_syntax()
 			" These 3 arrays are a convenience. They are 2D arrays containing
 			" specific useful combinations of token type names corresponding to the
 			" preceding level, the current level, and the next level, respectively.
-			let profs['prelim'] += str2float(reltimestr(reltime(ts)))
+			"let profs['prelim'] += str2float(reltimestr(reltime(ts)))
 
-			let ts = reltime()
+			"let ts = reltime()
 			" Define nextgroup
 			let ng_tpl = ""
 			let idx = 0
@@ -760,8 +760,8 @@ fu! s:Define_syntax()
 			endif
 			" Use substr to strip off the leading comma at the head of ng_tpl
 			let ng_tpl = " nextgroup=" . strpart(ng_tpl, 1)
-			let rel = reltime(ts)
-			let profs['ng-pre'] += str2float(reltimestr(reltime(ts)))
+			"let rel = reltime(ts)
+			"let profs['ng-pre'] += str2float(reltimestr(reltime(ts)))
 
 			" Determine tok group and esc group.
 			" TODO: Create somewhere in single loop, or perhaps on first encounter.
@@ -783,7 +783,7 @@ fu! s:Define_syntax()
 				let Tf_esc_group = 'Tf_esc'
 			endif
 
-			let ts = reltime()
+			"let ts = reltime()
 			" Common stuff...
 			let rgn_name_tpl = 'Tf' . cui . '_' . join(rgns, "")
 				\.'_'.join(map(range(ir + 1), '"${idx".v:val."}"'), "_")
@@ -833,8 +833,8 @@ fu! s:Define_syntax()
 				" TODO: Decide on this...
 				let rgn2_tpls = []
 			endif
-			let profs['cmn'] += str2float(reltimestr(reltime(ts)))
-			let ts = reltime()
+			"let profs['cmn'] += str2float(reltimestr(reltime(ts)))
+			"let ts = reltime()
 			" Update indices, working from right to left in counter fashion.
 			" Note: When ir < num_rgn_typs, we rotate every time j rolls over,
 			" as there's an implicit carry from positions to the right (which
@@ -853,38 +853,24 @@ fu! s:Define_syntax()
 				" Special:
 				"   ${stok}   changes every iteration
 				"   ${hi[n]}  changes like index, but only in hi stuff
-				let ts1 = reltime()
-				let ts2 = reltime()
-				let profs['build-ng'] += str2float(reltimestr(reltime(ts2)))
-				let ts2 = reltime()
-				"exe 'syn cluster Tf' . cui . '_all add=' . rgn_name
-				"exe 'syn cluster ' . cluster_name . ' add=' . rgn_name
-				let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
+				"let ts1 = reltime()
 
 				" ng, rgn_name
 				" Cache the shared stuff
 				" Factor out the unvarying portion, which includes end= !!!
-				let ts2 = reltime()
-				let profs['build-rgn-body'] += str2float(reltimestr(reltime(ts2)))
 				" Differences:
 				" O1 has containedin_def in lieu of contained
 				" O3 has no rtd
 				" Define region that is begun by a start token
 				" TODO: Use 'extend' arg to enable removal of escape checking on
 				" various tokens.
-				" Factor out the unvarying portion, which includes start= !!!
-				let ts2 = reltime()
-				"exe 'syn region '.rgn_name
-				"	\.rgn_body
-				"	\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
-				"	\.rgn_cmn1
 				" Define region that is begun by an end token
 				" (when permitted by a nextgroup)
 				" TODO: Use a2n
 				" Highest order regions have no rtd groups.
 				"echo "ir=" . ir . ", rest=" . string(rest)
-				" Templatize this one.
 				" Perform only the required substitutions.
+				"let ts2 = reltime()
 				let ii = min_i
 				while ii <= ir
 					let rgn1_tpls[ii + 1] = substitute(rgn1_tpls[ii],
@@ -906,15 +892,21 @@ fu! s:Define_syntax()
 				" Note: No need for global on this.
 				let rgn1_tpls[-1] = substitute(rgn1_tpls[-1],
 					\'\${stok}', nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]), '')
+				"let profs['subst'] += str2float(reltimestr(reltime(ts2)))
 				"b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
-				echo rgn1_tpls[-1]
+				"let ts2 = reltime()
+				exe rgn1_tpls[-1]
 				if ir < num_rgn_typs - 1
-					echo rgn2_tpls[-1]
+					exe rgn2_tpls[-1]
 				endif
-				echo cls_exe_tpls[-1]
-				echo cls_all_exe_tpls[-1]
-				echo hi_tpls[-1]
-				let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
+				"let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
+				"let ts2 = reltime()
+				exe cls_exe_tpls[-1]
+				exe cls_all_exe_tpls[-1]
+				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
+				"let ts2 = reltime()
+				exe hi_tpls[-1]
+				"let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 				" Define highlighting for this region
 				" Note: cterm= MUST come *after* ctermfg= to ensure that bold
 				" attribute is handled correctly in a cterm.
@@ -925,17 +917,11 @@ fu! s:Define_syntax()
 				" in terminals that support them.
 				" TODO: Can't hardcode like this...
 				" Templatize this somehow.
-				let ts2 = reltime()
-				echo hi_tpls[-1]
-				"exe 'hi '.rgn_name
-				"	\.join(map(sidxs,
-				"	\'eq_{rgns[v:val]}.b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
-				let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 
 				" END TEMPLATE PROCESSING
-				let profs['tpl-processing'] += str2float(reltimestr(reltime(ts1)))
+				"let profs['tpl-processing'] += str2float(reltimestr(reltime(ts1)))
 
-				let ts1 = reltime()
+				"let ts1 = reltime()
 				" Update jdxs[]
 				let i = ir
 				while i >= 0
@@ -965,10 +951,10 @@ fu! s:Define_syntax()
 				" Note: Record the min position changed so we can avoid
 				" unnecessary substs.
 				let min_i = i
-				let profs['jdx-update'] += str2float(reltimestr(reltime(ts1)))
+				"let profs['jdx-update'] += str2float(reltimestr(reltime(ts1)))
 
 			endwhile
-			let profs['all-perms'] += str2float(reltimestr(reltime(ts)))
+			"let profs['all-perms'] += str2float(reltimestr(reltime(ts)))
 
 			" =============
 			" Update indices, working from right to left in counter fashion.
@@ -1012,7 +998,7 @@ fu! s:Define_syntax()
 		let ir += 1
 	endwhile
 
-	let profs['all'] += str2float(reltimestr(reltime(ts_all)))
+	"let profs['all'] += str2float(reltimestr(reltime(ts_all)))
 
 	echo "Profile results: " . string(profs)
 	" Important Note: The following line may be executed on the Vim command
