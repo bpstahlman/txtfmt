@@ -449,6 +449,79 @@ fu! s:Sort_rgn_types(a, b)
 	elseif a == 'bgc'
 		return b == 'fmt' ? -1 : 1
 endfu
+" States: 0=empty, 1=expr, 2=literal
+fu! s:Make_exe_builder()
+	let o = {'st': 0, 'st_beg': 0, 's': ''}
+	" Add list of deferred exprs and const separator.
+	" Note: The resulting construct is effectively an expr, since the
+	" separator will be interior if it is used at all.
+	fu! o.add_list(ls, sep)
+		call self.add(join(a:ls, " . '" . a:sep . "' . "))
+	endfu
+	" Prepare to append, taking current and next state into account.
+	fu! o.prep(st, ...)
+		if !self.st
+			" Save initial state.
+			let self.st_beg = a:st
+		elseif self.st == 1
+			if a:st == 1
+				let self.s .= " . "
+			elseif a:st == 2
+				let self.s .= " . '"
+			endif
+		elseif self.st == 2
+			if a:st == 1
+				let self.s .= "' . "
+			endif
+		endif
+
+		let self.st = a:0 ? a:1 : a:st
+	endfu
+	" Optional arg:
+	"   literal
+	fu! o.add(o, ...)
+		if type(a:o) == 4
+			" Object
+			" Note: Only non-empty objects have any effect.
+			if a:o.st
+				call self.prep(a:o.st_beg, a:o.st)
+				let self.s .= a:o.s
+			endif
+		else
+			" expr or literal
+			call self.prep(!a:0 || !a:1 ? 1 : 2)
+			let self.s .= a:o
+		endif
+	endfu
+	fu! o.get()
+		return self.s
+	endfu
+	" Note: This doesn't change state in any way.
+	fu! o.get_estr()
+		" TODO: Might be able to handle empty as empty literal.
+		if !self.st
+			return "''"
+		else
+			" Handle beginning.
+			let s = self.s
+			if self.st_beg == 2
+				let s = "'" . s
+			endif
+			" Handle end.
+			if self.st == 2
+				let s .= "'"
+			endif
+			return s
+		endif
+		" If we get here, no mods were necessary.
+		return self.s
+	endfu
+	fu! o.reset()
+		let [self.s, self.st, self.st_beg] = ['', 0, 0]
+	endfu
+	" Return object with encapsulated state.
+	return o
+endfu
 " Function: s:Define_syntax_no_perl() <<<
 fu! s:Define_syntax()
 	" Define a convenience flag that indicates whether background colors are
@@ -714,8 +787,6 @@ fu! s:Define_syntax()
 				\function('Sort_rgn_types'), {'rgn_info': rgn_info})
 
 			" Add to appropriate clusters
-			let rgn_name_tpl = 'Tf' . cui . '_' . join(rgns, "")
-			let cluster_name_tpl = 'Tf' . cui . '_'.join(rgns, "")
 
 			" Description of lors, sors, hors
 			" These 3 arrays are a convenience. They are 2D arrays containing
@@ -725,88 +796,105 @@ fu! s:Define_syntax()
 
 			"let ts = reltime()
 			" Define nextgroup
-			let ng_tpl = ""
+			let ng_xb = s:Make_exe_builder()
+			call ng_xb.add(" nextgroup=", 1)
 			let idx = 0
+			let need_comma = 0
 			while ir && idx <= ir
 				let lors = range(idx) + range(idx + 1, ir)
 				" Transitions to lower-order groups (used to be rtd group)
 				" TODO: Consider whether better way to do this now that no '_rtd' appended.
-				let ng_tpl .= ",Tf".cui."_" . join(map(copy(lors), 'rgns[v:val]'), "") . "_"
-					\. join(map(copy(lors), '"${idx" . v:val . "}"'), "_")
+				call ng_xb.add((need_comma ? "," : "") . "Tf".cui."_", 1)
+				call ng_xb.add(join(map(copy(lors), 'rgns[v:val]'), "") . "_", 1)
+				call ng_xb.add(join(map(copy(lors), '"offs[" . v:val . "]"'), " . '_' . "))
 				let idx += 1
+				let need_comma = 1
 			endwhile
 			let idx = 0
 			while idx <= ir
 				let sors = range(0, idx - 1) + range(idx + 1, ir) + [idx]
-				let ng_tpl .= ",@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), "") . (
-					\len(sors) > 1
-					\? "_" . join(map(copy(sors[0:-2]), '"${idx" . v:val . "}"'), "_")
-					\: ""
-					\) . "_all"
+				call ng_xb.add((need_comma ? "," : "")
+					\. "@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), ""), 1)
+				if len(sors) > 1
+					call ng_xb.add("_", 1)
+					call ng_xb.add(join(map(copy(sors[0:-2]), '"offs[" . v:val . "]"'), " . '_' . "))
+				endif
+				call ng_xb.add("_all", 1)
 				let idx += 1
+				let need_comma = 1
 			endwhile
 			let idx = ir + 1
 			while idx < num_rgn_typs
-				let ng_tpl .= ",@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_"
-					\.join(map(range(ir + 1), '"${idx" . v:val . "}"'), "_")
-					\."_all"
+				call ng_xb.add((need_comma ? "," : "")
+					\. "@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_", 1)
+				call ng_xb.add(join(map(range(ir + 1), '"offs[" . v:val . "]"'), " . '_' . "))
+				call ng_xb.add("_all", 1)
 				let idx += 1
+				let need_comma = 1
 			endwhile
-			"echo rgn_name_tpl . ": ng_tpl = " . ng_tpl
 			" Make sure an end token ending an O1 region is concealed.
 			if ir == 0
 				" 1st order rgn
-				let ng_tpl .= ",Tf_tok_rtd"
+				call ng_xb.add(",Tf_tok_rtd", 1)
 			endif
-			" Use substr to strip off the leading comma at the head of ng_tpl
-			let ng_tpl = " nextgroup=" . strpart(ng_tpl, 1)
 			"let rel = reltime(ts)
 			"let profs['ng-pre'] += str2float(reltimestr(reltime(ts)))
+			" TODO: Get ng eval str here...
 
 			" Determine tok group and esc group.
 			" TODO: Create somewhere in single loop, or perhaps on first encounter.
 			let bgc_idx = index(rgns, 'bgc')
 			" TODO: Embed this logic later, changing only when necessary...
+			let tok_group_xb = s:Make_exe_builder()
+			let esc_group_xb = s:Make_exe_builder()
+			" TODO: Handle this a different way...
+			call tok_group_xb.add('Tf_tok', 1)
+			call esc_group_xb.add('Tf_esc', 1)
 			if bgc_idx >= 0
 				" This region contains bg color; use appropriate tok/esc
 				" concealment regions.
 				if !b:txtfmt_cfg_conceal
-					"let Tf_tok_group = 'Tf'.cui.'_tok_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
 					let Tf_tok_group = 'Tf'.cui.'_tok_${idx'.bgc_idx.'}'
+					call tok_group_xb.add('Tf'.cui.'_tok_', 1)
+					call tok_group_xb.add("offs[" . bgc_idx . "]")
 					if b:txtfmt_cfg_escape != 'none'
-						"let Tf_esc_group = 'Tf'.cui.'_esc_'.rgn_info[bgc_idx].offs[jdxs[bgc_idx] - 1]
-						let Tf_esc_group = 'Tf'.cui.'_esc_${idx'.bgc_idx.'}'
+						call esc_group_xb.add('Tf'.cui.'_esc_', 1)
+						call esc_group_xb.add("offs[" . bgc_idx . "]")
 					endif
 				endif
-			else
-				let Tf_tok_group = 'Tf_tok'
-				let Tf_esc_group = 'Tf_esc'
 			endif
 
 			"let ts = reltime()
 			" Common stuff...
-			let rgn_name_tpl = 'Tf' . cui . '_' . join(rgns, "")
-				\.'_'.join(map(range(ir + 1), '"${idx".v:val."}"'), "_")
-			let cls_exe_tpls = repeat([''], ir + 2)
-			let cls_exe_tpls[0] = 'syn cluster Tf'.cui.'_'.join(rgns, "")
-				\.(ir > 0
-				\  ?'_'.join(map(range(ir), '"${idx".v:val."}"'), "_")
-				\  :'').'_all add='.rgn_name_tpl
-			let cls_all_exe_tpls = repeat([''], ir + 2)
-			let cls_all_exe_tpls[0] = 'syn cluster Tf'.cui.'_all'
-				\.' add='.rgn_name_tpl
-			let rgn_cmn =
-				\'syn region '.rgn_name_tpl
-				\.skip
-				\.' end=/['
-				\.b:txtfmt_re_any_stok_atom
-				\.join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-				\.']/me=e-'.tok_off.',he=e-'.tok_off
-				\.' keepend contains='.Tf_tok_group
-				\.(b:txtfmt_cfg_escape != 'none'
-				\	? ','.Tf_esc_group
-				\	: '')
-				\.ng_tpl
+			let rgn_name_xb = s:Make_exe_builder()
+			call rgn_name_xb.add('Tf' . cui . '_' . join(rgns, "") . '_', 1)
+			" TODO: Consider loopifying this to avoid hybrid arg to add.
+			call rgn_name_xb.add(join(map(range(ir + 1), '"offs[" . v:val . "]"'), " . '_' . "))
+			let cls_xb = s:Make_exe_builder()
+			call cls_xb.add('syn cluster Tf'.cui.'_'.join(rgns, ""), 1)
+			if ir > 0
+				call cls_xb.add('_', 1)
+				call cls_xb.add(join(map(range(ir), '"offs[" . v:val . "]"'), " . '_' . "))
+			endif
+			call cls_xb.add('_all add=', 1)
+			call cls_xb.add(rgn_name_xb)
+			let cls_all_xb = s:Make_exe_builder()
+			call cls_all_xb.add('syn cluster Tf'.cui.'_all add=', 1)
+			call cls_all_xb.add(rgn_name_xb)
+			let rgn_cmn_xb = s:Make_exe_builder()
+			call rgn_cmn_xb.add('syn region ', 1)
+			call rgn_cmn_xb.add(rgn_name_xb)
+			call rgn_cmn_xb.add(skip . ' end=/[', 1)
+			call rgn_cmn_xb.add(b:txtfmt_re_any_stok_atom, 1)
+			call rgn_cmn_xb.add(join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
+				\. ']/me=e-'.tok_off.',he=e-'.tok_off
+				\.' keepend contains=', 1)
+			call rgn_cmn_xb.add(tok_group_xb)
+			if b:txtfmt_cfg_escape != 'none'
+				call rgn_cmn_xb.add(',', 1)
+				call rgn_cmn_xb.add(esc_group_xb)
+			endif
+			call rgn_cmn_xb.add(ng_xb)
 			let rgn_cmn1 = 
 				\(ir == 0
 				\ ? containedin_def
@@ -816,23 +904,35 @@ fu! s:Define_syntax()
 				\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
 				\.']/'
 				\.' contained'
-			let rgn1_tpls = repeat([''], ir + 2)
-			let rgn1_tpls[0] = rgn_cmn.rgn_cmn1
-				\.' start=/${stok}/'
-				"\.' start=/'.nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]).'/'
+			let rgn1_xb = s:Make_exe_builder()
+			call rgn1_xb.add(rgn_cmn_xb)
+			call rgn1_xb.add(rgn_cmn1 . ' start=/', 1)
+			" TODO: Consider having a placeholder var for this...
+			call rgn1_xb.add('nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1])')
+			call rgn1_xb.add('/', 1)
 			" Special Case: hi{n}
-			let hi_tpls = repeat([''], ir + 2)
-			let hi_tpls[0] = 'hi '.rgn_name_tpl
-				\.join(map(sidxs,
-				\    'eq_{rgns[v:val]}."${hi".v:val."}"'))
-				"b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
+			let hi_xb = s:Make_exe_builder()
+			call hi_xb.add('hi ', 1)
+			call hi_xb.add(rgn_name_xb)
+			let idx = 0
+			while idx <= ir
+				let sidx = sidxs[idx]
+				call hi_xb.add(eq_{rgns[sidx]}, 1)
+				call hi_xb.add('b:txtfmt_{rgns[' . sidx . ']}{offs[' . sidx . ']} ')
+				let idx += 1
+			endwhile
+			let rgn2_xb = s:Make_exe_builder()
 			if ir < num_rgn_typs - 1
-				let rgn2_tpls = repeat([''], ir + 2)
-				let rgn2_tpls[0] = rgn_cmn.rgn_cmn2
-			else
-				" TODO: Decide on this...
-				let rgn2_tpls = []
+				call rgn2_xb.add(rgn_cmn_xb)
+				" TODO: Perhaps move it down here...
+				call rgn2_xb.add(rgn_cmn2, 1)
 			endif
+			" Get some templates to eval.
+			let cls_estr = cls_xb.get_estr()
+			let cls_all_estr = cls_all_xb.get_estr()
+			let rgn1_estr = rgn1_xb.get_estr()
+			let hi_estr = hi_xb.get_estr()
+			let rgn2_estr = rgn2_xb.get_estr()
 			"let profs['cmn'] += str2float(reltimestr(reltime(ts)))
 			"let ts = reltime()
 			" Update indices, working from right to left in counter fashion.
@@ -855,57 +955,20 @@ fu! s:Define_syntax()
 				"   ${hi[n]}  changes like index, but only in hi stuff
 				"let ts1 = reltime()
 
-				" ng, rgn_name
-				" Cache the shared stuff
-				" Factor out the unvarying portion, which includes end= !!!
-				" Differences:
-				" O1 has containedin_def in lieu of contained
-				" O3 has no rtd
-				" Define region that is begun by a start token
-				" TODO: Use 'extend' arg to enable removal of escape checking on
-				" various tokens.
-				" Define region that is begun by an end token
-				" (when permitted by a nextgroup)
-				" TODO: Use a2n
-				" Highest order regions have no rtd groups.
-				"echo "ir=" . ir . ", rest=" . string(rest)
-				" Perform only the required substitutions.
-				"let ts2 = reltime()
-				let ii = min_i
-				while ii <= ir
-					let rgn1_tpls[ii + 1] = substitute(rgn1_tpls[ii],
-						\'\${idx'.ii.'}', offs[ii], 'g')
-					if ir < num_rgn_typs - 1
-						let rgn2_tpls[ii + 1] = substitute(rgn2_tpls[ii],
-							\'\${idx'.ii.'}', offs[ii], 'g')
-					endif
-					let cls_exe_tpls[ii + 1] = substitute(cls_exe_tpls[ii],
-						\'\${idx'.ii.'}', offs[ii], 'g')
-					let cls_all_exe_tpls[ii + 1] = substitute(cls_all_exe_tpls[ii],
-						\'\${idx'.ii.'}', offs[ii], 'g')
-					let hi_tpls[ii + 1] = substitute(hi_tpls[ii],
-						\'\${idx'.ii.'}', offs[ii], 'g')
-					let hi_tpls[ii + 1] = substitute(hi_tpls[ii + 1],
-						\'\${hi'.ii.'}', b:txtfmt_{rgns[ii]}{offs[ii]}, 'g')
-					let ii += 1
-				endwhile
-				" Note: No need for global on this.
-				let rgn1_tpls[-1] = substitute(rgn1_tpls[-1],
-					\'\${stok}', nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1]), '')
 				"let profs['subst'] += str2float(reltimestr(reltime(ts2)))
 				"b:txtfmt_{rgns[v:val]}{offs[v:val]}'), " ")
 				"let ts2 = reltime()
-				exe rgn1_tpls[-1]
+				exe eval(rgn1_estr)
 				if ir < num_rgn_typs - 1
-					exe rgn2_tpls[-1]
+					exe eval(rgn2_estr)
 				endif
 				"let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
-				exe cls_exe_tpls[-1]
-				exe cls_all_exe_tpls[-1]
+				exe eval(cls_estr)
+				exe eval(cls_all_estr)
 				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
-				exe hi_tpls[-1]
+				exe eval(hi_estr)
 				"let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 				" Define highlighting for this region
 				" Note: cterm= MUST come *after* ctermfg= to ensure that bold
@@ -1000,7 +1063,7 @@ fu! s:Define_syntax()
 
 	"let profs['all'] += str2float(reltimestr(reltime(ts_all)))
 
-	echo "Profile results: " . string(profs)
+	"echo "Profile results: " . string(profs)
 	" Important Note: The following line may be executed on the Vim command
 	" line to regenerate the code within the BEGIN...<<< / END...>>> markers.
 	" The script generating the code is a perl script appended to the end of
