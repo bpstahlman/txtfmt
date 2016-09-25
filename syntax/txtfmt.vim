@@ -209,7 +209,8 @@ fu! s:Get_smart_leading_indent_patt()
 			if ts % sw == 0 || sw % ts == 0
 				if sw < ts
 					" Note: A tab represents whole number of indents.
-					let re = '\t\+\%( \{' . sw . '}\)\{1,' . (ts / sw - 1) . '}'
+					" TODO: Do we need to guard against zero-length?
+					let re = '\t*\%( \{' . sw . '}\)\{,' . (ts / sw - 1) . '}'
 				else
 					" Note: A shift represents a whole number of tabs.
 					let re = '\%(\t\{' . (sw / ts) . '}\)\+'
