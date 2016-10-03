@@ -739,6 +739,99 @@ fu! s:Can_delete_tok()
 	return ret_val
 endfu
 " >>>
+" Shift functions <<<
+fu! s:Shift_left_normal()
+	let lsh = v:count1
+endfu
+fu! s:Shift_left_visual()
+	let [l1, l2] = [line("'<"), line("'>")]
+	call s:Lineshift(l1, l2, 1)
+endfu
+fu! s:Shift_left_operator(mode)
+	" Note: Ignore mode, as shifts are inherently linewise.
+	let [l1, l2] = [line("'["), line("']")]
+	call s:Lineshift(l1, l2, 1)
+endfu
+" Remove tokens within leading indent in each line in input range.
+" Return list indicating what was removed:
+" [
+"   {'lnum': lnum, 'toks': [{tokstr}, {start}, {end}]...]}]
+" Note: Only lines with tokens removed are represented in list.
+fu! s:Remove_toks_in_li(l1, l2)
+	let ret = []
+	for lnum in [a:l1, a:l2]
+		" Find extents of leading indent
+		let line_str = getline(lnum)
+		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
+		if li_end < 0
+			" Don't add list element if no leading indent.
+			continue
+		endif
+		" Work with just the leading indent.
+		let li_str = strpart(line_str, 0, li_end)
+		let li_strlen = len(li_str)
+		" Process all toks in the leading indent.
+		let [toks, uniq] = [[], {}]
+		let m = ['', -1, 0]
+		while m[2] >= 0 && m[2] < li_strlen
+			let m = matchstrpos(li_str, b:txtfmt_re_any_tok, m[2])
+			if m[1] >= 0 && !has_key(uniq, m[0])
+				let uniq[m[0]] = 1
+				call add(toks, m)
+			endif
+		endwhile
+		if empty(toks)
+			" Don't add list element if no toks in leading indent.
+			continue
+		endif
+		" Accumulate object representing this line into return list.
+		call add(ret, {'lnum': lnum, 'toks': toks})
+		" Rebuild the line without the toks found in leading indent.
+		" TODO: Subsume this into the loop above.
+		" Note: Caller doesn't really need anything but token itself in the toks
+		" list.
+		let [i, s] = [0, '']
+		for t in toks
+			let s .= strpart(li_str, i, t[1] - i)
+			" Skip over the token
+			let i = t[2]
+		endfor
+		" Accumulate remainder.
+		let s .= li_str[i:]
+		" Modify the line in the buffer.
+		call setline(lnum, s . line_str[li_end:])
+	endfor
+	return ret
+endfu
+fu! s:Restore_toks_after_li(toks)
+	for t in a:toks
+		" Find extents of leading indent
+		let line_str = getline(t['lnum'])
+		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
+		" Rebuild the buffer line in 3 parts: leading-indent ordered-toks rest
+		call setline(t['lnum'],
+			\(li_end >= 0 ? line_str[0:li_end - 1] : '')
+			\.join(map(copy(t['toks']), 'v:val[0]'), '')
+			\.(li_end < 0 ? line_str : line_str[li_end:]))
+	endfor
+endfu
+fu! s:Lineshift(l1, l2, dedent)
+
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(a:l1, a:l2)
+	echo toks
+	" Perform the indent/dedent on input range.
+	echo printf("%d,%d%s", a:l1, a:l2, a:dedent ? '<' : '>')
+	exe printf("%d,%d%s", a:l1, a:l2, a:dedent ? '<' : '>')
+
+	" Put back uniquified, ordered list of removed tokens just past leading
+	" indent.
+	call s:Restore_toks_after_li(toks)
+
+endfu
+" >>>
+
+" >>>
 " TODO: Perhaps move elsewhere...
 fu! Is_cursor_on_char()
 	" Note: The following test for something under the cursor works well even
@@ -6605,6 +6698,7 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\"<C-R>=<SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
 " >>>
+" auto-maps <<<
 " visual mode mappings <<<
 " Note: The following will work for either visual or select mode
 call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
@@ -6612,11 +6706,27 @@ call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
 call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
-" Operator-pending mode mappings <<<
+" operator-pending mode mappings <<<
 call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
 			\":set opfunc=<SID>Highlight_operator<CR>g@")
 call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 			\":set opfunc=<SID>Delete_operator<CR>g@")
+" >>>
+" >>>
+" shift maps <<<
+" normal mode shift mappings <<<
+call s:Def_map('n', '<LocalLeader><lt><lt>', '<Plug>TxtfmtShiftLeft',
+			\":<C-U>call <SID>Lineshift(line('.'), line('.') + v:count1 - 1, 1)<CR>")
+" >>>
+" visual mode shift mappings <<<
+" TODO: Using Vmap for consistency with auto-maps.
+call s:Def_map('v', '<LocalLeader><lt>', '<Plug>TxtfmtVmapShiftLeft',
+			\":<C-U>call <SID>Lineshift(line(\"'<\"), line(\"'>\"), 1)<CR>")
+" >>>
+" operator-pending mode shift mappings <<<
+call s:Def_map('n', '<LocalLeader><lt>', '<Plug>TxtfmtOperatorShiftLeft',
+			\":set opfunc=<SID>Shift_left_operator<CR>g@")
+" >>>
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',

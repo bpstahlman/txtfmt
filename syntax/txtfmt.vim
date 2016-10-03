@@ -209,7 +209,7 @@ fu! s:Get_smart_leading_indent_patt()
 			if ts % sw == 0 || sw % ts == 0
 				if sw < ts
 					" Note: A tab represents whole number of indents.
-					" TODO: Do we need to guard against zero-length?
+					" TODO: Do we need to guard against zero-length match?
 					let re = '\t*\%( \{' . sw . '}\)\{,' . (ts / sw - 1) . '}'
 				else
 					" Note: A shift represents a whole number of tabs.
@@ -339,6 +339,7 @@ endfu
 " >>>
 " Function: s:Hide_leading_indent_maybe <<<
 fu! s:Hide_leading_indent_maybe()
+	" TODO: Disable (set to 'none') in 'noconceal' case.
 	" Initialize the leading indent regex to an option-specific template that
 	" may be adjusted later.
 	if b:txtfmt_cfg_leadingindent == 'none'
@@ -398,12 +399,21 @@ fu! s:Hide_leading_indent_maybe()
 	endif
 	" Also match blank lines (whitespace and tokens only)
 	let re_li = '^\%(\%(\s\|' . re_tok . '\)\+$\|' . re_li . '\)'
+	let re_tok_or_ws = '\%(\s\|' . re_tok . '\)'
 	" Now the tricky part: need to be able to match *any* portion of the
 	" leading indent independently of the rest of it.
-	let re_tok_or_ws = '\%(\s\|' . re_tok . '\)'
-	let re_li = re_tok_or_ws . '\+\ze'
-		\.re_tok_or_ws . '*'
-		\.'\%(' . re_li . '\)\@<='
+	" TODO: In the 'smart' leading indent case, we have to look well past the
+	" matched region to determine whether or not we're inside leading indent;
+	" this isn't the case for other regimes, however, so we could simplify the
+	" pattern in those other cases, making it much more efficient, I think.
+	" Note: Whitespace and tokens must be treated as distinct groups, due to
+	" idiosyncrasy with Vim's handling of 'keepend' in :syn-match groups.
+	let re_li_ws = '\s\+\ze' . re_tok_or_ws . '*' . '\%(' . re_li . '\)\@<='
+	let re_li_tok = re_tok . '\ze' . re_tok_or_ws . '*' . '\%(' . re_li . '\)\@<='
+
+	" Persist re_li on the buffer so that it's available to lineshift
+	" functions.
+	let b:txtfmt_re_leading_indent = re_li
 
 	" Create the syntax group that will hide all highlighting in whatever is
 	" considered to be leading indent.
@@ -416,13 +426,17 @@ fu! s:Hide_leading_indent_maybe()
 	" them visible.
 	" TODO: Any other groups? Is Tf_conceal used for anything? What about
 	" cluster Tf0_all? Could I use that to simplify here?
-	exe 'syn match Tf_leading_indent /' . re_li . '/ contained'
+	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
+		\ . ' containedin=Tf_rgn_body,@Tf'.b:txtfmt_color_uniq_idx.'_all'
+		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
+	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
 		\ . ' containedin=Tf_rgn_body,@Tf'.b:txtfmt_color_uniq_idx.'_all'
 		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
 	" Note: No such color as 'none': simply leave color unset.
 	" TODO: Any reason to avoid setting gui in cterm and vice-versa (as we do
 	" in Define_syntax)?
-	hi Tf_leading_indent gui=none cterm=none
+	hi Tf_li_ws gui=none cterm=none
+	hi Tf_li_tok gui=none cterm=none
 
 	if b:txtfmt_cfg_conceal
 		" Treat unescaped tokens within leading whitespace differently from
@@ -431,12 +445,14 @@ fu! s:Hide_leading_indent_maybe()
 		" doesn't override the conceal attribute of the containing group.
 		" Rationale: I thought I might need this to ensure that the tokens
 		" would be concealed though the surrounding whitespace is not.
-		"exe 'syn match Tf_tok_in_li /' . re_tok
-			"\. '/ contained containedin=Tf_leading_indent transparent conceal'
+		"exe 'syn match Tf_li_tok /' . re_tok
+			"\. '/ contained containedin=Tf_li_ws transparent conceal'
 	else
-		exe 'syn match Tf_tok_in_li /' . re_tok
-			\. '/ contained containedin=Tf_leading_indent contains=NONE'
-		hi link Tf_tok_in_li Tf_conceal
+		" TODO: I'm thinking this may not be needed either, but need to
+		" verify. (23 Sep 2016)
+		exe 'syn match Tf_li_tok /' . re_tok
+			\. '/ contained containedin=Tf_li_ws contains=NONE'
+		hi link Tf_li_tok Tf_conceal
 	endif
 endfu
 " >>>
@@ -670,7 +686,7 @@ fu! s:Define_syntax()
 		endwhile
 	endif
 
-	exe 'syn match Tf_rgn_body /.*/ contained contains=NONE transparent'
+	exe 'syn match Tf_rgn_body /\_.*/ contained contains=NONE transparent'
 
 	" Create vars to facilitate switching between normal (top-level)
 	" tok/esc groups and background color-specific groups.
@@ -724,7 +740,7 @@ fu! s:Define_syntax()
 		" Note: In the 'noconceal' case, cluster will be populated later.
 		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.cui.'_tok'
 		if b:txtfmt_cfg_leadingindent != 'none'
-			let containedin_def .= ',Tf_leading_indent,Tf_tok_in_li'
+			let containedin_def .= ',Tf_li_ws,Tf_li_tok,Tf_li_tok'
 		endif
 	else
 		let containedin_def = ''
@@ -855,11 +871,11 @@ fu! s:Define_syntax()
 				" This region contains bg color; use appropriate tok/esc
 				" concealment regions.
 				if !b:txtfmt_cfg_conceal
-					let Tf_tok_group = 'Tf'.cui.'_tok_${idx'.bgc_idx.'}'
-					call tok_group_xb.add('Tf'.cui.'_tok_', 1)
+					"let Tf_tok_group = 'Tf'.cui.'_tok_${idx'.bgc_idx.'}'
+					call tok_group_xb.add(',Tf'.cui.'_tok_', 1)
 					call tok_group_xb.add("offs[" . bgc_idx . "]")
 					if b:txtfmt_cfg_escape != 'none'
-						call esc_group_xb.add('Tf'.cui.'_esc_', 1)
+						call esc_group_xb.add(',Tf'.cui.'_esc_', 1)
 						call esc_group_xb.add("offs[" . bgc_idx . "]")
 					endif
 				endif
@@ -1264,7 +1280,7 @@ fu! s:Define_syntax_stable()
 		endwhile
 	endif
 
-	exe 'syn match Tf_rgn_body /.*/ contained contains=NONE transparent'
+	exe 'syn match Tf_rgn_body /\_.*/ contained contains=NONE transparent'
 
 	" Create vars to facilitate switching between normal (top-level)
 	" tok/esc groups and background color-specific groups.
@@ -1320,7 +1336,7 @@ fu! s:Define_syntax_stable()
 		" Note: In the 'noconceal' case, cluster will be populated later.
 		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.cui.'_tok'
 		if b:txtfmt_cfg_leadingindent != 'none'
-			let containedin_def .= ',Tf_leading_indent,Tf_tok_in_li'
+			let containedin_def .= ',Tf_li_ws,Tf_li_tok'
 		endif
 	else
 		let containedin_def = ''
