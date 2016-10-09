@@ -740,17 +740,15 @@ fu! s:Can_delete_tok()
 endfu
 " >>>
 " Shift functions <<<
-fu! s:Shift_left_normal()
-	let lsh = v:count1
-endfu
-fu! s:Shift_left_visual()
-	let [l1, l2] = [line("'<"), line("'>")]
-	call s:Lineshift(l1, l2, 1)
-endfu
 fu! s:Shift_left_operator(mode)
+	call s:Lineshift(1)
+endfu
+fu! s:Shift_right_operator(mode)
+	call s:Lineshift(0)
+endfu
+fu! s:Shift_operator(dedent)
 	" Note: Ignore mode, as shifts are inherently linewise.
-	let [l1, l2] = [line("'["), line("']")]
-	call s:Lineshift(l1, l2, 1)
+	call s:Lineshift(a:dedent)
 endfu
 " Remove tokens within leading indent in each line in input range.
 " Return list indicating what was removed:
@@ -815,7 +813,41 @@ fu! s:Restore_toks_after_li(toks)
 			\.(li_end < 0 ? line_str : line_str[li_end:]))
 	endfor
 endfu
-fu! s:Lineshift(l1, l2, dedent)
+fu! s:Lineshift_impl(l1, l2, dedent)
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(a:l1, a:l2)
+	exe printf("%d,%d%s", a:l1, a:l2, a:dedent ? '<' : '>')
+
+	" Put back uniquified, ordered list of removed tokens just past leading
+	" indent.
+	call s:Restore_toks_after_li(toks)
+
+endfu
+
+fu! s:Lineshift(...)
+	if a:0 == 1
+		" Note: Ignore mode, as shifts are inherently linewise.
+		let [l1, l2, dedent] = [line("'["), line("']"), a:1]
+	else
+		" Get first char only of mode name.
+		let mode = mode()
+		if mode =~ '[vVsS]'
+			" visual
+			let [l1, l2, dedent] =
+				\[line("'<"), line("'>"), v:operator == '<' ? 1 : 0]
+		elseif mode == 'n'
+			" normal
+			let [l1, l2, dedent] =
+				\[line("."), line(".") + v:count1 - 1, v:operator == '<' ? 1 : 0]
+		elseif mode == 'c'
+			" command
+		endif	
+		
+	endif
+	call s:Lineshift_impl(l1, l2, dedent)
+endfu
+
+fu! s:Lineshift_old(l1, l2, dedent)
 
 	" Remove toks from leading indent.
 	let toks = s:Remove_toks_in_li(a:l1, a:l2)
@@ -6716,16 +6748,22 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " shift maps <<<
 " normal mode shift mappings <<<
 call s:Def_map('n', '<LocalLeader><lt><lt>', '<Plug>TxtfmtShiftLeft',
-			\":<C-U>call <SID>Lineshift(line('.'), line('.') + v:count1 - 1, 1)<CR>")
+			\":<C-U>call <SID>Lineshift()<CR>")
+call s:Def_map('n', '<LocalLeader>>>', '<Plug>TxtfmtShiftRight',
+			\":<C-U>call <SID>Lineshift()<CR>")
 " >>>
 " visual mode shift mappings <<<
 " TODO: Using Vmap for consistency with auto-maps.
 call s:Def_map('v', '<LocalLeader><lt>', '<Plug>TxtfmtVmapShiftLeft',
-			\":<C-U>call <SID>Lineshift(line(\"'<\"), line(\"'>\"), 1)<CR>")
+			\":<C-U>call <SID>Lineshift()<CR>")
+call s:Def_map('v', '<LocalLeader>>', '<Plug>TxtfmtVmapShiftRight',
+			\":<C-U>call <SID>Lineshift()<CR>")
 " >>>
 " operator-pending mode shift mappings <<<
 call s:Def_map('n', '<LocalLeader><lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":set opfunc=<SID>Shift_left_operator<CR>g@")
+call s:Def_map('n', '<LocalLeader>>', '<Plug>TxtfmtOperatorShiftRight',
+			\":set opfunc=<SID>Shift_right_operator<CR>g@")
 " >>>
 " >>>
 " normal mode get token info mapping <<<
