@@ -740,20 +740,10 @@ fu! s:Can_delete_tok()
 endfu
 " >>>
 " Shift functions <<<
-fu! s:Shift_left_operator(mode)
-	call s:Lineshift(1)
-endfu
-fu! s:Shift_right_operator(mode)
-	call s:Lineshift(0)
-endfu
-fu! s:Shift_operator(dedent)
-	" Note: Ignore mode, as shifts are inherently linewise.
-	call s:Lineshift(a:dedent)
-endfu
 " Remove tokens within leading indent in each line in input range.
 " Return list indicating what was removed:
 " [
-"   {'lnum': lnum, 'toks': [{tokstr}, {start}, {end}]...]}]
+"   {'lnum': lnum, 'toks': [{tokstr}...]}]
 " Note: Only lines with tokens removed are represented in list.
 fu! s:Remove_toks_in_li(l1, l2)
 	let ret = []
@@ -768,14 +758,31 @@ fu! s:Remove_toks_in_li(l1, l2)
 		" Work with just the leading indent.
 		let li_str = strpart(line_str, 0, li_end)
 		let li_strlen = len(li_str)
-		" Process all toks in the leading indent.
+		" Process all toks in the leading indent, rebuilding the line without
+		" them as we go...
 		let [toks, uniq] = [[], {}]
+		let [i, s] = [0, '']
 		let m = ['', -1, 0]
+		" Note: We're guaranteed to enter this while at least once.
 		while m[2] >= 0 && m[2] < li_strlen
 			let m = matchstrpos(li_str, b:txtfmt_re_any_tok, m[2])
-			if m[1] >= 0 && !has_key(uniq, m[0])
-				let uniq[m[0]] = 1
-				call add(toks, m)
+			if m[1] >= 0
+				" Found a token.
+				" Note: Uniquifying the list of tokens ensures that recombining
+				" them after the shift can't produce escape-escapee pairs,
+				" regardless of the 'escape' setting.
+				if !has_key(uniq, m[0])
+					let uniq[m[0]] = 1
+					" Add the token to the list.
+					call add(toks, m[0])
+				endif
+				" Accumulate up to tok.
+				let s .= strpart(li_str, i, m[1] - i)
+				" Skip over the token
+				let i = m[2]
+			else
+				" Accumulate remainder.
+				let s .= li_str[i:]
 			endif
 		endwhile
 		if empty(toks)
@@ -784,85 +791,72 @@ fu! s:Remove_toks_in_li(l1, l2)
 		endif
 		" Accumulate object representing this line into return list.
 		call add(ret, {'lnum': lnum, 'toks': toks})
-		" Rebuild the line without the toks found in leading indent.
-		" TODO: Subsume this into the loop above.
-		" Note: Caller doesn't really need anything but token itself in the toks
-		" list.
-		let [i, s] = [0, '']
-		for t in toks
-			let s .= strpart(li_str, i, t[1] - i)
-			" Skip over the token
-			let i = t[2]
-		endfor
-		" Accumulate remainder.
-		let s .= li_str[i:]
 		" Modify the line in the buffer.
 		call setline(lnum, s . line_str[li_end:])
 	endfor
 	return ret
 endfu
+
 fu! s:Restore_toks_after_li(toks)
 	for t in a:toks
 		" Find extents of leading indent
 		let line_str = getline(t['lnum'])
+		" TODO: Currently, line with no leading indent matches, causing
+		" matchend() to return 0. Is that desirable?
 		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
 		" Rebuild the buffer line in 3 parts: leading-indent ordered-toks rest
 		call setline(t['lnum'],
-			\(li_end >= 0 ? line_str[0:li_end - 1] : '')
-			\.join(map(copy(t['toks']), 'v:val[0]'), '')
+			\(li_end >= 0 ? strpart(line_str, 0, li_end) : '')
+			\.join(t['toks'], '')
 			\.(li_end < 0 ? line_str : line_str[li_end:]))
 	endfor
 endfu
-fu! s:Lineshift_impl(l1, l2, dedent)
-	" Remove toks from leading indent.
-	let toks = s:Remove_toks_in_li(a:l1, a:l2)
-	exe printf("%d,%d%s", a:l1, a:l2, a:dedent ? '<' : '>')
 
-	" Put back uniquified, ordered list of removed tokens just past leading
-	" indent.
-	call s:Restore_toks_after_li(toks)
-
-endfu
-
-fu! s:Lineshift(...)
-	if a:0 == 1
-		" Note: Ignore mode, as shifts are inherently linewise.
-		let [l1, l2, dedent] = [line("'["), line("']"), a:1]
-	else
-		" Get first char only of mode name.
-		let mode = mode()
-		if mode =~ '[vVsS]'
-			" visual
-			let [l1, l2, dedent] =
-				\[line("'<"), line("'>"), v:operator == '<' ? 1 : 0]
-		elseif mode == 'n'
-			" normal
-			let [l1, l2, dedent] =
-				\[line("."), line(".") + v:count1 - 1, v:operator == '<' ? 1 : 0]
-		elseif mode == 'c'
-			" command
-		endif	
-		
+fu! s:Lineshift(mode, dedent)
+	if a:mode == 'no'
+		let [l1, l2] = [line("'["), line("']")]
+	elseif a:mode == 'n'
+		" normal
+		let [l1, l2] = [line("."), line(".") + v:count1 - 1]
+	elseif a:mode[0] == 'c'
+		" command
+	" Get first char only of mode name.
+	elseif a:mode =~ '[vVsS]'
+		" visual
+		let [l1, l2] = [line("'<"), line("'>")]
 	endif
-	call s:Lineshift_impl(l1, l2, dedent)
-endfu
-
-fu! s:Lineshift_old(l1, l2, dedent)
 
 	" Remove toks from leading indent.
-	let toks = s:Remove_toks_in_li(a:l1, a:l2)
-	echo toks
-	" Perform the indent/dedent on input range.
-	echo printf("%d,%d%s", a:l1, a:l2, a:dedent ? '<' : '>')
-	exe printf("%d,%d%s", a:l1, a:l2, a:dedent ? '<' : '>')
+	let toks = s:Remove_toks_in_li(l1, l2)
+	" Perform the indent in mode-appropriate manner, to ensure that cursor is
+	" left in correct location.
+	if a:mode == 'no'
+		exe printf("norm! %s%s",
+			\ a:dedent ? "<" : ">",
+			\ line(".") == l1 ? "']" : "'[")
+	elseif a:mode == 'n'
+		exe printf("norm! %d%s", v:count1, a:dedent ? "<<" : ">>")
+	elseif a:mode[0] == 'c'
+		" TODO
+	elseif a:mode =~ '[vVsS]'
+		echomsg "Hey!!!"
+		exe printf("norm! gv%s", a:dedent ? "<" : ">")
+	else
+		echoerr "Invalid mode for Txtfmt lineshift: " . a:mode
+	endif
 
 	" Put back uniquified, ordered list of removed tokens just past leading
 	" indent.
 	call s:Restore_toks_after_li(toks)
+endfu
 
+fu! s:Shift_left_operator(mode)
+	call s:Lineshift('no', 1)
+endfu
+fu! s:Shift_right_operator(mode)
+	call s:Lineshift('no', 0)
 endfu
 " >>>
-
 " >>>
 " TODO: Perhaps move elsewhere...
 fu! Is_cursor_on_char()
@@ -6748,16 +6742,16 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " shift maps <<<
 " normal mode shift mappings <<<
 call s:Def_map('n', '<LocalLeader><lt><lt>', '<Plug>TxtfmtShiftLeft',
-			\":<C-U>call <SID>Lineshift()<CR>")
+			\":<C-U>call <SID>Lineshift('n', 1)<CR>")
 call s:Def_map('n', '<LocalLeader>>>', '<Plug>TxtfmtShiftRight',
-			\":<C-U>call <SID>Lineshift()<CR>")
+			\":<C-U>call <SID>Lineshift('n', 0)<CR>")
 " >>>
 " visual mode shift mappings <<<
 " TODO: Using Vmap for consistency with auto-maps.
 call s:Def_map('v', '<LocalLeader><lt>', '<Plug>TxtfmtVmapShiftLeft',
-			\":<C-U>call <SID>Lineshift()<CR>")
+			\":<C-U>call <SID>Lineshift('V', 1)<CR>")
 call s:Def_map('v', '<LocalLeader>>', '<Plug>TxtfmtVmapShiftRight',
-			\":<C-U>call <SID>Lineshift()<CR>")
+			\":<C-U>call <SID>Lineshift('V', 0)<CR>")
 " >>>
 " operator-pending mode shift mappings <<<
 call s:Def_map('n', '<LocalLeader><lt>', '<Plug>TxtfmtOperatorShiftLeft',
