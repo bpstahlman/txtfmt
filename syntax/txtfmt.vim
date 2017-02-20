@@ -337,6 +337,39 @@ fu! s:Get_smart_leading_indent_patt()
 	return re
 endfu
 " >>>
+
+" Function: s:Adjust_capture_numbers <<<
+" tgt     The target pattern to be adjusted
+" ctx     The pattern that precedes tgt, whose open parens entail a shift of
+"         the capture numbers in the tgt pattern
+" [bias]  Optional count of open parens *prior to* ctx (i.e., for captures
+"         surrounding both tgt and ctx
+"         Assumption: A capture begun in tgt or ctx also ends in it.
+fu! s:Adjust_capture_numbers(tgt, ctx, ...)
+	let bias = a:0 ? a:1 : 0
+	" Prefix regex used to ensure the bslash in \( or \N is unescaped.
+	let re_prefix = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
+	" Count capture groups in context pattern.
+	" TODO: Does Vim have a function that could do this?
+	let [i, len] = [0, len(a:ctx)]
+	" Note: Sought pattern is length 2: hence the len - 1
+	while i < len - 1
+		let i = match(a:ctx, re_prefix . '(', i)
+		if i >= 0
+			let bias += 1
+			let i += 2
+		endif
+	endwhile
+	" Shift all \\N in tgt pattern by bias
+	" Design Decision: Only \1 through \9 supported by Vim, so N > 9- bias
+	" would cause a problem, but that's not going to happen because bias is
+	" small and determined entirely by configuration, and in any case, it
+	" would be caught in testing.
+	let tgt = substitute(a:tgt, re_prefix . '\(\d\)\d\@!',
+		\ '\=submatch(1) + bias', 'g')
+endfu
+" >>>
+
 " Function: s:Hide_leading_indent_maybe <<<
 fu! s:Hide_leading_indent_maybe()
 	" TODO: Disable (set to 'none') in 'noconceal' case.
@@ -357,7 +390,9 @@ fu! s:Hide_leading_indent_maybe()
 		let re_li = s:Get_smart_leading_indent_patt()
 	endif
 	" Cache regex for a single, unescaped token of any type.
-	let re_tok = b:txtfmt_re_any_tok
+	" Note: At least one of the 'escape' cases requires \%(...\) to turn the
+	" any tok pattern into an atom (to avoid E871 and E61).
+	let re_tok = '\%(' . b:txtfmt_re_any_tok . '\)'
 	" Modify the templates, taking 'conceal' into account.
 	if b:txtfmt_cfg_conceal
 		" Replace all spaces and tabs in pattern with an alternation whose first
@@ -388,6 +423,15 @@ fu! s:Hide_leading_indent_maybe()
 		" the way it is for normal (useful) tokens. In the 'noconceal' case,
 		" we probably just want the useless tokens to be visible, but what
 		" about the indent width?
+		" Issue: With escape=self config, we're currently spreading a bunch of
+		" capture groups throughout the re_li regex. This won't work: for one
+		" thing, they all use \1, and obviously that won't be correct; for
+		" another thing, we could easily exceed the 9 group limit.
+		" TODO: Figure out a better way. Need to defer the check for pairs,
+		" rather than placing it at each and every whitespace in pattern.
+		" E.g., could we have one pattern that allows all toks, then another
+		" applied as a lookbehind or something, which breaks the match on an
+		" escaped pair?
 		" <<< UNDER CONSTRUCTION >>>
 		let re_li = substitute(re_li, '\%( \|\\t\)',
 			\'\\%(' . escape(re_tok, '\') . '*&\\)', 'g')
@@ -398,7 +442,10 @@ fu! s:Hide_leading_indent_maybe()
 			\'\\%(' . escape(re_tok, '\') . '\\| \\)', 'g')
 	endif
 	" Also match blank lines (whitespace and tokens only)
-	let re_li = '^\%(\%(\s\|' . re_tok . '\)\+$\|' . re_li . '\)'
+	let re_li = '^\%(\%(\s\|' . re_tok . '\)\+$\|'
+		\ . s:Adjust_capture_numbers(re_li, re_tok) . '\)'
+	" TODO DEBUG ONLY
+	let g:re_li_dbg = '^\%(\%(\s\|' . '[aeiou]' . '\)\+$\|' . re_li . '\)'
 	let re_tok_or_ws = '\%(\s\|' . re_tok . '\)'
 	" Now the tricky part: need to be able to match *any* portion of the
 	" leading indent independently of the rest of it.
@@ -429,8 +476,14 @@ fu! s:Hide_leading_indent_maybe()
 	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
 		\ . ' containedin=Tf_rgn_body,@Tf'.b:txtfmt_color_uniq_idx.'_all'
 		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
+	let g:re_li_ws = re_li_ws
+	" Note: The 'conceal' attribute is inherited from containing group.
+	" TODO: Is Tf_rgn_body needed in containedin? Can't we just make it
+	" contained in tokens?
+	" Note: Simplest approach would be to make Tf_li_tok containedin Tf_tok,
+	" but 'transparent' groups can't contain other groups directly.
 	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
-		\ . ' containedin=Tf_rgn_body,@Tf'.b:txtfmt_color_uniq_idx.'_all'
+		\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
 		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
 	" Note: No such color as 'none': simply leave color unset.
 	" TODO: Any reason to avoid setting gui in cterm and vice-versa (as we do

@@ -813,33 +813,35 @@ fu! s:Restore_toks_after_li(toks)
 endfu
 
 fu! s:Lineshift(mode, dedent)
-	if a:mode == 'no'
+	if a:mode == 'o'
 		let [l1, l2] = [line("'["), line("']")]
 	elseif a:mode == 'n'
 		" normal
 		let [l1, l2] = [line("."), line(".") + v:count1 - 1]
 	elseif a:mode[0] == 'c'
 		" command
-	" Get first char only of mode name.
-	elseif a:mode =~ '[vVsS]'
+		" TODO: Perhaps implement a Lsh and Rsh command (to replace :< and :>
+		" commands, which can't be overridden)?
+	elseif a:mode =~ '[vV]'
 		" visual
 		let [l1, l2] = [line("'<"), line("'>")]
 	endif
 
 	" Remove toks from leading indent.
 	let toks = s:Remove_toks_in_li(l1, l2)
+	let g:toks = toks
+	return
 	" Perform the indent in mode-appropriate manner, to ensure that cursor is
 	" left in correct location.
-	if a:mode == 'no'
+	if a:mode == 'o'
 		exe printf("norm! %s%s",
 			\ a:dedent ? "<" : ">",
 			\ line(".") == l1 ? "']" : "'[")
 	elseif a:mode == 'n'
 		exe printf("norm! %d%s", v:count1, a:dedent ? "<<" : ">>")
 	elseif a:mode[0] == 'c'
-		" TODO
-	elseif a:mode =~ '[vVsS]'
-		echomsg "Hey!!!"
+		" TODO: See earlier note.
+	elseif a:mode =~ '[vV]'
 		exe printf("norm! gv%s", a:dedent ? "<" : ">")
 	else
 		echoerr "Invalid mode for Txtfmt lineshift: " . a:mode
@@ -851,10 +853,10 @@ fu! s:Lineshift(mode, dedent)
 endfu
 
 fu! s:Shift_left_operator(mode)
-	call s:Lineshift('no', 1)
+	call s:Lineshift('o', 1)
 endfu
 fu! s:Shift_right_operator(mode)
-	call s:Lineshift('no', 0)
+	call s:Lineshift('o', 0)
 endfu
 " >>>
 " >>>
