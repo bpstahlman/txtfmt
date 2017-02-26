@@ -829,8 +829,8 @@ fu! s:Lineshift(mode, dedent)
 
 	" Remove toks from leading indent.
 	let toks = s:Remove_toks_in_li(l1, l2)
+	" TODO: Remove debug stuff...
 	let g:toks = toks
-	return
 	" Perform the indent in mode-appropriate manner, to ensure that cursor is
 	" left in correct location.
 	if a:mode == 'o'

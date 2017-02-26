@@ -348,12 +348,12 @@ endfu
 fu! s:Adjust_capture_numbers(tgt, ctx, ...)
 	let bias = a:0 ? a:1 : 0
 	" Prefix regex used to ensure the bslash in \( or \N is unescaped.
-	let re_prefix = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
+	let re_prefix = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<=\\'
 	" Count capture groups in context pattern.
 	" TODO: Does Vim have a function that could do this?
 	let [i, len] = [0, len(a:ctx)]
 	" Note: Sought pattern is length 2: hence the len - 1
-	while i < len - 1
+	while i >= 0 && i < len - 1
 		let i = match(a:ctx, re_prefix . '(', i)
 		if i >= 0
 			let bias += 1
@@ -365,8 +365,12 @@ fu! s:Adjust_capture_numbers(tgt, ctx, ...)
 	" would cause a problem, but that's not going to happen because bias is
 	" small and determined entirely by configuration, and in any case, it
 	" would be caught in testing.
+	" TODO: Remove scaffolding.
 	let tgt = substitute(a:tgt, re_prefix . '\(\d\)\d\@!',
 		\ '\=submatch(1) + bias', 'g')
+	"echomsg printf("bias=%d tgt=%s ctx=%s\n", bias, a:tgt, a:ctx)
+	"echomsg tgt
+	return tgt
 endfu
 " >>>
 
@@ -390,13 +394,16 @@ fu! s:Hide_leading_indent_maybe()
 		let re_li = s:Get_smart_leading_indent_patt()
 	endif
 	" Cache regex for a single, unescaped token of any type.
-	" Note: At least one of the 'escape' cases requires \%(...\) to turn the
-	" any tok pattern into an atom (to avoid E871 and E61).
-	let re_tok = '\%(' . b:txtfmt_re_any_tok . '\)'
+	" Note: At least one of the 'escape' cases required \%(...\) to turn the
+	" any tok pattern into an atom (to avoid E871 and E61), but I don't think
+	" that's the case any longer: confirm...
+	let re_tok = b:txtfmt_re_any_tok
+	let re_tok_atom = '[' . b:txtfmt_re_any_tok_atom . ']'
 	" Modify the templates, taking 'conceal' into account.
 	if b:txtfmt_cfg_conceal
-		" Replace all spaces and tabs in pattern with an alternation whose first
-		" alternative matches any number of unescaped tokens (including 0).
+		" Accept any number (including 0) of tokens before any whitespace that
+		" would have been matched by the pattern.
+		" Note: Intentionally deferring check for escaped tokens.
 		" Design Decision Needed: Consider highlighting useless end tokens
 		" within regions specially: (e.g., end clr in a fmt only region).
 		" Design Consideration: They're harmless, and are cleaned up
@@ -423,29 +430,54 @@ fu! s:Hide_leading_indent_maybe()
 		" the way it is for normal (useful) tokens. In the 'noconceal' case,
 		" we probably just want the useless tokens to be visible, but what
 		" about the indent width?
-		" Issue: With escape=self config, we're currently spreading a bunch of
-		" capture groups throughout the re_li regex. This won't work: for one
-		" thing, they all use \1, and obviously that won't be correct; for
-		" another thing, we could easily exceed the 9 group limit.
-		" TODO: Figure out a better way. Need to defer the check for pairs,
-		" rather than placing it at each and every whitespace in pattern.
-		" E.g., could we have one pattern that allows all toks, then another
-		" applied as a lookbehind or something, which breaks the match on an
-		" escaped pair?
-		" <<< UNDER CONSTRUCTION >>>
-		let re_li = substitute(re_li, '\%( \|\\t\)',
-			\'\\%(' . escape(re_tok, '\') . '*&\\)', 'g')
-	else
-		" In 'noconceal' case, treat unescaped tokens just like single spaces:
-		" i.e., both a literal space and \s in pattern should match the token.
-		let re_li = substitute(re_li, '\%( \|\\s\)',
-			\'\\%(' . escape(re_tok, '\') . '\\| \\)', 'g')
+		let re_li = substitute(re_li, '\%( \|\\[st]\)',
+			\ '\\%(' . re_tok_atom . '*&\\)', 'g')
+	else " noconceal
+		if b:txtfmt_cfg_leadingindent =~ 'white\|space'
+			" Match token wherever a SPC would match.
+			let re_li = substitute(re_li, '\( \|\\s\)',
+				\ '\\%(' . re_tok_atom . '\\|\1\\)', 'g')
+		else " tab|smart
+			if b:txtfmt_cfg_leadingindent == 'smart'
+				" Match token anywhere a SPC would match.
+				" Note: Shouldn't be any literal spaces in li=tab pattern, so
+				" the containing guard isn't strictly necessary.
+				let re_li = substitute(re_li, ' ',
+					\'\\%(' . re_tok_atom . '\\| \\)', 'g')
+			endif
+			" Allow any amount of a tabstop (up to and including full width)
+			" to be tokens.
+			" Regex: (TOK){,<ts-1>}TAB|(TOK){<ts>}
+			let re_li = substitute(re_li, '\\t',
+				\ '\\%(' . re_tok_atom . '\\{,' . (&ts - 1) . '}\\t'
+				\.'\\|' . re_tok_atom . '\\{' . &ts . '}\\)', 'g')
+		endif
 	endif
-	" Also match blank lines (whitespace and tokens only)
-	let re_li = '^\%(\%(\s\|' . re_tok . '\)\+$\|'
-		\ . s:Adjust_capture_numbers(re_li, re_tok) . '\)'
-	" TODO DEBUG ONLY
-	let g:re_li_dbg = '^\%(\%(\s\|' . '[aeiou]' . '\)\+$\|' . re_li . '\)'
+
+	" Also match blank lines (whitespace and unescaped tokens only)
+	" Note: In esc=self case, re_tok will have a capturing group and
+	" backrefs, but there are no captures preceding it, so it requires no
+	" adjustment.
+	let re_li = '^\%(\%(\s\|' . re_tok . '\)\+$\|' . re_li
+	if b:txtfmt_cfg_escape == 'self'
+		" Add look-behind to ensure none of the tokens matched in leading
+		" indent were escape-escapee pairs. (Note that if they were,
+		" backtracking could still match shorter leading indent.)
+		" Note: We can ignore esc=bslash case because backslashes can't be
+		" matched by the existing re_li pattern.
+		" At this point, re_li contains backrefs, so we'll need to adjust the
+		" capture numbers in what we're about to append.
+		" Optimization Note: The shift amount should always be 1, so we could
+		" probably just hardcode \2 in lieu of \1, but using
+		" Adjust_capture_numbers is a bit more future-proof.
+		let re_li .= s:Adjust_capture_numbers(
+			\ '\%(^\%(\%(\(' . re_tok_atom . '\)\1\)\@!.\)*\)\@<=',
+			\ re_li)
+	endif
+	let re_li .= '\)'
+
+	" Now create some patterns that recognize tokens/whitespace *within*
+	" leading indent.
 	let re_tok_or_ws = '\%(\s\|' . re_tok . '\)'
 	" Now the tricky part: need to be able to match *any* portion of the
 	" leading indent independently of the rest of it.
