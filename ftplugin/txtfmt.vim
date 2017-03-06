@@ -778,6 +778,7 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 				endif
 				" Accumulate up to tok.
 				let s .= strpart(li_str, i, m[1] - i)
+				" TODO: Perhaps just use 'conceal' instead of special input arg.
 				if a:replace
 					" Replace tok with space for alignment
 					let s .= ' '
@@ -806,53 +807,42 @@ fu! s:Restore_toks_after_shift(toks)
 		" Find extents of leading indent
 		let line_str = getline(t['lnum'])
 		if b:txtfmt_cfg_conceal
-			" TODO: Currently, line with no leading indent matches, causing
-			" matchend() to return 0. Is that desirable?
+			" Note: Regex will match at offset 0 when no leading indent.
 			let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
-			" Rebuild the buffer line in 3 parts: leading-indent ordered-toks rest
-			call setline(t['lnum'],
-				\(li_end >= 0 ? strpart(line_str, 0, li_end) : '')
-				\.join(t['toks'], '')
-				\.(li_end < 0 ? line_str : line_str[li_end:]))
+			let toks = t['toks']
+			let pre = strpart(line_str, 0, li_end)
 		else " noconceal
 			" Design Decision: In noconceal case, "hide" tokens whenever we can,
-			" even at the cost of replacing spaces that aren't leading indent.
+			" even at the cost of replacing spaces that aren't technically
+			" considered leading indent.
 			let li_end = max([matchend(line_str, '^\s*'), 0])
-			" Figure out how far back we need to go to start inserting tokens.
-			let [N, n, i] = [len(t['toks']), 0, max([-1, li_end - 1])]
+			let toks = t['toks'][:]
+			" Figure out how far back to start replacing tokens.
+			let [N, n, i] = [len(toks), 0, li_end - 1]
 			while i >= 0 && n < N
 				let n += line_str[i] == ' ' ? 1 : &ts
 				let i -= 1
 			endwhile
-			" Start at first char to be inserted before or replaced and work
-			" rightwards.
-			" Note: Loop/init above designed to ensure i needs increment.
-			" Note: If we run out of leading whitespace before inserting all
-			" tokens, the overflows will just be appended.
-			let [inserted, i] = [0, i + 1]
-			" Initialize to leading portion of line that won't be modified.
-			let s = strpart(line_str, 0, i)
-			while inserted < n
+			let n = min([n, N])
+			" Set i to index of first char to be overwritten (if any).
+			let i += 1
+			" Get leading portion of line that won't be modified.
+			let pre = strpart(line_str, 0, i)
+			" Overwrite whitespace with tokens, working from left to right.
+			while i < li_end && !empty(toks)
 				if line_str[i] == ' '
-					let s .= tok
-					let inserted += 1
+					let pre .= remove(toks, 0)
 				else
-					" How many can tokens we fit in this tab?
-					let repl = min([N - n, &ts])
-					let s .= t['toks'][n : n + repl - 1] . (repl < &ts ? "\t" : '')
-					let inserted += repl
+					" How many tokens can we fit in this tab?
+					let repl = min([len(toks), &ts])
+					let pre .= join(remove(toks, 0, repl - 1), '')
+						\ . (repl < &ts ? "\t" : '')
 				endif
 				" Advance to next tab or char.
 				let i += 1
 			endwhile
-			" Have we inserted all tokens? If not, append the remainder.
-			if n < N
-				let s .= t['toks'][n : ]
-			endif
-			call setline(t['lnum'],
-				\s
-				\.(li_end < 0 ? line_str : line_str[li_end : ]))
 		endif
+		call setline(t['lnum'], pre . join(toks, '') . line_str[li_end : ])
 	endfor
 endfu
 
