@@ -846,6 +846,8 @@ fu! s:Restore_toks_after_shift(toks)
 	endfor
 endfu
 
+" TODO: Add a function to handle CTRL-T and CTRL-D, whose indent/dedent work a
+" bit differently.
 fu! s:Lineshift(mode, dedent)
 	if a:mode == 'o'
 		let [l1, l2] = [line("'["), line("']")]
