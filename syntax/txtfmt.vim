@@ -508,12 +508,14 @@ fu! s:Hide_leading_indent_maybe()
 	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
 		\ . ' containedin=Tf_rgn_body,@Tf'.b:txtfmt_color_uniq_idx.'_all'
 		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
+		\ . ' contains=Tf_tok'
 	let g:re_li_ws = re_li_ws
 	" Note: The 'conceal' attribute is inherited from containing group.
 	" TODO: Is Tf_rgn_body needed in containedin? Can't we just make it
 	" contained in tokens?
 	" Note: Simplest approach would be to make Tf_li_tok containedin Tf_tok,
 	" but 'transparent' groups can't contain other groups directly.
+	" TODO: I'm thinking I may be able to get rid of Tf_li_tok
 	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
 		\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
 		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
@@ -686,92 +688,77 @@ fu! s:Define_syntax()
 	" Token concealment <<<
 	" Check for existence of 'conceal' patch (and desire on part of user to
 	" use it)
+	let conceal = ''
 	if b:txtfmt_cfg_conceal
 		" Note: 'conceallevel' and 'concealcursor' are window-local
 		setl conceallevel=3
 		let &l:concealcursor = b:txtfmt_cfg_concealcursor
-		" With txtfmt-'conceal' set, we can use a single token concealment
-		" group, with 'conceal' and 'transparent' attributes to ensure that
-		" the tokens will normally be zero-width. Note that if the combination
-		" of cursor pos and 'cocu' setting causes them to be shown,
-		" transparent ensures they'll have the correct background color (and
-		" we probably want foreground visible in that case).
-		exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok
-			\.'/ contained transparent conceal nextgroup=Tf_rgn_body'
-		" Special group for rtd tok that returns us to top level.
-		exe 'syn match Tf_tok_rtd /'.b:txtfmt_re_any_etok
-			\.'/ contained transparent conceal'
 		let conceal = ' conceal'
-	else
-		" Initialize tok concealment cluster with top-level group.
-		" Note: This cluster (to which bgc-specific groups will be added
-		" later) is needed only in 'noconceal' case: in 'conceal' case, a
-		" single Tf_tok group will suffice.
-		exe 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
-		" With 'conceal' unset, tokens must appear as non-zero-width
-		" whitespace: this entails use of bgc-specific concealment regions.
-		" Rationale: Prior to introduction of 'conceal' patch (subsequently
-		" incorporated into Vim), users might have used Txtfmt tokens as word
-		" separators.
-		exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/ contained'
-		" Special group for rtd tok that returns us to top level.
-		exe 'syn match Tf_tok_rtd /'.b:txtfmt_re_any_etok.'/ contained'
-		let conceal = ''
-		" Design Decision: No reason to define highlights for the concealment
-		" groups when 'conceal' is set.
-		" Rationale: 'transparent' and 'conceal' attributes obviate the need.
-		" TODO: It doesn't hurt to define the highlights unconditionally.
-		" Should we?
-		" Create a concealment highlight group, to which others can link
-		" The Ignore group is a preferred group, defined in distributed
-		" syncolor.vim
-		" IMPORTANT NOTE: Some of the distributed colorschemes DO NOT hide text in
-		" the Ignore group. I disagree with this practice, and have posted to the
-		" Vim list on the subject, but the situation is unlikely to change...
-		" Fortunately, there is a workaround that always works for the GUI,and
-		" sometimes works for a cterm.
-		" Workaround: *Attempt* to define fg=bg. This will always work for the
-		" GUI, and will work for a cterm if the colorscheme has defined ctermbg
-		" for the Normal group. If the attempt fails, simply link to Ignore group,
-		" which may or may not hide text.
-		if use_gui_defs
-			hi Tf_conceal guifg=bg
-		else
-			let v:errmsg = ""
-			silent! hi Tf_conceal ctermfg=bg
-			if v:errmsg != ""
-				" Link to Ignore and put suggestions in help file for users of
-				" colorschemes that don't hide Ignore'd text.
-				hi link Tf_conceal Ignore
-			endif
-		endif
-		" Design Decision TODO: Should we continue to have single group
-		" (Tf_conceal) to which both Tf_tok and Tf_esc link? Or is it better
-		" to set up the bg highlighting for Tf_tok and Tf_esc individually?
-		" Assumption: When user has both 'conceal' and 'noconceal' buffers
-		" open, the Tf_conceal highlight is shared, but has no effect on the
-		" 'conceal' buffers.
-		hi link Tf_tok Tf_conceal
-		hi link Tf_tok_rtd Tf_conceal
-		" Create bgc-specific tok concealment groups and associated
-		" highlighting, adding the groups to the special Tf{cui}_tok
-		" cluster used in containedin's ALLBUT clause.
-		" Note: Use cui to ensure that different buffers could have different sets
-		" of background colors in effect
-		" Loop over active colors only (with the aid of index indirection array)
-		let pi = 1
-		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
-			let i = b:txtfmt_cfg_bgcolor{pi}
-			exe 'syn match Tf'.cui.'_tok_'.i.' /'.b:txtfmt_re_any_tok.'/ contained'.conceal
-				\.' nextgroup=Tf_rgn_body'
-			exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
-			" Note: Tf{cui}_tok name is fine since clusters/groups are in distinct namespaces.
-			exe 'syn cluster Tf'.cui.'_tok add=Tf'.cui.'_tok_'.i
-			let pi = pi + 1
-		endwhile
 	endif
-
-	exe 'syn match Tf_rgn_body /\_.*/ contained contains=NONE transparent'
+	" Initialize tok concealment cluster with top-level group.
+	" Note: This cluster (to which bgc-specific groups will be added
+	" later) is needed only in 'noconceal' case: in 'conceal' case, a
+	" single Tf_tok group will suffice.
+	exe 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
+	" With 'conceal' unset, tokens must appear as non-zero-width
+	" whitespace: this entails use of bgc-specific concealment regions.
+	" Rationale: Prior to introduction of 'conceal' patch (subsequently
+	" incorporated into Vim), users might have used Txtfmt tokens as word
+	" separators.
+	exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/ contained'.conceal
+	" Special group for rtd tok that returns us to top level.
+	exe 'syn match Tf_tok_rtd /'.b:txtfmt_re_any_etok.'/ contained'.conceal
+	" Design Decision: No reason to define highlights for the concealment
+	" groups when 'conceal' is set.
+	" Rationale: 'transparent' and 'conceal' attributes obviate the need.
+	" TODO: It doesn't hurt to define the highlights unconditionally.
+	" Should we?
+	" Create a concealment highlight group, to which others can link
+	" The Ignore group is a preferred group, defined in distributed
+	" syncolor.vim
+	" IMPORTANT NOTE: Some of the distributed colorschemes DO NOT hide text in
+	" the Ignore group. I disagree with this practice, and have posted to the
+	" Vim list on the subject, but the situation is unlikely to change...
+	" Fortunately, there is a workaround that always works for the GUI,and
+	" sometimes works for a cterm.
+	" Workaround: *Attempt* to define fg=bg. This will always work for the
+	" GUI, and will work for a cterm if the colorscheme has defined ctermbg
+	" for the Normal group. If the attempt fails, simply link to Ignore group,
+	" which may or may not hide text.
+	if use_gui_defs
+		hi Tf_conceal guifg=bg
+	else
+		let v:errmsg = ""
+		silent! hi Tf_conceal ctermfg=bg
+		if v:errmsg != ""
+			" Link to Ignore and put suggestions in help file for users of
+			" colorschemes that don't hide Ignore'd text.
+			hi link Tf_conceal Ignore
+		endif
+	endif
+	" Design Decision TODO: Should we continue to have single group
+	" (Tf_conceal) to which both Tf_tok and Tf_esc link? Or is it better
+	" to set up the bg highlighting for Tf_tok and Tf_esc individually?
+	" Assumption: When user has both 'conceal' and 'noconceal' buffers
+	" open, the Tf_conceal highlight is shared, but has no effect on the
+	" 'conceal' buffers.
+	hi link Tf_tok Tf_conceal
+	hi link Tf_tok_rtd Tf_conceal
+	" Create bgc-specific tok concealment groups and associated
+	" highlighting, adding the groups to the special Tf{cui}_tok
+	" cluster used in containedin's ALLBUT clause.
+	" Note: Use cui to ensure that different buffers could have different sets
+	" of background colors in effect
+	" Loop over active colors only (with the aid of index indirection array)
+	let pi = 1
+	while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
+		let i = b:txtfmt_cfg_bgcolor{pi}
+		exe 'syn match Tf'.cui.'_tok_'.i.' /'.b:txtfmt_re_any_tok.'/ contained'.conceal
+		exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
+		" Note: Tf{cui}_tok name is fine since clusters/groups are in distinct namespaces.
+		exe 'syn cluster Tf'.cui.'_tok add=Tf'.cui.'_tok_'.i
+		let pi = pi + 1
+	endwhile
 
 	" Create vars to facilitate switching between normal (top-level)
 	" tok/esc groups and background color-specific groups.
@@ -817,13 +804,14 @@ fu! s:Define_syntax()
 			" Note: Need to use cluster for bgc-specific escape groups when
 			" 'noconceal' in effect.
 			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all'
-						\.(b:txtfmt_cfg_conceal ? ',Tf_esc' : ',@Tf'.cui.'_esc')
-						\.',Tf_rgn_body,Tf_outer_esc'
+						\.',@Tf'.cui.'_esc'
+						\.',Tf_outer_esc'
 		else
-			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all,Tf_rgn_body'
+			let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all'
 		endif
 		" Note: In the 'noconceal' case, cluster will be populated later.
-		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.cui.'_tok'
+		""""let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.cui.'_tok'
+		let containedin_def .= ',@Tf'.cui.'_tok'
 		if b:txtfmt_cfg_leadingindent != 'none'
 			let containedin_def .= ',Tf_li_ws,Tf_li_tok,Tf_li_tok'
 		endif
@@ -955,7 +943,7 @@ fu! s:Define_syntax()
 			if bgc_idx >= 0
 				" This region contains bg color; use appropriate tok/esc
 				" concealment regions.
-				if !b:txtfmt_cfg_conceal
+				""""if !b:txtfmt_cfg_conceal
 					"let Tf_tok_group = 'Tf'.cui.'_tok_${idx'.bgc_idx.'}'
 					call tok_group_xb.add(',Tf'.cui.'_tok_', 1)
 					call tok_group_xb.add("offs[" . bgc_idx . "]")
@@ -963,7 +951,7 @@ fu! s:Define_syntax()
 						call esc_group_xb.add(',Tf'.cui.'_esc_', 1)
 						call esc_group_xb.add("offs[" . bgc_idx . "]")
 					endif
-				endif
+				""""endif
 			endif
 
 			"let ts = reltime()
@@ -992,13 +980,10 @@ fu! s:Define_syntax()
 				\. ']/me=e-'.tok_off.',he=e-'.tok_off
 				\.' keepend contains=', 1)
 			call rgn_cmn_xb.add(tok_group_xb)
-			" TODO: Is contains=Tf_esc necessary, given the
-			" containedin=Tf_rgn_body on Tf_*esc? Preliminary tests say no,
-			" but defer removal for now...
-			"if b:txtfmt_cfg_escape != 'none'
-			"	call rgn_cmn_xb.add(',', 1)
-			"	call rgn_cmn_xb.add(esc_group_xb)
-			"endif
+			if b:txtfmt_cfg_escape != 'none'
+				call rgn_cmn_xb.add(',', 1)
+				call rgn_cmn_xb.add(esc_group_xb)
+			endif
 			call rgn_cmn_xb.add(ng_xb)
 			let rgn_cmn1 = 
 				\(ir == 0
@@ -1205,14 +1190,16 @@ fu! s:Define_syntax()
 		" TODO Design Decision needed on use of Tf_rgn_body.
 		" Note: The outer esc pair must match at top-level (or nested) only.
 		exe 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
-		exe 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained containedin=Tf_rgn_body'.conceal
+		" TODO-remove-rgn-body: Should we put containedin= for normal regions
+		" here, or use a contains= for Tf_esc in the normal regions????
+		exe 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 		" Define highlighting for the outer and inner escape tokens
 		" TODO: I'm thinking this may be needed only in 'noconceal' case.
 		" Verify and add guard as appropriate...
 		hi link Tf_outer_esc Tf_conceal
 		hi link Tf_esc Tf_conceal
 		" bgc-specific esc concealment groups needed only in noconceal case.
-		if !b:txtfmt_cfg_conceal
+		""""if !b:txtfmt_cfg_conceal
 			" Note: Don't really need the cluster if no bgc-specific esc
 			" groups; however, better to create an empty than force code
 			" everywhere to check for presence of bg colors.
@@ -1220,12 +1207,15 @@ fu! s:Define_syntax()
 			let pi = 1
 			while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 				let i = b:txtfmt_cfg_bgcolor{pi}
-				exe 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off.' contained containedin=Tf_rgn_body'.conceal
+				" TODO-remove-rgn-body: See question above on containedin= vs
+				" contains=
+				" TODO: Need conceal in 'conceal' case.
+				exe 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 				exe 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 				exe 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
 				let pi = pi + 1
 			endwhile
-		endif
+		""""endif
 		" TEMP DEBUG - Remove the stuff below... Copied only as go-by.
 		return
 		" The following group prevents escaping or escaped token from starting
