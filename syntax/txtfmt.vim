@@ -348,7 +348,7 @@ endfu
 fu! s:Adjust_capture_numbers(tgt, ctx, ...)
 	let bias = a:0 ? a:1 : 0
 	" Prefix regex used to ensure the bslash in \( or \N is unescaped.
-	let re_prefix = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<=\\'
+	let re_prefix = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\\\zs'
 	" Count capture groups in context pattern.
 	" TODO: Does Vim have a function that could do this?
 	let [i, len] = [0, len(a:ctx)]
@@ -376,6 +376,8 @@ endfu
 
 " Function: s:Hide_leading_indent_maybe <<<
 fu! s:Hide_leading_indent_maybe()
+	" Cache color uniqueness index.
+	let cui = b:txtfmt_color_uniq_idx
 	" TODO: Disable (set to 'none') in 'noconceal' case.
 	" Initialize the leading indent regex to an option-specific template that
 	" may be adjusted later.
@@ -392,6 +394,8 @@ fu! s:Hide_leading_indent_maybe()
 		" Note: Generate complex pattern that depends upon effective 'sw' and
 		" 'ts' settings.
 		let re_li = s:Get_smart_leading_indent_patt()
+	elseif b:txtfmt_cfg_leadingindent == 'width'
+
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	" Note: At least one of the 'escape' cases required \%(...\) to turn the
@@ -470,9 +474,11 @@ fu! s:Hide_leading_indent_maybe()
 		" Optimization Note: The shift amount should always be 1, so we could
 		" probably just hardcode \2 in lieu of \1, but using
 		" Adjust_capture_numbers is a bit more future-proof.
+		echomsg "re_li before:" re_li
 		let re_li .= s:Adjust_capture_numbers(
 			\ '\%(^\%(\%(\(' . re_tok_atom . '\)\1\)\@!.\)*\)\@<=',
 			\ re_li)
+		echomsg "re_li after: " re_li
 	endif
 	let re_li .= '\)'
 
@@ -487,6 +493,8 @@ fu! s:Hide_leading_indent_maybe()
 	" pattern in those other cases, making it much more efficient, I think.
 	" Note: Whitespace and tokens must be treated as distinct groups, due to
 	" idiosyncrasy with Vim's handling of 'keepend' in :syn-match groups.
+	" FIXME: Escaped pairs are not currently ending leading indent - why not!?
+	" Ahhh!!!! backreferences aren't escaped!
 	let re_li_ws = '\s\+\ze' . re_tok_or_ws . '*' . '\%(' . re_li . '\)\@<='
 	let re_li_tok = re_tok . '\ze' . re_tok_or_ws . '*' . '\%(' . re_li . '\)\@<='
 
@@ -503,25 +511,26 @@ fu! s:Hide_leading_indent_maybe()
 	" as they can't occur in leading whitespace. Recall that these groups
 	" simply make tokens blend in with their surroundings when 'cocu' renders
 	" them visible.
-	" TODO: Any other groups? Is Tf_conceal used for anything? What about
-	" cluster Tf0_all? Could I use that to simplify here?
 	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
-		\ . ' containedin=Tf_rgn_body,@Tf'.b:txtfmt_color_uniq_idx.'_all'
-		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
-		\ . ' contains=Tf_tok'
+		\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
 	let g:re_li_ws = re_li_ws
 	" Note: The 'conceal' attribute is inherited from containing group.
-	" TODO: Is Tf_rgn_body needed in containedin? Can't we just make it
-	" contained in tokens?
 	" Note: Simplest approach would be to make Tf_li_tok containedin Tf_tok,
 	" but 'transparent' groups can't contain other groups directly.
 	" TODO: I'm thinking I may be able to get rid of Tf_li_tok
+	"exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
+	"	\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
+	"	\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
+	" TEMP DEBUG
+	" TODO: Document how this is working after fixing re_li_ws pattern.
 	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
-		\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
-		\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
+		\ . (b:txtfmt_cfg_conceal ? ' conceal' : '')
+		\ . ' containedin=@Tf'.cui
+		\ . (b:txtfmt_cfg_conceal ? '_all' : '_tok')
 	" Note: No such color as 'none': simply leave color unset.
 	" TODO: Any reason to avoid setting gui in cterm and vice-versa (as we do
 	" in Define_syntax)?
+	" TODO: Why is this necessary??? Can't I leave undefined?
 	hi Tf_li_ws gui=none cterm=none
 	hi Tf_li_tok gui=none cterm=none
 
@@ -537,8 +546,8 @@ fu! s:Hide_leading_indent_maybe()
 	else
 		" TODO: I'm thinking this may not be needed either, but need to
 		" verify. (23 Sep 2016)
-		exe 'syn match Tf_li_tok /' . re_tok
-			\. '/ contained containedin=Tf_li_ws contains=NONE'
+		"exe 'syn match Tf_li_tok /' . re_tok
+		"	\. '/ contained containedin=Tf_li_ws contains=NONE'
 		hi link Tf_li_tok Tf_conceal
 	endif
 endfu
@@ -1237,6 +1246,8 @@ fu! s:Define_syntax()
 		endwhile
 	endif
 	" >>>
+	" TODO: Decide on location.
+	"call s:Hide_leading_indent_maybe()
 endfu	" >>>
 " Function: s:Define_syntax_syncing() <<<
 fu! s:Define_syntax_syncing()
