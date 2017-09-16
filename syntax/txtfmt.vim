@@ -398,16 +398,16 @@ fu! s:Hide_leading_indent_maybe()
 
 	endif
 	" Cache regex for a single, unescaped token of any type.
-	" Note: At least one of the 'escape' cases required \%(...\) to turn the
-	" any tok pattern into an atom (to avoid E871 and E61), but I don't think
-	" that's the case any longer: confirm...
 	let re_tok = b:txtfmt_re_any_tok
+	" Cache regex for a single (possibly escape/escapee) token
 	let re_tok_atom = '[' . b:txtfmt_re_any_tok_atom . ']'
 	" Modify the templates, taking 'conceal' into account.
 	if b:txtfmt_cfg_conceal
 		" Accept any number (including 0) of tokens before any whitespace that
 		" would have been matched by the pattern.
 		" Note: Intentionally deferring check for escaped tokens.
+		" Rationale: Embedding in re_li could exceed capture limit; defer to a
+		" look-behind assertion.
 		" Design Decision Needed: Consider highlighting useless end tokens
 		" within regions specially: (e.g., end clr in a fmt only region).
 		" Design Consideration: They're harmless, and are cleaned up
@@ -457,97 +457,63 @@ fu! s:Hide_leading_indent_maybe()
 				\.'\\|' . re_tok_atom . '\\{' . &ts . '}\\)', 'g')
 		endif
 	endif
-
-	" Also match blank lines (whitespace and unescaped tokens only)
-	" Note: In esc=self case, re_tok will have a capturing group and
-	" backrefs, but there are no captures preceding it, so it requires no
-	" adjustment.
-	let re_li = '^\%(\%(\s\|' . re_tok . '\)\+$\|' . re_li
+	" Also match blank lines (whitespace and tokens only)
+	" Note: escape-escapee test done elsewhere
+	let re_li = '^\%(\%(\s\|' . re_tok_atom . '\)\+$\)\|^' . re_li
 	if b:txtfmt_cfg_escape == 'self'
-		" Add look-behind to ensure none of the tokens matched in leading
-		" indent were escape-escapee pairs. (Note that if they were,
-		" backtracking could still match shorter leading indent.)
+		" Append look-behind assertion to ensure none of the tokens matched in
+		" leading indent were escape-escapee pairs. (Note that if they were,
+		" backtracking could still permit shorter leading indent match.)
 		" Note: We can ignore esc=bslash case because backslashes can't be
 		" matched by the existing re_li pattern.
 		" At this point, re_li contains backrefs, so we'll need to adjust the
-		" capture numbers in what we're about to append.
+		" capture numbers in the zero-width assertion we're about to append.
 		" Optimization Note: The shift amount should always be 1, so we could
 		" probably just hardcode \2 in lieu of \1, but using
 		" Adjust_capture_numbers is a bit more future-proof.
-		echomsg "re_li before:" re_li
 		let re_li .= s:Adjust_capture_numbers(
 			\ '\%(^\%(\%(\(' . re_tok_atom . '\)\1\)\@!.\)*\)\@<=',
 			\ re_li)
-		echomsg "re_li after: " re_li
 	endif
-	let re_li .= '\)'
-
 	" Now create some patterns that recognize tokens/whitespace *within*
 	" leading indent.
-	let re_tok_or_ws = '\%(\s\|' . re_tok . '\)'
+	" Note: escape-escapee test done elsewhere
+	let re_tok_or_ws = '\s\|' . re_tok_atom
 	" Now the tricky part: need to be able to match *any* portion of the
 	" leading indent independently of the rest of it.
-	" TODO: In the 'smart' leading indent case, we have to look well past the
-	" matched region to determine whether or not we're inside leading indent;
-	" this isn't the case for other regimes, however, so we could simplify the
-	" pattern in those other cases, making it much more efficient, I think.
-	" Note: Whitespace and tokens must be treated as distinct groups, due to
-	" idiosyncrasy with Vim's handling of 'keepend' in :syn-match groups.
-	" FIXME: Escaped pairs are not currently ending leading indent - why not!?
-	" Ahhh!!!! backreferences aren't escaped!
-	let re_li_ws = '\s\+\ze' . re_tok_or_ws . '*' . '\%(' . re_li . '\)\@<='
-	let re_li_tok = re_tok . '\ze' . re_tok_or_ws . '*' . '\%(' . re_li . '\)\@<='
-
+	" Rationale: Tokens can break leading indent into multiple segments.
+	" Note: In the 'smart' and 'width' leading indent cases, we have to look
+	" past the matched region to determine whether or not we're inside leading
+	" indent; although we could avoid this for other li regimes, it's probably
+	" not worth optimizing...
+	let re_li_ws = '\%(' . re_tok_or_ws . '\)\+\%(' . re_li . '\)\@<='
+	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*\%(' . re_li . '\)\@<='
 	" Persist re_li on the buffer so that it's available to lineshift
 	" functions.
 	let b:txtfmt_re_leading_indent = re_li
+	" Cache vars globally for debug only.
+	let [g:re_li_ws, g:re_li, g:re_tok_or_ws] = [re_li_ws, re_li, re_tok_or_ws]
 
-	" Create the syntax group that will hide all highlighting in whatever is
-	" considered to be leading indent.
-	" Vim Idiosyncrasy: Can't use commas in the group name patterns. This
-	" precludes use of \{...} with MIN,MAX. That's ok - no need to be overly
-	" strict - just don't want to match other plugins' regions...
-	" Note: Don't need the background conceal groups (Tf_conceal_{bgc_idx}),
-	" as they can't occur in leading whitespace. Recall that these groups
-	" simply make tokens blend in with their surroundings when 'cocu' renders
-	" them visible.
+	" Create the non-token syntax group whose purpose is to hide all
+	" highlighting in whatever is considered to be leading indent.
 	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
-		\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
-	let g:re_li_ws = re_li_ws
-	" Note: The 'conceal' attribute is inherited from containing group.
-	" Note: Simplest approach would be to make Tf_li_tok containedin Tf_tok,
-	" but 'transparent' groups can't contain other groups directly.
-	" TODO: I'm thinking I may be able to get rid of Tf_li_tok
-	"exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
-	"	\ . ' containedin=@Tf'.b:txtfmt_color_uniq_idx.'_all'
-	"	\ . (b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.b:txtfmt_color_uniq_idx.'_tok')
-	" TEMP DEBUG
-	" TODO: Document how this is working after fixing re_li_ws pattern.
+		\ . ' containedin=@Tf'.cui.'_all'
+	" Note: Ideally, Tf_li_tok would simply be containedin Tf_tok, but in the
+	" 'conceal' case, Tf_tok is transparent, and transparent groups can't
+	" contain other groups directly. Thus, in the 'conceal' case, Tf_li_tok is
+	" contained in the region itself, whereas in the 'noconceal' case, it can
+	" be contained directly by (non-transparent) Tf_tok.
 	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
 		\ . (b:txtfmt_cfg_conceal ? ' conceal' : '')
 		\ . ' containedin=@Tf'.cui
 		\ . (b:txtfmt_cfg_conceal ? '_all' : '_tok')
-	" Note: No such color as 'none': simply leave color unset.
-	" TODO: Any reason to avoid setting gui in cterm and vice-versa (as we do
-	" in Define_syntax)?
-	" TODO: Why is this necessary??? Can't I leave undefined?
-	hi Tf_li_ws gui=none cterm=none
-	hi Tf_li_tok gui=none cterm=none
-
 	if b:txtfmt_cfg_conceal
-		" Treat unescaped tokens within leading whitespace differently from
-		" the whitespace: 
-		" TODO: Appears that this isn't needed because a contained group
-		" doesn't override the conceal attribute of the containing group.
-		" Rationale: I thought I might need this to ensure that the tokens
-		" would be concealed though the surrounding whitespace is not.
-		"exe 'syn match Tf_li_tok /' . re_tok
-			"\. '/ contained containedin=Tf_li_ws transparent conceal'
+		" Make sure Tf_li_tok isn't linked to Tf_conceal. (Note that this
+		" could happen if user changes 'conceal' in a modeline and re-:edits
+		" the file, without restarting Vim or clearing syntax.)
+		hi link Tf_li_tok NONE
 	else
-		" TODO: I'm thinking this may not be needed either, but need to
-		" verify. (23 Sep 2016)
-		"exe 'syn match Tf_li_tok /' . re_tok
-		"	\. '/ contained containedin=Tf_li_ws contains=NONE'
+		" Hide tokens' foreground in leading indent since we can't conceal.
 		hi link Tf_li_tok Tf_conceal
 	endif
 endfu
