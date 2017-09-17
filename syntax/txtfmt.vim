@@ -486,7 +486,11 @@ fu! s:Hide_leading_indent_maybe()
 	" past the matched region to determine whether or not we're inside leading
 	" indent; although we could avoid this for other li regimes, it's probably
 	" not worth optimizing...
-	let re_li_ws = '\%(' . re_tok_or_ws . '\)\+\%(' . re_li . '\)\@<='
+	" TODO: Although this is the way I want it (ws and tok orthogonal), would
+	" still like to know why Tf_li_ws was allowed to take precedence over
+	" Tf_li_tok on the second of back-to-back tokens, even though Tf_li_tok
+	" is defined later, and hence, should take priority.
+	let re_li_ws = '\s\+\%(' . re_li . '\)\@<='
 	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*\%(' . re_li . '\)\@<='
 	" Persist re_li on the buffer so that it's available to lineshift
 	" functions.
