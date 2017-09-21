@@ -807,10 +807,10 @@ fu! s:Restore_toks_after_shift(toks)
 		" Find extents of leading indent
 		let line_str = getline(t['lnum'])
 		if b:txtfmt_cfg_conceal
-			" Note: Regex will match at offset 0 when no leading indent.
+			" Note: Regex will match at offset <= 0 when no leading indent.
 			let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
 			let toks = t['toks']
-			let pre = strpart(line_str, 0, li_end)
+			let pre = strpart(line_str, 0, li_end < 0 ? 0 : li_end)
 		else " noconceal
 			" Design Decision: In noconceal case, "hide" tokens whenever we can,
 			" even at the cost of replacing spaces that aren't technically
@@ -846,8 +846,50 @@ fu! s:Restore_toks_after_shift(toks)
 	endfor
 endfu
 
-" TODO: Add a function to handle CTRL-T and CTRL-D, whose indent/dedent work a
-" bit differently.
+" Note: Although we're invoked from insert-mode map, we'll be in normal mode by
+" the time the function is called. This function is responsible for restoring
+" cursor position in a sensible manner, and returning to insert mode.
+fu! s:Indent(dedent)
+	" Undo the backwards char movement inherent in transition from insert to
+	" normal mode.
+	" Rationale: Allows us to save/restore this position and have subsequent
+	" :startinsert put cursor back where it was.
+	" Alternative: Could use CTRL-O prior to the <Esc> in imap.
+	normal! `^
+	let cur = getpos('.')
+	let re_leading_ws_or_tok = '^\%(\s\|' . b:txtfmt_re_any_tok . '\)*'
+	" Is portion of line preceding cursor nothing but whitespace and toks?
+	let in_ws = getline('.')[:cur[2]-2] =~ re_leading_ws_or_tok . '$'
+	if !in_ws
+		" Cache distance from cursor to EOL (which should be unaffected by
+		" indent/dedent)
+		let edist = col('$') - cur[2]
+	endif
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(cur[1], cur[1], !b:txtfmt_cfg_conceal)
+	" Let Vim's native CTRL-T/D perform the requested indent/dedent.
+	" Design Decision: CTRL-T and CTRL-D work most predictably (and sanely) when
+	" executed from end of line (after any leading whitespace).
+	exe 'norm! A' . (a:dedent ? "\<C-D>" : "\<C-T>")
+	call s:Restore_toks_after_shift(toks)
+	" Restore cursor position, according to following logic:
+	" If mapping was executed from (possibly empty) leading whitespace or tokens
+	" (not necessarily leading indent), position on first non-whitespace/token;
+	" else, attempt to preserve position by positioning cursor at its original
+	" distance from EOL.
+	if in_ws
+		" Note: Regex uses * quantifier; hence, failure (-1) not possible.
+		let cur[2] = matchend(getline('.'), re_leading_ws_or_tok) + 1
+	else
+		" Note: Cursor was positioned past a char that couldn't have been
+		" removed by indent/dedent.
+		let cur[2] = col('$') - edist
+	endif
+	call cursor(cur[1], cur[2])
+	" Return to insert mode on function return.
+	startinsert
+endfu
+
 fu! s:Lineshift(mode, dedent)
 	if a:mode == 'o'
 		let [l1, l2] = [line("'["), line("']")]
@@ -865,8 +907,6 @@ fu! s:Lineshift(mode, dedent)
 
 	" Remove toks from leading indent.
 	let toks = s:Remove_toks_in_li(l1, l2, !b:txtfmt_cfg_conceal)
-	" TODO: Remove debug stuff...
-	let g:toks = toks
 	" Perform the indent in mode-appropriate manner, to ensure that cursor is
 	" left in correct location.
 	if a:mode == 'o'
@@ -6777,7 +6817,7 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 			\":set opfunc=<SID>Delete_operator<CR>g@")
 " >>>
 " >>>
-" shift maps <<<
+" shift/indent maps <<<
 " normal mode shift mappings <<<
 call s:Def_map('n', '<LocalLeader><lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)<CR>")
@@ -6786,16 +6826,22 @@ call s:Def_map('n', '<LocalLeader>>>', '<Plug>TxtfmtShiftRight',
 " >>>
 " visual mode shift mappings <<<
 " TODO: Using Vmap for consistency with auto-maps.
-call s:Def_map('v', '<LocalLeader><lt>', '<Plug>TxtfmtVmapShiftLeft',
+call s:Def_map('v', '<lt>', '<Plug>TxtfmtVmapShiftLeft',
 			\":<C-U>call <SID>Lineshift('V', 1)<CR>")
-call s:Def_map('v', '<LocalLeader>>', '<Plug>TxtfmtVmapShiftRight',
+call s:Def_map('v', '>', '<Plug>TxtfmtVmapShiftRight',
 			\":<C-U>call <SID>Lineshift('V', 0)<CR>")
 " >>>
 " operator-pending mode shift mappings <<<
-call s:Def_map('n', '<LocalLeader><lt>', '<Plug>TxtfmtOperatorShiftLeft',
+call s:Def_map('n', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":set opfunc=<SID>Shift_left_operator<CR>g@")
-call s:Def_map('n', '<LocalLeader>>', '<Plug>TxtfmtOperatorShiftRight',
+call s:Def_map('n', '>', '<Plug>TxtfmtOperatorShiftRight',
 			\":set opfunc=<SID>Shift_right_operator<CR>g@")
+" >>>
+" insert mode indent/dedent mappings <<<
+call s:Def_map('i', '<C-T>', '<Plug>TxtfmtIndent',
+			\"<Esc>:<C-U>call <SID>Indent(0)<CR>")
+call s:Def_map('i', '<C-D>', '<Plug>TxtfmtDedent',
+			\"<Esc>:<C-U>call <SID>Indent(1)<CR>")
 " >>>
 " >>>
 " normal mode get token info mapping <<<

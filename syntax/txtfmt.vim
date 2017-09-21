@@ -1216,8 +1216,6 @@ fu! s:Define_syntax()
 		endwhile
 	endif
 	" >>>
-	" TODO: Decide on location.
-	"call s:Hide_leading_indent_maybe()
 endfu	" >>>
 " Function: s:Define_syntax_syncing() <<<
 fu! s:Define_syntax_syncing()
