@@ -491,12 +491,16 @@ fu! s:Hide_leading_indent_maybe()
 	" Tf_li_tok on the second of back-to-back tokens, even though Tf_li_tok
 	" is defined later, and hence, should take priority.
 	let re_li_ws = '\s\+\%(' . re_li . '\)\@<='
-	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*\%(' . re_li . '\)\@<='
+	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*'
+	" Caveat: Append leading indent lookbehind constraint separately,
+	" adjusting its backreferences to account for captures in re_tok.
+	let re_li_tok .= s:Adjust_capture_numbers('\%(' . re_li . '\)\@<=', re_li_tok)
 	" Persist re_li on the buffer so that it's available to lineshift
 	" functions.
 	let b:txtfmt_re_leading_indent = re_li
 	" Cache vars globally for debug only.
-	let [g:re_li_ws, g:re_li, g:re_tok_or_ws] = [re_li_ws, re_li, re_tok_or_ws]
+	let [g:re_li_ws, g:re_li_tok, g:re_li, g:re_tok_or_ws] =
+		\ [re_li_ws, re_li_tok, re_li, re_tok_or_ws]
 
 	" Create the non-token syntax group whose purpose is to hide all
 	" highlighting in whatever is considered to be leading indent.
