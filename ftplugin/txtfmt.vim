@@ -750,14 +750,29 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 	for lnum in [a:l1, a:l2]
 		" Find extents of leading indent
 		let line_str = getline(lnum)
+		let [li_str, li_strlen, skip_bytes] = ['', 0, 0]
 		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
-		if li_end < 0
-			" Don't add list element if no leading indent.
+		if li_end >= 0
+			" Grab the leading indent.
+			let li_str = strpart(line_str, 0, li_end)
+			let li_strlen = len(li_str)
+		else
+			let li_end = 0
+		endif
+		if !b:txtfmt_cfg_conceal
+			" Check for tokens just past end of leading indent.
+			let end = matchend(line_str,
+				\ '\%(' . b:txtfmt_re_any_tok . '\)\+', li_end)
+			if end >= 0
+				let skip_bytes = end - li_end
+				let li_str .= line_str[li_end:end-1]
+				let li_strlen += skip_bytes
+			endif
+		endif
+		" Don't add list element if no leading indent (or toks just past).
+		if !li_strlen
 			continue
 		endif
-		" Work with just the leading indent.
-		let li_str = strpart(line_str, 0, li_end)
-		let li_strlen = len(li_str)
 		" Process all toks in the leading indent, rebuilding the line without
 		" them as we go...
 		let [toks, uniq] = [[], {}]
@@ -779,8 +794,10 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 				" Accumulate up to tok.
 				let s .= strpart(li_str, i, m[1] - i)
 				" TODO: Perhaps just use 'conceal' instead of special input arg.
-				if a:replace
-					" Replace tok with space for alignment
+				" Note: Replacement considered only for toks in true leading
+				" indent.
+				if a:replace && m[2] < li_end
+					" Replace tok with space for alignment.
 					let s .= ' '
 				endif
 				" Skip over the token
@@ -797,7 +814,7 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 		" Accumulate object representing this line into return list.
 		call add(ret, {'lnum': lnum, 'toks': toks})
 		" Modify the line in the buffer.
-		call setline(lnum, s . line_str[li_end:])
+		call setline(lnum, s . line_str[li_end + skip_bytes:])
 	endfor
 	return ret
 endfu

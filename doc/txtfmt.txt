@@ -755,7 +755,10 @@ txtfmtJumptoinactive	boolean (default off)
 
 		*txtfmt-'leadingindent'* *txtfmt-'li'* *txtfmtLeadingindent*
 'leadingindent' 'li'
-txtfmtLeadingindent	string (default: "smart")
+txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
+                                which will be 'conceal' for most users):
+                                'conceal': "white"
+                                'noconceal': "none")
 			global or buffer-local
 	This option determines what Txtfmt considers to be "leading indent":
 	i.e., un-highlightable whitespace at the beginning of a line. If
@@ -774,7 +777,8 @@ txtfmtLeadingindent	string (default: "smart")
 			version 3.1, which introduced this option.
 		space	Longest sequence of leading spaces (ASCII 32).
 		tab	Longest sequence of leading tabs (ASCII 9).
-		white	Longest sequence of leading spaces and/or tabs.
+		white	Longest sequence of leading whitespace (spaces and/or
+                        tabs).
 		smart	Algorithm uses 'tabstop' and 'shiftwidth' to determine
 			whether a sequence of leading tabs and/or spaces is
 			considered leading indent.
@@ -786,20 +790,20 @@ txtfmtLeadingindent	string (default: "smart")
 			Caveat: If you use the "smart" setting, you should
 			consistently use mechanisms such as CTRL-T and *>>* to
 			insert leading indent: in particular, inserting
-			literal TABs for leading indent may yield strange
+			literal TABs for leading indent may yield unexpected
 			results.
 		
 	*txtfmt-leadingindent-backwards-compatibility*
 	*txtfmt-leadingindent-history*
 	Prior to Txtfmt version 3.1, the 'leadingindent' option didn't exist,
 	and leading whitespace was never special to Txtfmt. Thus, making the
-	default value of 'leadingindent' "smart" rather than "none" (the value
+	default value of 'leadingindent' "white" rather than "none" (the value
 	required to produce the legacy behavior) might be viewed as a break of
 	backwards-compatibility. My rationale for this choice is that the
 	overwhelming majority of users will most likely prefer the non-legacy
 	behavior, but if the option defaulted to "none", many legacy users
 	might be unaware of the possibility of achieving smarter handling of
-	leading indent. With the default set to "smart", the relatively few
+	leading indent. With the default set to "white", the relatively few
 	users who prefer the legacy behavior will notice immediately that
 	something is different, and having been motivated to find this option,
 	will be able to revert to legacy behavior simply by setting this
