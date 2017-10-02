@@ -6836,9 +6836,9 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " >>>
 " shift/indent maps <<<
 " normal mode shift mappings <<<
-call s:Def_map('n', '<LocalLeader><lt><lt>', '<Plug>TxtfmtShiftLeft',
+call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)<CR>")
-call s:Def_map('n', '<LocalLeader>>>', '<Plug>TxtfmtShiftRight',
+call s:Def_map('n', '>>', '<Plug>TxtfmtShiftRight',
 			\":<C-U>call <SID>Lineshift('n', 0)<CR>")
 " >>>
 " visual mode shift mappings <<<

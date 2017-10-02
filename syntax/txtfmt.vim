@@ -685,26 +685,37 @@ fu! s:Define_syntax()
 		let transparent = ' transparent'
 	endif
 	" Initialize tok concealment cluster with top-level group.
-	" Note: This cluster (to which bgc-specific groups may be added later) is
-	" needed only in 'noconceal' case: in 'conceal' case, a single Tf_tok
-	" group will suffice.
+	" Note: Currently, this cluster (to which bgc-specific groups may be added
+	" later) is used only in 'noconceal' case: in 'conceal' case, it contains
+	" only Tf_tok, which is currently used in lieu of the cluster.
 	exe 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
-	" With 'conceal' unset, tokens must appear as non-zero-width whitespace:
-	" this entails use of bgc-specific concealment regions.
-	" Rationale: Prior to introduction of 'conceal' patch (subsequently
-	" incorporated into Vim), users might have used Txtfmt tokens as word
-	" separators.
-	exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/ contained'.conceal.transparent
-	" Special group for rtd tok that returns us to top level.
-	exe 'syn match Tf_tok_rtd /'.b:txtfmt_re_any_etok.'/ contained'.conceal.transparent
+	" Note: Omit 'contained', since Tf_tok is permitted at top level. But in
+	" the 'noconceal' case, use containedin=ALLBUT,<tok-cluster> to prevent a
+	" pointless match of Tf_tok within one of the bgc-specific tok groups.
+	exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/'
+		\ . (b:txtfmt_cfg_conceal ? '' : ' containedin=ALLBUT,@Tf'.cui.'_tok')
+		\ . conceal.transparent
 	" Note: When 'conceal' is set, transparent and conceal attributes obviate
 	" need to define highlighting for Tf_tok groups.
 	if !b:txtfmt_cfg_conceal
 		hi link Tf_tok Tf_conceal
-		hi link Tf_tok_rtd Tf_conceal
 		" Create bgc-specific tok concealment groups and associated
 		" highlighting, adding the groups to the special Tf{cui}_tok
 		" cluster used in containedin's ALLBUT clause.
+		" Rationale: Prior to introduction of 'conceal' patch (subsequently
+		" incorporated into Vim), users might have used Txtfmt tokens as word
+		" separators; thus, they must appear as non-zero-width whitespace,
+		" Design Decision: While it's true that this same reasoning could be
+		" applied to stuff like underline and undercurl (which also can be
+		" visible on whitespace), I intentionally do not create
+		" format-specific token groups.
+		" Rationale: 4 of the 6 format attributes (usrc) can highlight
+		" whitespace, and we would need to create groups for *all*
+		" permutations of these with *all* permutations of bg color! Given
+		" that a "hole" in formatting tends not to be as visually arresting as
+		" a hole in background color, and given that none of this even applies
+		" outside the rarely used 'noconceal' case, the complexity and
+		" performance hit is definitely *not* warranted.
 		" Note: Use of 'cui' indices allows each buffer (potentially) to have
 		" its own set of background colors; for performance reasons, however,
 		" this power should be used sparingly, as it increases the total
@@ -715,7 +726,8 @@ fu! s:Define_syntax()
 			let i = b:txtfmt_cfg_bgcolor{pi}
 			exe 'syn match Tf'.cui.'_tok_'.i.' /'.b:txtfmt_re_any_tok.'/ contained'.conceal
 			exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
-			" Note: Tf{cui}_tok name is fine since clusters/groups are in distinct namespaces.
+			" Note: Tf{cui}_tok name is fine since clusters/groups are in
+			" distinct namespaces.
 			exe 'syn cluster Tf'.cui.'_tok add=Tf'.cui.'_tok_'.i
 			let pi = pi + 1
 		endwhile
@@ -777,7 +789,7 @@ fu! s:Define_syntax()
 	" 'containedin' list (option dependent) <<<
 	if b:txtfmt_cfg_nested
 		" Ensure that txtfmt top-level item can be contained by a non-txtfmt
-		" syntax group (e.g. C-language comment).
+		" syntax group (e.g. C-language comment) but not another txtfmt group.
 		let containedin_def = ' containedin=ALLBUT,@Tf'.cui.'_all'
 		if b:txtfmt_cfg_escape != 'none'
 			" Note: Need to use cluster for bgc-specific escape groups (which
@@ -891,6 +903,7 @@ fu! s:Define_syntax()
 			" Transitions to lower order regions <<<
 			let idx = 0
 			let need_comma = 0
+			let dbg = ''
 			while iord && idx <= iord
 				let lors = range(idx) + range(idx + 1, iord)
 				" Transitions to lower-order groups (used to be rtd group)
@@ -932,7 +945,7 @@ fu! s:Define_syntax()
 			" Make sure an end token ending an O1 region is concealed.
 			if iord == 0
 				" 1st order rgn
-				call ng_xb.add(",Tf_tok_rtd", 1)
+				call ng_xb.add(",Tf_tok", 1)
 			endif
 			"let rel = reltime(ts)
 			"let profs['ng-pre'] += str2float(reltimestr(reltime(ts)))
@@ -985,6 +998,7 @@ fu! s:Define_syntax()
 			call rgn_cmn_xb.add(join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
 				\. ']/me=e-'.tok_off.',he=e-'.tok_off
 				\.' keepend contains=', 1)
+			" Add contains= for tok and (if necessary) esc groups.
 			call rgn_cmn_xb.add(tok_group_xb)
 			if b:txtfmt_cfg_escape != 'none'
 				call rgn_cmn_xb.add(',', 1)
@@ -1185,35 +1199,42 @@ fu! s:Define_syntax()
 			" Escape char is same number of bytes as a token
 			let esc_off = tok_off
 		elseif b:txtfmt_cfg_escape == 'bslash'
-			let re_esc_pair = '\\\%(\\\%(\\*['.b:txtfmt_re_any_tok_atom.']\)\@=\|['.b:txtfmt_re_any_tok_atom.']\)'
+			let re_esc_pair = '\\\%(\\\%(\\*['
+				\ . b:txtfmt_re_any_tok_atom.']\)\@=\|['.b:txtfmt_re_any_tok_atom.']\)'
 			" Escape char is single byte
 			let esc_off = 1
 		endif
 		" Prevent escaping or escaped tokens from starting regions (now or
 		" even later, after surrounding regions have changed).
-		" TODO Design Decision needed on use of Tf_rgn_body.
-		" Note: The outer esc pair must match at top-level (or nested) only.
+		" Note: The outer esc pair must match only at top-level (or nested in
+		" non-txtfmt group): hence, unlike Tf_esc, it lacks 'contained' attr.
 		exe 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
-		" TODO-remove-rgn-body: Should we put containedin= for normal regions
-		" here, or use a contains= for Tf_esc in the normal regions????
 		exe 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 		" Define highlighting for the outer and inner escape tokens
-		" TODO: I'm thinking this may be needed only in 'noconceal' case.
-		" Verify and add guard as appropriate...
-		hi link Tf_outer_esc Tf_conceal
-		hi link Tf_esc Tf_conceal
-		" bgc-specific esc concealment groups needed only in noconceal case.
-		" Note: Don't really need the cluster if no bgc-specific esc
-		" groups; however, better to create an empty than force code
-		" everywhere to check for presence of bg colors.
+		" Design Decision: In 'noconceal' case, these groups are needed to
+		" hide the escape; in 'conceal' case, they would be needed only to
+		" make the escape transparent when 'cocu' setting prevents
+		" concealment, but for the sake of consistency with tokens, I prefer
+		" that escapes be visible in that case; hence, I link the escape
+		" groups to Tf_conceal only in 'noconceal' case.
+		if !b:txtfmt_cfg_conceal
+			hi link Tf_outer_esc Tf_conceal
+			hi link Tf_esc Tf_conceal
+		endif
+		" bgc-specific esc concealment groups are needed in both 'conceal' and
+		" 'noconceal' cases.
+		" Rationale: There's an idiosyncrasy wrt use of transparent and
+		" conceal on a contained match group with he=s+1: specifically, the
+		" s+1 char is spuriously concealed. My solution is never to use
+		" 'transparent' on Tf_esc groups, but define bgc-specific esc groups
+		" in both 'conceal' and 'noconceal' cases. Tf_tok, on the other hand,
+		" can use transparent because it doesn't limit highlighting with he=.
 		exe 'syn cluster Tf'.cui.'_esc add=Tf_esc'
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
-			" TODO-remove-rgn-body: See question above on containedin= vs
-			" contains=
-			" TODO: Need conceal in 'conceal' case.
-			exe 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
+			exe 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off
+				\ .' contained'.conceal
 			exe 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			exe 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
 			let pi = pi + 1
