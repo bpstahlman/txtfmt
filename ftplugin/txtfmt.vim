@@ -747,7 +747,7 @@ endfu
 " Note: Only lines with tokens removed are represented in list.
 fu! s:Remove_toks_in_li(l1, l2, replace)
 	let ret = []
-	for lnum in [a:l1, a:l2]
+	for lnum in range(a:l1, a:l2)
 		" Find extents of leading indent
 		let line_str = getline(lnum)
 		let [li_str, li_strlen, skip_bytes] = ['', 0, 0]
@@ -762,7 +762,7 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 		if !b:txtfmt_cfg_conceal
 			" Check for tokens just past end of leading indent.
 			let end = matchend(line_str,
-				\ '\%(' . b:txtfmt_re_any_tok . '\)\+', li_end)
+				\ '^\%(' . b:txtfmt_re_any_tok . '\)\+', li_end)
 			if end >= 0
 				let skip_bytes = end - li_end
 				let li_str .= line_str[li_end:end-1]
