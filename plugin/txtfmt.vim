@@ -2452,6 +2452,16 @@ fu! s:Do_config_common()
 			let b:txtfmt_cfg_leadingindent = 'smart'
 		endif
 	endif
+	" Handle default, overriding any values not supported by configuration.
+	" TODO: Decide on whether to permit all li values in 'noconceal' case.
+	if !exists('b:txtfmt_cfg_leadingindent') || empty(b:txtfmt_cfg_leadingindent)
+		let b:txtfmt_cfg_leadingindent = b:txtfmt_cfg_conceal ? 'white' : 'none'
+	elseif 0 && b:txtfmt_cfg_leadingindent !~ 'none\|white' && !b:txtfmt_cfg_conceal
+		echomsg "Warning: leadingindent=" . b:txtfmt_cfg_leadingindent
+			\." supported only when 'conceal' is set (:help txtfmt-'conceal')."
+			\." Defaulting to leadingindent=white"
+		let b:txtfmt_cfg_leadingindent = 'white'
+	endif
 	" >>>
 
 	" Define various buffer-specific variables now that fmt/clr ranges are fixed.
