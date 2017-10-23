@@ -761,18 +761,19 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
                                 'noconceal': "none")
 			global or buffer-local
 	This option determines what Txtfmt considers to be "leading indent":
-	i.e., un-highlightable whitespace at the beginning of a line. If
-	you've ever used a word-processor, you may have noticed that when a
-	block of text is indented, attributes such as underline and background
-	color are not visible in the indent area. When leading spaces or tabs
-	are used to indent blocks of text in Vim, it generally looks best not
-	to highlight them. But what is "leading indent", exactly? All leading
+	i.e., un-highlighted whitespace at the beginning of a line. If you've
+	ever used a word-processor, you may have noticed that when a block of
+	text is indented, attributes such as underline and background color
+	are not visible in the indent area. When leading spaces or tabs are
+	used to indent blocks of text in Vim, it generally looks best not to
+	highlight them. But what is "leading indent", exactly? All leading
 	whitespace? Spaces only? Tabs only? Some combination of tabs and
 	spaces (as determined by options such as 'tabstop' and 'shiftwidth')?
 	The value of Txtfmt's 'leadingindent' option provides the answer to
 	this question, as follows:
 
-		none	No special treatment of leading whitespace.
+		none	No special treatment of leading whitespace, which will
+			be highlighted like any other text.
 			Note: This was the default behavior up until Txtfmt
 			version 3.1, which introduced this option.
 		space	Longest sequence of leading spaces (ASCII 32).
@@ -793,8 +794,18 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
 			literal TABs for leading indent may yield unexpected
 			results.
 		
+	Important Note: Although Txtfmt highlights the tokens as whitespace,
+	Vim itself treats them like any other non-whitespace characters, which
+	means builtin commands for indenting/dedenting text (e.g. CTRL-T,
+	CTRL-D, `>>`, `<<`) will generally fail to yield expected results when
+	tokens are hidden amongst the leading indent. Accordingly, Txtfmt
+	overrides the builtin commands with token-aware versions. For details
+	on these commands, see |txtfmt-indent|.
+
 	*txtfmt-leadingindent-backwards-compatibility*
 	*txtfmt-leadingindent-history*
+	*** TODO *** Remove this if I elect to keep default of li=none in
+	'noconceal' case.
 	Prior to Txtfmt version 3.1, the 'leadingindent' option didn't exist,
 	and leading whitespace was never special to Txtfmt. Thus, making the
 	default value of 'leadingindent' "white" rather than "none" (the value
@@ -806,8 +817,8 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
 	leading indent. With the default set to "white", the relatively few
 	users who prefer the legacy behavior will notice immediately that
 	something is different, and having been motivated to find this option,
-	will be able to revert to legacy behavior simply by setting this
-	option in their vimrc.
+	will be able to revert to legacy behavior (if desired) simply by
+	setting this option in their vimrc.
 
 						*txtfmtMapwarn*
 txtfmtMapwarn		string (default: "mMoOcC")
@@ -2086,6 +2097,25 @@ IMPORTANT NOTE: Txtfmt will generate an error if |txtfmt-fmt-clr-spec-list|
 specifies any colors that are inactive under the effective color masks. See
 |txtfmtFgcolormask| or |txtfmtBgcolormask| for details on configuring color
 masks.
+
+CHANGING LINE INDENT				*txtfmt-indent* *txtfmt-dedent*
+						*txtfmt-shift-line*
+
+The following indent/dedent commands work just like the corresponding Vim
+builtins, but handle Txtfmt tokens in leading whitespace intelligently.
+Commands are grouped by mode.
+
+Normal mode
+<<    <Plug>TxtfmtShiftLeft			*<<* *txtfmt-shift-left*
+>>    <Plug>TxtfmtShiftRight			*<<* *txtfmt-shift-right*
+
+Visual and normal mode (used as operator in normal mode)
+<     <Plug>TxtfmtOperatorShiftLeft		*<* *txtfmt-operator-shift-left*
+>     <Plug>TxtfmtOperatorShiftRight		*>* *txtfmt-operator-shift-right*
+
+Insert mode
+CTRL-T     <Plug>TxtfmtIndent			*CTRL-T* *txtfmt-indent*
+CTRL-D     <Plug>TxtfmtDedent			*CTRL-D* *txtfmt-dedent*
 
 JUMPING TO TOKENS				*txtfmt-jump-to-tok*
 

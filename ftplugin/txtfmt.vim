@@ -6842,10 +6842,10 @@ call s:Def_map('n', '>>', '<Plug>TxtfmtShiftRight',
 			\":<C-U>call <SID>Lineshift('n', 0)<CR>")
 " >>>
 " visual mode shift mappings <<<
-" TODO: Using Vmap for consistency with auto-maps.
-call s:Def_map('v', '<lt>', '<Plug>TxtfmtVmapShiftLeft',
+" TODO: Decide whether to define a separate Vmap-specific plug map.
+call s:Def_map('v', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":<C-U>call <SID>Lineshift('V', 1)<CR>")
-call s:Def_map('v', '>', '<Plug>TxtfmtVmapShiftRight',
+call s:Def_map('v', '>', '<Plug>TxtfmtOperatorShiftRight',
 			\":<C-U>call <SID>Lineshift('V', 0)<CR>")
 " >>>
 " operator-pending mode shift mappings <<<
