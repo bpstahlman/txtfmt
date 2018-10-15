@@ -437,6 +437,7 @@ fu! s:Hide_leading_indent_maybe()
 		let re_li = substitute(re_li, '\%( \|\\[st]\)',
 			\ '\\%(' . re_tok_atom . '*&\\)', 'g')
 	else " noconceal
+		" Assumption: We've already returned in li='none' case.
 		if b:txtfmt_cfg_leadingindent =~ 'white\|space'
 			" Match token wherever a SPC would match.
 			let re_li = substitute(re_li, '\( \|\\s\)',
@@ -499,6 +500,7 @@ fu! s:Hide_leading_indent_maybe()
 	" functions.
 	let b:txtfmt_re_leading_indent = re_li
 	" Cache vars globally for debug only.
+	" TODO: Remove debug assignments...
 	let [g:re_li_ws, g:re_li_tok, g:re_li, g:re_tok_or_ws] =
 		\ [re_li_ws, re_li_tok, re_li, re_tok_or_ws]
 

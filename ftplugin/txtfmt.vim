@@ -745,6 +745,7 @@ endfu
 " [
 "   {'lnum': lnum, 'toks': [{tokstr}...]}]
 " Note: Only lines with tokens removed are represented in list.
+" TODO: Consider removing "replace" arg, since it's implied by 'noconceal'.
 fu! s:Remove_toks_in_li(l1, l2, replace)
 	let ret = []
 	for lnum in range(a:l1, a:l2)
