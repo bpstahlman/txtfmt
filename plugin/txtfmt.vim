@@ -2562,7 +2562,7 @@ fu! s:Txtfmt_refresh()
 	endif
 	" Determine whether txtfmt syntax plugin is loaded
 	let v:errmsg = ''
-	silent! syn sync match Tf_existence_test grouphere Tf_fmt_1 /\%^/
+	silent! syn list @Tf_tok
 	if v:errmsg == ''
 		" No error means txtfmt syntax plugin is loaded. Cache the syntax name
 		" that was cached at load time.
