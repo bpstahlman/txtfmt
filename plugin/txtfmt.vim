@@ -2456,6 +2456,13 @@ fu! s:Do_config_common()
 	" TODO: Decide on whether to permit all li values in 'noconceal' case.
 	if !exists('b:txtfmt_cfg_leadingindent') || empty(b:txtfmt_cfg_leadingindent)
 		let b:txtfmt_cfg_leadingindent = b:txtfmt_cfg_conceal ? 'white' : 'none'
+	elseif !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent !~ 'none\|white'
+		echomsg "Warning: leadingindent=" . b:txtfmt_cfg_leadingindent
+			\." supported only when 'conceal' is set (:help txtfmt-'conceal')."
+			\." Defaulting to leadingindent=white"
+		" Rationale: Since user wanted something other than li=none, give him
+		" the next best thing under 'noconceal'.
+		let b:txtfmt_cfg_leadingindent = 'white'
 	endif
 	" >>>
 

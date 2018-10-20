@@ -761,7 +761,7 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
                                 'noconceal': "none")
 			global or buffer-local
 	This option determines what Txtfmt considers to be "leading indent":
-	i.e., un-highlighted whitespace at the beginning of a line. If you've
+	i.e., unhighlighted whitespace at the beginning of a line. If you've
 	ever used a word-processor, you may have noticed that when a block of
 	text is indented, attributes such as underline and background color
 	are not visible in the indent area. When leading spaces or tabs are
@@ -770,7 +770,9 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
 	whitespace? Spaces only? Tabs only? Some combination of tabs and
 	spaces (as determined by options such as 'tabstop' and 'shiftwidth')?
 	The value of Txtfmt's 'leadingindent' option provides the answer to
-	this question, as follows:
+	this question, as shown in the table below.
+	Note: The logic that recognizes leading indent considers only actual
+	whitespace, ignoring any embedded tokens.
 
 		none	No special treatment of leading whitespace, which will
 			be highlighted like any other text.
@@ -794,18 +796,16 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
 			literal TABs for leading indent may yield unexpected
 			results.
 		
-	Important Note: Although Txtfmt highlights the tokens as whitespace,
-	Vim itself treats them like any other non-whitespace characters, which
-	means builtin commands for indenting/dedenting text (e.g. CTRL-T,
-	CTRL-D, `>>`, `<<`) will generally fail to yield expected results when
-	tokens are hidden amongst the leading indent. Accordingly, Txtfmt
-	overrides the builtin commands with token-aware versions. For details
-	on these commands, see |txtfmt-indent|.
+	Important Note: Although Txtfmt treats tokens specially, Vim itself
+	treats them like any other non-whitespace characters, which means
+	builtin commands for indenting/dedenting text (e.g. CTRL-T, CTRL-D,
+	`>>`, `<<`) will generally fail to yield expected results when tokens
+	are hidden amongst the leading indent. Accordingly, Txtfmt overrides
+	the builtin commands with "token-aware" versions. For details on these
+	commands, see |txtfmt-indent|.
 
 	*txtfmt-leadingindent-backwards-compatibility*
 	*txtfmt-leadingindent-history*
-	*** TODO *** Remove this if I elect to keep default of li=none in
-	'noconceal' case.
 	Prior to Txtfmt version 3.1, the 'leadingindent' option didn't exist,
 	and leading whitespace was never special to Txtfmt. Thus, making the
 	default value of 'leadingindent' "white" rather than "none" (the value

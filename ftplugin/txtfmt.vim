@@ -761,11 +761,9 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 			let li_end = 0
 		endif
 		if !b:txtfmt_cfg_conceal
-			" Check for tokens just past end of leading indent.
-			" FIXME!!!!: Line may begin with whitespace: I'm thinking the
-			" pattern needs to account for that!
+			" Check for tokens in whitespace past end of leading indent.
 			let end = matchend(line_str,
-				\ '^\%(' . b:txtfmt_re_any_tok . '\)\+', li_end)
+				\ '^\%(' . b:txtfmt_re_any_tok . '\|\s\)\+', li_end)
 			if end >= 0
 				let skip_bytes = end - li_end
 				let li_str .= line_str[li_end:end-1]
