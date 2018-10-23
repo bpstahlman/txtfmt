@@ -58,6 +58,8 @@ call s:Add_undo('unlet! b:loaded_txtfmt')
 " >>>
 " Set compatibility options <<<
 " (set to Vim defaults to avoid errors with line continuation)
+" Note: The cpo options generally affect only code outside functions; however,
+" the line continuation option takes effect when functions are parsed, not run.
 let s:save_cpo = &cpo
 set cpo&vim
 " >>>
@@ -877,7 +879,7 @@ fu! s:Indent(dedent)
 	let cur = getpos('.')
 	let re_leading_ws_or_tok = '^\%(\s\|' . b:txtfmt_re_any_tok . '\)*'
 	" Is portion of line preceding cursor nothing but whitespace and toks?
-	let in_ws = getline('.')[:cur[2]-2] =~ re_leading_ws_or_tok . '$'
+	let in_ws = strpart(getline('.'), 0, cur[2] - 1) =~ re_leading_ws_or_tok . '$'
 	if !in_ws
 		" Cache distance from cursor to EOL (which should be unaffected by
 		" indent/dedent)
@@ -5989,7 +5991,12 @@ endfu
 " Needed only for ftplugin
 " Note: Performed after the Common Configuration, which sets the 'starttok'
 " option, needed when processing user maps
-
+" Check for vim-repeat <<<
+" Load the autoload function if it's available, calling with invalid number of
+" args to ensure the call is a nop either way.
+silent! call repeat#set()
+let s:have_repeat = exists('*repeat#set')
+" >>>
 " Function: s:Expand_user_map_macro() <<<
 " Purpose: Expand the input string, which is assumed to be the `...' in one of
 " the user-map expansion sequences of the form <...>.
@@ -6821,6 +6828,19 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
 " >>>
 " auto-maps <<<
+" FIXME: Should probably use vim-repeat to make highlight-altering commands
+" repeatable whenever possible. The problem is that this will require
+" parameterizing somehow, since it would be pointless to repeat something like
+" \h if the highlighting-spec weren't somehow embodied in the repeat. Also note
+" that it would be nice to be able to repeat the highlight-changing operators,
+" but I don't think vim-repeat supports this.
+" Possible Solution: Allow highlight spec to be specified explicitly, not
+" accepted at prompt from user, and have this mechanism used in the call to
+" repeat#set(). Could be implemented as optional arg to functions like
+" Highlight_visual, or as wrapper function. Note that this doesn't really work
+" for operators; for the operator scenario, we might allow highlight spec itself
+" to be augmented with an operator motion that would be supplied to Vim with
+" feedkeys().
 " visual mode mappings <<<
 " Note: The following will work for either visual or select mode
 call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
@@ -6828,7 +6848,7 @@ call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
 call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
-" operator-pending mode mappings <<<
+" operator mappings <<<
 call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
 			\":set opfunc=<SID>Highlight_operator<CR>g@")
 call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
@@ -6838,18 +6858,31 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " shift/indent maps <<<
 " normal mode shift mappings <<<
 call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
-			\":<C-U>call <SID>Lineshift('n', 1)<CR>")
+			\":<C-U>call <SID>Lineshift('n', 1)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftLeft")'
+			\: '') . '<cr>')
 call s:Def_map('n', '>>', '<Plug>TxtfmtShiftRight',
-			\":<C-U>call <SID>Lineshift('n', 0)<CR>")
+			\":<C-U>call <SID>Lineshift('n', 0)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftRight")'
+			\: '') . '<cr>')
 " >>>
 " visual mode shift mappings <<<
-" TODO: Decide whether to define a separate Vmap-specific plug map.
+" FIXME: Decide whether to define a separate Vmap-specific plug map.
 call s:Def_map('v', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
-			\":<C-U>call <SID>Lineshift('V', 1)<CR>")
+			\":<C-U>call <SID>Lineshift('V', 1)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftLeft")'
+			\: '') . '<cr>')
 call s:Def_map('v', '>', '<Plug>TxtfmtOperatorShiftRight',
-			\":<C-U>call <SID>Lineshift('V', 0)<CR>")
+			\":<C-U>call <SID>Lineshift('V', 0)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftRight")'
+			\: '') . '<cr>')
 " >>>
-" operator-pending mode shift mappings <<<
+" shift operator mappings <<<
+" TODO: Any way to make this work with vim-repeat's dot operator?
 call s:Def_map('n', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":set opfunc=<SID>Shift_left_operator<CR>g@")
 call s:Def_map('n', '>', '<Plug>TxtfmtOperatorShiftRight',
@@ -6857,9 +6890,32 @@ call s:Def_map('n', '>', '<Plug>TxtfmtOperatorShiftRight',
 " >>>
 " insert mode indent/dedent mappings <<<
 call s:Def_map('i', '<C-T>', '<Plug>TxtfmtIndent',
-			\"<Esc>:<C-U>call <SID>Indent(0)<CR>")
+			\"<Esc>:<C-U>call <SID>Indent(0)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtIndent)")'
+			\: '') . '<cr>')
 call s:Def_map('i', '<C-D>', '<Plug>TxtfmtDedent',
-			\"<Esc>:<C-U>call <SID>Indent(1)<CR>")
+			\"<Esc>:<C-U>call <SID>Indent(1)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtDedent)")'
+			\: '') . '<cr>')
+
+" Kludge to allow vim-repeat to work with insert-mode <C-T> and <C-D>.
+" Background: Builtin <C-T> and <C-D> work with builtin `.', so our overrides
+" should as well. But there are several complications:
+" 1. Our overrides are insert-mode only, yet the dot operator can be executed
+" only from normal mode.
+" 2. Because of the way vim-repeat uses feedkeys(), dot after <C-o> works
+" slightly differently from normal dot: in particular, with <C-o>, we'll already
+" be back in insert mode before the fed keys are processed.
+" Solution: Create normal mode maps that trigger the insert mode maps, and
+" install the former with repeat#set() after execution of the latter.
+if s:have_repeat
+	nmap <Plug>(TxtfmtIndent) i<Plug>TxtfmtIndent<Esc>
+	call s:Undef_map('<Plug>(TxtfmtIndent)', 'i<Plug>TxtfmtIndent<Esc>', 'n')
+	nmap <Plug>(TxtfmtDedent) i<Plug>TxtfmtDedent<Esc>
+	call s:Undef_map('<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 'n')
+endif
 " >>>
 " >>>
 " normal mode get token info mapping <<<
@@ -6872,12 +6928,8 @@ call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
 " -<C-0> can't be used in insert-mode mapping for some reason...
 " >>>
 " TODO <<<
-" -Convert ASCII only pattern character classes to ones that will work with
-" multi-byte chars
 " -Add commands/functions for detecting and altering the range of character
 "  codes used for txtfmt tokens.
-" -Use syntax clusters instead of the double definition trickery I used when I
-"  didn't know about syntax clusters.
 " >>>
 " >>>
 " Restore compatibility options <<<
