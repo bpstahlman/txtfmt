@@ -5185,10 +5185,15 @@ endfu
 " Function: s:Def_map() <<<
 " Purpose: Define both the level 1 and level 2 map as appropriate.
 " Inputs:
-" mode 	- single char, used as input to maparg, mapcheck, etc...
-" lhs1	- lhs of first-level map
-" lhs2	- rhs of first-level map, lhs of second-level map
-" rhs2	- rhs of second-level map
+" mode 	    - single char, used as input to maparg, mapcheck, etc...
+" lhs1	    - lhs of first-level map
+"             empty if no first-level map required (special case)
+"             Rationale: Allows us to map to 2nd level internally (eg,
+"             TxtfmtIndent Normal mode maps).
+" lhs2	    - rhs of first-level map, lhs of second-level map
+" rhs2	    - rhs of second-level map
+" [noremap] - bool indicating whether 'noremap' should be used for 2nd-level map
+"             Default: 1
 " How: Consider whether user already has a map to level 2 (which should take
 " precedence over maplevel 1). Also, make sure the map from level 2, if it
 " exists, is not incorrect, etc...
@@ -5198,31 +5203,26 @@ endfu
 " 0			- success
 " nonzero	- error
 " NOTE: Function will echoerr to user
-fu! s:Def_map(mode, lhs1, lhs2, rhs2)
-	" TODO - Perhaps eventually support operator mode if needed
-	if a:mode=='n'
-		let cmd1 = 'nmap'
-		let cmd2 = 'nnoremap'
-	elseif a:mode=='i'
-		let cmd1 = 'imap'
-		let cmd2 = 'inoremap'
-	elseif a:mode=='o'
-		let cmd1 = 'omap'
-		let cmd2 = 'onoremap'
-	elseif a:mode=='v'
-		let cmd1 = 'vmap'
-		let cmd2 = 'vnoremap'
-	else
+fu! s:Def_map(mode, lhs1, lhs2, rhs2, ...)
+	" Determine whether 2nd level uses map or noremap.
+	let noremap = a:0 ? !!a:1 : 1
+	if a:mode !~ '^[niov]$'
 		echoerr 'Internal error - unsupported mapmode passed to Def_map()'
 		return 1
 	endif
+	" Construct the 1st/2nd level :map commands.
+	let l:cmd1 = a:mode . 'map'
+	let l:cmd2 = a:mode . (noremap ? 'nore' : '') . 'map'
 	" Do first map level <<<
+	" FIXME: I'm thinking the 1st level maps *we* create (ie, not the ones
+	" user has created) should also be reflected in undo_ftplugin.
 	" Caveat: This guard can prevent map changes from taking effect when changes
 	" are made and :Refresh is run without first quitting Vim. When sessions are
 	" involved, the problem can be even more insidious. The guard is important,
 	" though, to prevent creation of default map if user has already defined his
 	" own. Perhaps a warning in help, or some way of mitigating the issue?
-	if !hasmapto(a:lhs2, a:mode)
+	" TODO: Is the comment above still applicable?
+	if !empty(a:lhs1) && !hasmapto(a:lhs2, a:mode)
 		" User hasn't overridden the default level 1 mapping
 		" Make sure there's no conflict or ambiguity between an existing map
 		" and the default one we plan to add...
@@ -6911,10 +6911,8 @@ call s:Def_map('i', '<C-D>', '<Plug>TxtfmtDedent',
 " Solution: Create normal mode maps that trigger the insert mode maps, and
 " install the former with repeat#set() after execution of the latter.
 if s:have_repeat
-	nmap <Plug>(TxtfmtIndent) i<Plug>TxtfmtIndent<Esc>
-	call s:Undef_map('<Plug>(TxtfmtIndent)', 'i<Plug>TxtfmtIndent<Esc>', 'n')
-	nmap <Plug>(TxtfmtDedent) i<Plug>TxtfmtDedent<Esc>
-	call s:Undef_map('<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 'n')
+	call s:Def_map('n', '', '<Plug>(TxtfmtIndent)', 'i<Plug>TxtfmtIndent<Esc>', 0)
+	call s:Def_map('n', '', '<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 0)
 endif
 " >>>
 " >>>
