@@ -173,6 +173,9 @@ smart | Algorithm uses 'tabstop' and 'shiftwidth' to determine whether a sequenc
 
 **Note:** The logic that recognizes leading indent considers only _actual_ whitespace, ignoring any embedded tokens.
 
+## Delete Operator Override
+TODO - Fill in...
+
 ## Shift/Indent Overrides
 Although Txtfmt "tokens" are generally invisible to the user, Vim itself treats them as non-whitespace characters. To prevent problems when these tokens appear in leading indent, Txtfmt provides special overrides of builtin operators such as `<<`, `>>`, `CTRL-T` and `CTRL-D`. These overrides understand the special role of tokens in a Txtfmt buffer (as well as the implications of the various 'leadingindent' option settings), and will go to great lengths to ensure that "the right thing" happens when you perform a shift or indent.
 

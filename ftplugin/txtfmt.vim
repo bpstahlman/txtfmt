@@ -743,13 +743,25 @@ endfu
 " >>>
 " Shift functions <<<
 " Remove tokens within leading indent in each line in input range.
-" Return list indicating what was removed:
+" Special Case: In 'noconceal' case, temporarily remove tokens just past leading
+" indent (for li regimes in which such tokens would not be part of leading
+" indent).
+" Rationale: Before existence of 'leadingindent', 'noconceal' users may have
+" placed tokens just past leading indent to avoid spurious highlighting; in such
+" cases, it's best to perform the shift/indent without the tokens, then add them
+" back.
+" Note: As long as 'li' is forced to be 'white' or 'none' (as is currently the
+" case), the special logic will never be used.
+" Return: list indicating what was removed:
 " [
 "   {'lnum': lnum, 'toks': [{tokstr}...]}]
 " Note: Only lines with tokens removed are represented in list.
-" TODO: Consider removing "replace" arg, since it's implied by 'noconceal'.
-fu! s:Remove_toks_in_li(l1, l2, replace)
+fu! s:Remove_toks_in_li(l1, l2)
 	let ret = []
+	" Short-circuit on li=none (in case caller doesn't check).
+	if b:txtfmt_cfg_leadingindent == 'none'
+		return ret
+	endif
 	for lnum in range(a:l1, a:l2)
 		" Find extents of leading indent
 		let line_str = getline(lnum)
@@ -762,11 +774,14 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 		else
 			let li_end = 0
 		endif
-		if !b:txtfmt_cfg_conceal
+		" Note: See comment in header describing this special 'noconceal' logic.
+		if !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent =~ '^\(smart\|tab\)'
 			" Check for tokens in whitespace past end of leading indent.
 			let end = matchend(line_str,
 				\ '^\%(' . b:txtfmt_re_any_tok . '\|\s\)\+', li_end)
 			if end >= 0
+				" Allow subsequent distinction between leading indent and any
+				" tokens immediately following it.
 				let skip_bytes = end - li_end
 				let li_str .= line_str[li_end:end-1]
 				let li_strlen += skip_bytes
@@ -796,10 +811,9 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 				endif
 				" Accumulate up to tok.
 				let s .= strpart(li_str, i, m[1] - i)
-				" TODO: Perhaps just use 'conceal' instead of special input arg.
 				" Note: Replacement considered only for toks in true leading
 				" indent.
-				if a:replace && m[2] < li_end
+				if !b:txtfmt_cfg_conceal && m[2] < li_end
 					" Replace tok with space for alignment.
 					let s .= ' '
 				endif
@@ -823,6 +837,10 @@ fu! s:Remove_toks_in_li(l1, l2, replace)
 endfu
 
 fu! s:Restore_toks_after_shift(toks)
+	" Short-circuit on li=none (in case caller doesn't check).
+	if b:txtfmt_cfg_leadingindent == 'none'
+		return
+	endif
 	for t in a:toks
 		" Find extents of leading indent
 		let line_str = getline(t['lnum'])
@@ -886,7 +904,7 @@ fu! s:Indent(dedent)
 		let edist = col('$') - cur[2]
 	endif
 	" Remove toks from leading indent.
-	let toks = s:Remove_toks_in_li(cur[1], cur[1], !b:txtfmt_cfg_conceal)
+	let toks = s:Remove_toks_in_li(cur[1], cur[1])
 	" Let Vim's native CTRL-T/D perform the requested indent/dedent.
 	" Design Decision: CTRL-T and CTRL-D work most predictably (and sanely) when
 	" executed from end of line (after any leading whitespace).
@@ -926,7 +944,7 @@ fu! s:Lineshift(mode, dedent)
 	endif
 
 	" Remove toks from leading indent.
-	let toks = s:Remove_toks_in_li(l1, l2, !b:txtfmt_cfg_conceal)
+	let toks = s:Remove_toks_in_li(l1, l2)
 	" Perform the indent in mode-appropriate manner, to ensure that cursor is
 	" left in correct location.
 	if a:mode == 'o'
@@ -6856,6 +6874,9 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " >>>
 " >>>
 " shift/indent maps <<<
+" TODO: For certain combinations of 'leadingindent' with 'noconceal', we could
+" probably skip creating shift/indent overrides (although doing so is harmless,
+" as the override functions work for those cases as well).
 " normal mode shift mappings <<<
 call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)"
