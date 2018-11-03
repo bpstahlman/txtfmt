@@ -895,6 +895,7 @@ fu! s:Indent(dedent)
 	" Alternative: Could use CTRL-O prior to the <Esc> in imap.
 	normal! `^
 	let cur = getpos('.')
+	" Note: This regex is not the same as the more specific 'leadingindent'.
 	let re_leading_ws_or_tok = '^\%(\s\|' . b:txtfmt_re_any_tok . '\)*'
 	" Is portion of line preceding cursor nothing but whitespace and toks?
 	let in_ws = strpart(getline('.'), 0, cur[2] - 1) =~ re_leading_ws_or_tok . '$'
@@ -964,6 +965,12 @@ fu! s:Lineshift(mode, dedent)
 	" Put back uniquified, ordered list of removed tokens just past leading
 	" indent.
 	call s:Restore_toks_after_shift(toks)
+	" Note: Vim leaves cursor on first non-whitespace char (possibly token).
+	" In some cases (e.g., 'noconceal' and li=white), this would leave cursor
+	" within what appears to be leading whitespace.
+	" Solution: Place cursor just past all leading whitespace/tokens.
+	let col = matchend(getline('.'), '^\%(\s\|' . b:txtfmt_re_any_tok . '\)*') + 1
+	call cursor(0, col)
 endfu
 
 fu! s:Shift_left_operator(mode)
