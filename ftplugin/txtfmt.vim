@@ -4393,6 +4393,9 @@ fu! s:dbg_display_toks(context, toks)
 endfu
 
 fu! s:Operate_region(pspecs, opt)
+	" Caveat: Because Vmap_compute() can move cursor off screen,
+	" saving/restoring view is needed to prevent spurious scrolling.
+	let wsv = winsaveview()
 	let pspecs = a:pspecs
 	if a:opt['op'] == 'delete'
 		" Assumption: Caller inputs empty pspecs for delete case; transform to
@@ -4448,6 +4451,7 @@ fu! s:Operate_region(pspecs, opt)
 		" types are involved in the operation.
 		call s:Vmap_protect_bslash(a:opt)
 	endif
+	call winrestview(wsv)
 endfu
 
 " Adjust region bounds (if necessary) to avoid splitting an escape-escapee pair,
