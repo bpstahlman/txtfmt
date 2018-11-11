@@ -377,6 +377,8 @@ Although Txtfmt tokens are invisible, they are characters in your buffer like an
     \ga
     :help txtfmt-get-tok-info
 
+FIXME!!!!: This section seems to assume user is in "test page" buffer, but this wasn't made explicit.
+
 Because you wish to delete the first two words, enter the following in normal mode:
     d2w
 Notice how the underline-bold-italic highlighting has been lost! The problem is that the command that deletes the first two words has also deleted the Txtfmt format token. In other words, the deletion had a visible effect on the text beyond the deletion. This is probably not what you wanted. To solve this problem, Txtfmt also provides a "smart delete" command, which is aware of Txtfmt highlighting. Like the auto maps highlighting commands, it can be used in both visual and operator modes. Its default mapping is \d. To use it with the previous example, you could simply have hit \d2w instead of d2w. Try it now (after hitting 'u' to undo the problematic delete, and '0' to be sure you're at the start of the line). Alternatively, you could have highlighted the first two words, then hit \d. The difference between Vim's and Txtfmt's delete commands is that, whereas Vim makes no distinction between text and Txtfmt tokens, Txtfmt's delete assumes your objective is to delete text only, and will do whatever is necessary (possibly inserting new tokens), to preserve the highlighting of text beyond the deletion.

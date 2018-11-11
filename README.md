@@ -61,10 +61,11 @@ k | background color
 
 ### Color Specs
 For fg/bg colors, a color name or hyphen (`-`) follows the `c` or `k`. The color names are configurable, but the defaults allow common colors to be abbreviated to a single letter: e.g., `r`=red, `b`=blue, `g`=green, etc... A `-` specifies "no color": i.e., it removes color from the region. Both the color RGB values and the color names are completely configurable.
-<br> :help txtfmt-color-config
+<br> `:help txtfmt-color-config`
 
 ### Format Attribute Specs
-The `f` of a format specification is followed by an operator:
+The `f` of a format specification is followed by a string of operators and single character format attribute flags:
+`([-+=][ubisrc]+)+` (TODO - EBNR?)
 
 Operator | Description
 ---------|----------
@@ -72,7 +73,7 @@ Operator | Description
 `-` | Remove from existing format attributes
 `=` | Replace/overwrite existing format attributes
 
-The format operator is followed by an unordered set of single-character format attributes:
+Each operator applies to all subsequent format attribute flags until the next operator.
 
 Attributes | Description | Availability
 -----------|-------------|-------------
@@ -89,11 +90,12 @@ c | undercurl | "long" 'tokrange' only
 ### Highlighting Spec Examples
 Spec | Result
 -----|-------
-`fbi` | Add bold-italic to existing highlighting
+`fbi` | Add bold-italic
 `f+bi` | _same as previous_
+`f+bi-u` | Add bold-italic and remove underline
 `f=bi` | Replace any existing format attributes with bold-italic
 `f-,c-` | Remove all format attributes and any foreground color
-`fu,cb,kr` | Add underline to existing format attributes; make text color blue and background color red
+`fu-b,cb,kr` | Add underline and remove bold, make text color blue and background color red
 `fu cb kr` | _same as previous_
 
 
@@ -140,13 +142,19 @@ Spec/Pattern | Action | Applies To
 
 # Manual Maps
 
-Manual maps allow you to insert one or more tokens, each of which affects the highlighting of all subsequent text up to the next token of the same type. A short walkthrough will illustrate...
+Manual maps are used to insert specific highlighting tokens at specific locations in the buffer. Each token determines either the text color, background color, or format attributes in effect up until the subsequent token of the same type (possibly the end token `-`). With auto maps, you simply specify the desired highlighting changes, and Txtfmt automagically inserts/removes the requisite tokens at both the beginning and end of the selection. This task is actually more complicated than it sounds. Suppose you've selected some text and use an auto map with highlighting spec `fb,cr,kg` (add bold, text red, background green). You might assume that Txtfmt would insert 6 tokens as follows:
+```
+<kr><cb><fb> <selected text...> <k-><c-><f->
+```
+This is certainly one possibility, but the situation is actually more complicated... For one thing, there may be tokens _within_ the selected text that need to be removed. Leaving a `<cg>` token, for instance, would be harmful, as it would prematurely terminate the blue text region. A `<cb>` token within the region would be harmless but redundant with the one at the beginning of the region, so it should really be removed. But what about format attribute tokens within the region? They cannot simply be removed, since the highlighting spec requested only the _**addition**_ of bold, not the removal of anything else! An `<fi>` token within the region, therefore, would need to be _**changed**_ to an `<fbi>` token to satisfy the request without disturbing existing highlighting. Similarly, if the text just _past_ the selected region were originally underline-italic, the auto map would need to end the region with an `<fui>` token (_**not**_ `<f->`), to avoid changing the formatting of unselected text.
+
+Auto maps provide an abstraction that allows you to think in terms of a desired highlighting change, shielding you from the often tedious details involved in effecting the change. So why would you ever want to use manual maps instead of auto maps? Most users won't, but there may be scenarios in which the explicit control afforded by manual maps is needed. Accordingly, here's a quick walkthrough...
 
 You want to enter some green text, so you execute one of Txtfmt's Normal mode _insert-token_ mappings (e.g., `\i`, `\I`, `\a`, `\A`, `\o`), and enter `cg` at at the prompt (**_mnemonic:_** color green): 
 
 The text you type now is green. 
 
-Suppose that while typing green text, you wish to emphasize a phrase by making it bold-italic. Still in insert mode, you execute _insert-token_ map `CTRL-\CTRL-\` and enter `fbi` (or `fib`) at the prompt (**_mmemonic:_** format bold italic).
+While typing green text, you wish to emphasize a phrase by making it bold-italic. Still in insert mode, you execute _insert-token_ map `CTRL-\CTRL-\` and enter `fbi` (or `fib`) at the prompt (**_mmemonic:_** format bold italic).
 
 The text you type now is green bold-italic.
 
@@ -158,6 +166,23 @@ At some point, you wish to return to plain, unhighlighted text. You can terminat
 
 The text you type now is plain, unhighlighted text.
 
+## Jump to Token Maps
+As long as you're using auto maps, you should never need to think about Txtfmt tokens in the buffer: the tokens are invisible as long as the Txtfmt syntax is active, and all token insertion/removal is handled automatically by the plugin. If you're using manual maps, however, you _**will**_ need to work with the tokens: specifically, you will need to insert, replace and delete them. Txtfmt provides maps to facilitate insertion (`\i`, `\I`, `\a`, `\A`, `\o`, `\O`) and replacement (`\s`). Vim's builtin delete operators (e.g., `x`, `X`, etc...) may be used to delete tokens, but since the tokens themselves are invisible, Txtfmt provides a handful of maps to help _**find**_ the tokens to be deleted/changed. Collectively, these maps are referred to as "Jump to Token" maps, and they can all be used in Operator-pending mode. There are quite a few variants, allowing you to specify direction of jump, type of token sought (text color, background color, format attributes), whether to land _on_ or _next to_ the target token, etc. Here are some examples...
+
+Map | Description
+---   -----------
+]f  | forward to next format token
+[c  | backward to previous text color token
+]a  | forward to next token of _any_ type
+]tf | forward to char _**before**_ next format token
+[ec | backward to previous _end_ token of any type (i.e., `<f->`, `<c->` or `<k->`)
+]bf | forward to next format _begin_ token (i.e., token that specifies format attributes, _**not**_ `<f->` )
+
+Further details may be found in the help file:
+`:help txtfmt-jump-to-tok`
+
+TODO: Add something on \ga
+
 ## Cursor Positioning Note
 As with auto map highlighting specs, multiple format/color specs can be concatenated in a comma or space-separated list. Moreover, you can replace one of the commas with a dot (`.`) to specify where the cursor should be positioned relative to the inserted tokens. These features provide a convenient way to enter both the start and end tokens of a region before beginning to type the highlighted text. If, for example, you wanted to enter red bold text on a yellow background, you could enter `cr fb ky . c- f- k-` to insert all the tokens at once, leaving the cursor between the start and end tokens.
 
@@ -168,13 +193,22 @@ Setting | Behavior
 none | No special treatment of leading whitespace, which will be highlighted like any other text. Note that this was the default behavior up until Txtfmt version 3.1, which introduced this option.
 space | Longest sequence of leading spaces (ASCII 32).
 tab | Longest sequence of leading tabs (ASCII 9).
-white | Longest sequence of leading whitespace (spaces and/or tabs).
+white (_default_) | Longest sequence of leading whitespace (spaces and/or tabs).
 smart | Algorithm uses 'tabstop' and 'shiftwidth' to determine whether a sequence of leading tabs and/or spaces is considered leading indent.<br> **Heuristic:** Any sequence of leading whitespace that could be generated by a sequence of `CTRL-T`'s in insert mode on an empty line. Alternatively, any sequence of leading whitespace that could be generated by a sequence of right-shifts (`>>`) in normal mode.<br> **Caveat:** If you use the "smart" setting, you should consistently use mechanisms such as `CTRL-T` and `>>` to insert leading indent: in particular, inserting literal TABs for leading indent may yield unexpected results.
 
 **Note:** The logic that recognizes leading indent considers only _actual_ whitespace, ignoring any embedded tokens.
 
 ## Delete Operator Override
-TODO - Fill in...
+Although Txtfmt tokens are invisible, to Vim they are characters in your buffer like any other: thus, deleting text can delete tokens, which in turn, can affect the highlighting of text _beyond_ the deletion. To see how this could be problematic, consider the following scenario... You're sitting on the first line of a multiline block of highlighted text (whose highlighting tokens are hidden at the start of the first line). You use `dd` to delete the first line. Although you intended only to delete a line of text, you have just removed the highlighting of the entire block! Of course, the problem is that the builtin `dd` operator deletes the highlighting tokens along with the rest of the line text. To mitigate these problem, Txtfmt provides its own "smart" delete operators, which should be used instead of the builtin delete on text that may contain highlighting tokens. Note that it is not sufficient for smart delete operators simply to avoid deleting highlighting tokens: they must be
+
+hitting gg0. At this point you should be sitting on an underline-bold-italic format token. If you wish to verify this, hit the following map in normal mode:
+    \ga
+    :help txtfmt-get-tok-info
+
+Because you wish to delete the first two words, enter the following in normal mode:
+    d2w
+Notice how the underline-bold-italic highlighting has been lost! The problem is that the command that deletes the first two words has also deleted the Txtfmt format token. In other words, the deletion had a visible effect on the text beyond the deletion. This is probably not what you wanted. To solve this problem, Txtfmt also provides a "smart delete" command, which is aware of Txtfmt highlighting. Like the auto maps highlighting commands, it can be used in both visual and operator modes. Its default mapping is \d. To use it with the previous example, you could simply have hit \d2w instead of d2w. Try it now (after hitting 'u' to undo the problematic delete, and '0' to be sure you're at the start of the line). Alternatively, you could have highlighted the first two words, then hit \d. The difference between Vim's and Txtfmt's delete commands is that, whereas Vim makes no distinction between text and Txtfmt tokens, Txtfmt's delete assumes your objective is to delete text only, and will do whatever is necessary (possibly inserting new tokens), to preserve the highlighting of text beyond the deletion.
+
 
 ## Shift/Indent Overrides
 Although Txtfmt "tokens" are generally invisible to the user, Vim itself treats them as non-whitespace characters. To prevent problems when these tokens appear in leading indent, Txtfmt provides special overrides of builtin operators such as `<<`, `>>`, `CTRL-T` and `CTRL-D`. These overrides understand the special role of tokens in a Txtfmt buffer (as well as the implications of the various 'leadingindent' option settings), and will go to great lengths to ensure that "the right thing" happens when you perform a shift or indent.
