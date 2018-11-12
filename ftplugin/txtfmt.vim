@@ -6874,13 +6874,13 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 " Note: The following will work for either visual or select mode
 call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
 			\":<C-U>call <SID>Highlight_visual()<CR>")
-call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
+call s:Def_map('v', 'd', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
 " operator mappings <<<
 call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
 			\":set opfunc=<SID>Highlight_operator<CR>g@")
-call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
+call s:Def_map('n', 'd', '<Plug>TxtfmtOperatorDelete',
 			\":set opfunc=<SID>Delete_operator<CR>g@")
 " >>>
 " >>>

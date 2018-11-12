@@ -183,6 +183,32 @@ Further details may be found in the help file:
 
 TODO: Add something on \ga
 
+## "Smart" Delete Operator Override
+Although Txtfmt tokens are invisible, to Vim they are simply characters in your buffer like any other: thus, Vim's builtin delete operators make no distinction between text and tokens. To see how this can be problematic, consider the following scenario... While sitting on the first line of a multiline block of highlighted text, you execute `dd` to delete a line of text. Although you intended only to delete a line of text, the `dd` also removed the tokens at the start of the block, with the result that you have inadvertently removed the highlighting of the entire block! To mitigate this problem, Txtfmt overrides the Normal and Visual mode delete operator (`d`) with its own "smart" version, which will add, remove and replace tokens as needed to prevent change to the highlighting that follows the deleted text.
+**Note:** If you prefer not to remap the builtin delete operator, simply specify your own mapping to prevent Txtfmt from defining the default. E.g.,
+
+```vim
+	nmap <buffer> <LocalLeader>d <Plug>TxtfmtOperatorDelete
+	xmap <buffer> <LocalLeader>d <Plug>TxtfmtVmapDelete
+
+	:help txtfmt-map-config
+```
+
+## Token Inspection
+If you're using auto maps, you won't generally even notice the highlighting tokens, but if you do need to know a token's type, simply position your cursor on it (e.g., using one of the "jump to token" maps described earlier) and execute...
+    `\ga`
+Like builtin `ga` and `g8`, this command displays information in the statusline about the character under the cursor, but instead of character codes, it displays a short string indicating the token type.
+
+Statusline String | Description
+------ | -----------
+fibu | Format italic-bold-underline
+c1 | Foreground color #1
+k3 | Background color #3
+f- | Format end token
+
+```vim
+    :help txtfmt-get-tok-info
+```
 ## Cursor Positioning Note
 As with auto map highlighting specs, multiple format/color specs can be concatenated in a comma or space-separated list. Moreover, you can replace one of the commas with a dot (`.`) to specify where the cursor should be positioned relative to the inserted tokens. These features provide a convenient way to enter both the start and end tokens of a region before beginning to type the highlighted text. If, for example, you wanted to enter red bold text on a yellow background, you could enter `cr fb ky . c- f- k-` to insert all the tokens at once, leaving the cursor between the start and end tokens.
 
@@ -198,20 +224,8 @@ smart | Algorithm uses 'tabstop' and 'shiftwidth' to determine whether a sequenc
 
 **Note:** The logic that recognizes leading indent considers only _actual_ whitespace, ignoring any embedded tokens.
 
-## Delete Operator Override
-Although Txtfmt tokens are invisible, to Vim they are characters in your buffer like any other: thus, deleting text can delete tokens, which in turn, can affect the highlighting of text _beyond_ the deletion. To see how this could be problematic, consider the following scenario... You're sitting on the first line of a multiline block of highlighted text (whose highlighting tokens are hidden at the start of the first line). You use `dd` to delete the first line. Although you intended only to delete a line of text, you have just removed the highlighting of the entire block! Of course, the problem is that the builtin `dd` operator deletes the highlighting tokens along with the rest of the line text. To mitigate these problem, Txtfmt provides its own "smart" delete operators, which should be used instead of the builtin delete on text that may contain highlighting tokens. Note that it is not sufficient for smart delete operators simply to avoid deleting highlighting tokens: they must be
-
-hitting gg0. At this point you should be sitting on an underline-bold-italic format token. If you wish to verify this, hit the following map in normal mode:
-    \ga
-    :help txtfmt-get-tok-info
-
-Because you wish to delete the first two words, enter the following in normal mode:
-    d2w
-Notice how the underline-bold-italic highlighting has been lost! The problem is that the command that deletes the first two words has also deleted the Txtfmt format token. In other words, the deletion had a visible effect on the text beyond the deletion. This is probably not what you wanted. To solve this problem, Txtfmt also provides a "smart delete" command, which is aware of Txtfmt highlighting. Like the auto maps highlighting commands, it can be used in both visual and operator modes. Its default mapping is \d. To use it with the previous example, you could simply have hit \d2w instead of d2w. Try it now (after hitting 'u' to undo the problematic delete, and '0' to be sure you're at the start of the line). Alternatively, you could have highlighted the first two words, then hit \d. The difference between Vim's and Txtfmt's delete commands is that, whereas Vim makes no distinction between text and Txtfmt tokens, Txtfmt's delete assumes your objective is to delete text only, and will do whatever is necessary (possibly inserting new tokens), to preserve the highlighting of text beyond the deletion.
-
-
-## Shift/Indent Overrides
-Although Txtfmt "tokens" are generally invisible to the user, Vim itself treats them as non-whitespace characters. To prevent problems when these tokens appear in leading indent, Txtfmt provides special overrides of builtin operators such as `<<`, `>>`, `CTRL-T` and `CTRL-D`. These overrides understand the special role of tokens in a Txtfmt buffer (as well as the implications of the various 'leadingindent' option settings), and will go to great lengths to ensure that "the right thing" happens when you perform a shift or indent.
+## "Smart" Shift/Indent Overrides
+Because highlighting tokens are invisible, yet appear as normal text to Vim, their presence in leading indent would lead to unexpected shift/indent behavior if Txtfmt did not override builtin shift/indent commands `<<`, `>>`, `CTRL-T` and `CTRL-D`. The Txtfmt overrides understand the special role of tokens in a Txtfmt buffer (as well as the implications of the various 'leadingindent' option settings), and will go to great lengths to ensure that various shift/indent commands "do the right thing".
 
 # Txtfmt Options
 Although the default settings of most Txtfmt options will be fine for the average user, there are 3 distinct mechanisms provided for customization:
@@ -222,8 +236,54 @@ Txtfmt "modelines" | analogous to Vim modelines | associate options with file | 
 Buf-local variables | setting applies to current buffer only | set from an autocommand for specific file type | <nobr>`let b:txtfmtLeadingindent = 'white'`</nobr>
 Global variables | setting applies to all Txtfmt buffers | set from vimrc | <nobr>`let g:txtfmtTokrange = '180X'`</nobr>
 
+```vim
+	:help txtfmt-options
+```
+
 
 # Color Configuration
+Txtfmt's default configuration defines 8 distinct colors, any of which can be applied to foreground text. For performance reasons, only red, blue and green are available for background highlighting.
+
+Color | Color # | Abbrev | Terminal | GUI | Background?
+----- | ------- | ---- | -------- | --- | -----------
+Black | 1 | k | Black | #000000 | No
+Blue | 2 | b | DarkBlue | #0000FF | Yes
+Green | 3 | g | DarkGreen | #00FF00 | Yes
+Turquoise | 4 | t | DarkCyan | #00FFFF | No
+Red | 5 | r | DarkRed | #FF0000 | Yes
+Violet | 6 | v | DarkMagenta | #FF00FF | No
+Yellow | 7 | y | DarkYellow | #FFFF00 | No
+White | 8 | w | White | #FFFFFF | No
+
+
+But these defaults are completely configurable. For instance, if you have a relatively modern computer, you may wish to make all 8 colors available for background highlighting. You could do so by adding the following to your vimrc:
+
+```vim
+" Unmask background colors disabled by default
+let g:txtfmtBgcolormask = "11111111"
+```
+
+You could accomplish the same thing for just a single file by adding the following Txtfmt "modeline" to the beginning or end of the file:
+```vim
+	txtfmt:bcm=11111111
+```
+
+The color definitions themselves are also customizable. If black is the default text color in your preferred colorscheme, using 1 of the 8 colors for black probably seems like a waste. You could change color #1 from black to "slategray" simply by adding the following line to your vimrc:
+
+```vim
+let g:txtfmtColor{1} = '^G\\%[rey]$,c:Gray,g:#708090'
+```
+
+Similarly, if the defaults for colors #3 and #6 are a bit too bright for your taste, you could tone them down a bit with the following lines in your vimrc:
+
+```vim
+let g:txtfmtColor{3} = '^g\\%[reen]$,c:DarkGreen,g:#2E8B57'
+let g:txtfmtColor{6} = '^p\\%[urple]$,c:DarkMagenta,g:#800080'
+```
+
+```vim
+	:help txtfmt-color-config
+```
 
 # Installation
 Txtfmt can be installed using any of the standard Vim plugin mechanisms: e.g., Pathogen, Vundle, etc. If you're not using a plugin manager, simply drop the uncompressed Txtfmt distribution somewhere in your 'runtimepath', then run `helptags ALL` to prepare the Txtfmt help.
