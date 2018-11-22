@@ -5,9 +5,7 @@ Txtfmt (The Vim Highlighter) : "Rich text" highlighting in Vim! (text color, hig
 
 <br>**Note:** If you wish to try the examples below, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location and do...
 
-```vim
-set ft=txtfmt
-```
+`set ft=txtfmt`
 
 Alternatively, you can have Txtfmt create a "test page" for you:
 
@@ -28,7 +26,10 @@ Txtfmt brings rich text formatting to plain text files. The commands used to acc
 * **Manual maps:** Insert one ore more _tokens_, which affect all subsequent text up to the next token.
 
 **Note:** Txtfmt's highlighting relies upon invisible characters (tokens) in the text, but you needn't know or care about this if you're using auto maps, which completely automate token insertion/removal. Manual maps (the _only_ type available until Txtfmt 3.0) do not shield the user nearly so well from this implementation detail, and hence, are provided mostly for backwards compatibility.
- 
+
+**Note:** All examples on this page assume that your <LocalLeader> is at the default value (i.e., backslash). If you have set <LocalLeader> to something other than the default, replace the backslash in the examples with the appropriate character.
+    :help <LocalLeader>
+
 # Auto Maps
 Before diving into the details of auto maps, I'll present a few examples that show how easy they are to use.
 
@@ -106,6 +107,8 @@ Spec | Result
 `fu-b,cb,kr` | Add underline and remove bold, make text color blue and background color red
 `fu-b cb kr` | _same as previous_
 
+`:help txtfmt-fmt-spec`
+`:help txtfmt-clr-spec`
 
 ## Selective (Pattern-Based) Highlighting
 Up until now, we've been applying highlighting to _all_ of the text in a range. It is also possible to target specific _sub-regions_ within the visually-selected or operated-on text. To apply highlighting selectively, append a `/` to the highlighting spec, followed by a "selector pattern expression": e.g.,
@@ -125,7 +128,7 @@ Selector patterns are essentially boolean expressions combining format/color spe
 
 Logical Operators | Description
 ------------------|------------
-`|[|]` | Logical OR (may be abbreviated as `|`)
+`\|[\|]` | Logical OR (may be abbreviated as `\|`)
 `&[&]` | Logical AND (may be abbreviated as `&`)
 `!` | Logical negation
 `(` ... `)` | Groups sub-patterns
@@ -136,7 +139,7 @@ The color specs used in selector patterns are identical to the ones used for hig
 
 Modifier | Description
 ---------|------------
-`|` | Matches regions containing _any_ of the subsequent format attributes
+`\|` | Matches regions containing _any_ of the subsequent format attributes
 `&` | Matches regions containing _all_ of the subsequent format attributes
 `=` ( **_default_** ) | Matches regions containing _exactly_ (all and only) the subsequent format attributes
 
@@ -150,9 +153,9 @@ The following examples illustrate the use of highlighting specs with attached se
 Spec/Pattern | Action | Applies To
 -------------|--------|-----------
 <nobr>`fu/cr`</nobr> | Add underline | red text
-<nobr>`cb/cr||f&bi`</nobr> | Make text blue | text that is red _**or**_ has both bold and italic attributes (and possibly others)
+<nobr>`cb/cr\|\|f&bi`</nobr> | Make text blue | text that is red _**or**_ has both bold and italic attributes (and possibly others)
 <nobr>`fu,kg/cr&&f|bi`</nobr> | Add underline and make background green | text that is red _**and**_ has _either_ bold _or_ italic attributes (and possibly both)
-<nobr>`fi/cr||f=bu`</nobr> | Add italic | text that is red _**or**_ bold-underline
+<nobr>`fi/cr\|\|f=bu`</nobr> | Add italic | text that is red _**or**_ bold-underline
 <nobr>`cb kr f-i / fbi & !(cr & k-)`</nobr> | Make text blue on a red background and remove italic attribute | text that is bold-italic and _not_ red on a colorless background
 
 **Tip:** Whitespace is mostly ignored by Txtfmt, and can be used to make the expressions easier to read.<br>
@@ -163,11 +166,8 @@ Although Txtfmt makes the highlighting tokens invisible, to Vim they are simply 
 
 **Note:** If you prefer **_not_** to remap the builtin delete operator, simply specify your own 1st level mapping to inhibit the default: e.g.,
 
-```vim
-	nmap <buffer> <LocalLeader>d <Plug>TxtfmtOperatorDelete
-	xmap <buffer> <LocalLeader>d <Plug>TxtfmtVmapDelete
-
-```
+`nmap <buffer> <LocalLeader>d <Plug>TxtfmtOperatorDelete`<br>
+`xmap <buffer> <LocalLeader>d <Plug>TxtfmtVmapDelete`
 
 **Note:** The example above assumes you'll be defining the maps from an autocmd that runs only for Txfmt buffers. If you'd rather put the override in your vimrc, simply omit the `<buffer>`, but be aware that this will define the map globally (not only in Txtfmt buffers).
 
@@ -193,17 +193,18 @@ smart | Algorithm uses 'tabstop' and 'shiftwidth' to determine whether a sequenc
 
 Manual maps are used to insert specific highlighting tokens at specific locations in the buffer. Each token determines either the text color, background color, or format attributes in effect up until the subsequent token of the same type (possibly the end token `'-'`). With auto maps, you simply specify the desired highlighting changes, and Txtfmt _automagically_ inserts/removes the requisite tokens at both the beginning and end of the selection. This task is actually more complicated than it sounds. Suppose you've selected some text and use an auto map with highlighting spec `fb,cr,kg` (add bold, text red, background green). You might assume that Txtfmt would insert 6 tokens as follows:
 
-`<kr><cb><fb> <selected text...> <k-><c-><f->`
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+_`<kr><cb><fb> <selected text...> <k-><c-><f->`_
 
 This is certainly one possibility, but the situation is actually more complicated... For one thing, there may be tokens _within_ the selected text that need to be removed. Leaving a `<cg>` token, for instance, would be harmful, as it would prematurely terminate the blue text region. A `<cb>` token within the region would be harmless but redundant with the one at the beginning of the region, so it should really be removed. But what about format attribute tokens within the region? They cannot simply be removed, since the highlighting spec requested only the _**addition**_ of bold, not the removal of anything else! An `<fi>` token within the region, therefore, would need to be _**changed**_ to an `<fbi>` token to satisfy the request without disturbing existing highlighting. Similarly, if the text just _past_ the selected region were originally underline-italic, the auto map would need to end the region with an `<fui>` token ( _**not**_ `<f->` ), to avoid changing the highlighting of unselected text.
 
-Auto maps provide an abstraction that allows you to think in terms of a desired highlighting change, shielding you from the often tedious details involved in effecting the change. So why would you ever want to use manual maps instead of auto maps? Most users won't, but there may be scenarios in which the explicit control afforded by manual maps is needed. Accordingly, here's a quick walkthrough...
+Auto maps provide an abstraction that lets you think in terms of a desired highlighting change, shielding you from the often tedious details involved in effecting the change. So why would you ever want to use manual maps instead of auto maps? Most users won't, but there may be scenarios in which the explicit control afforded by manual maps is needed. Accordingly, here's a quick walkthrough...
 
-You want to enter some green text, so you execute one of Txtfmt's Normal mode _insert-token_ mappings (e.g., `\i`, `\I`, `\a`, `\A`, `\o`), and enter `cg` at the prompt (**_mnemonic:_** color green): 
+Suppose you want to enter some green text... Execute `\i`, and enter `cg` at the prompt (**_mnemonic:_** color green): 
 
 The text you type now is green. 
 
-While typing green text, you wish to emphasize a phrase by making it bold-italic. Still in insert mode, you execute _insert-token_ map `CTRL-\CTRL-\` and enter `fbi` (or `fib`) at the prompt (**_mmemonic:_** format bold italic).
+While typing green text, you wish to emphasize a phrase by making it bold-italic. Still in Insert mode, you execute _insert-token_ map `CTRL-\CTRL-\` and enter `fbi` (or `fib`) at the prompt (**_mmemonic:_** format bold italic).
 
 The text you type now is green bold-italic.
 
@@ -211,9 +212,21 @@ Now you wish to enter some text with a blue background. Still in insert mode, yo
 
 The text you type now is green bold-italic on a blue background. 
 
-At some point, you wish to return to plain, unhighlighted text. You can terminate the 3 active regions by executing the _insert-token_ map `CTRL-\ CTRL-\` one last time and entering `c-,f-,k-` (or `c- f- k-`) at the prompt (**_mnemonic:_** no color, no format, no bac _k_ ground color).
+At this point, any of the open highlighting regions can be terminated with the corresponding terminator token:
+    `f-' (no format attributes)
+    `c-' (no color)
+    `k-' (no background color)
+
+Alternatively, you can enter a non-terminator highlighting spec to change subsequent highlighting without explicitly terminating the preceding region. Inserting a "cr" token, for instance, would switch from green text color to red.
+
+To finish the example, let's terminate the 3 active regions by executing the _insert-token_ map `CTRL-\ CTRL-\` one last time and entering `c-,f-,k-` (or `c- f- k-`) at the prompt (**_mnemonic:_** no color, no format, no bac _k_ ground color).
 
 The text you type now is plain, unhighlighted text.
+
+**Note:** In the preceding example, you used _insert token_ maps `\i` and `CTRL-\CTRL-\` to insert highlighting tokens. There are actually 15 such maps in all, but they're easy for a Vim user to remember by analogy with Vim's builtin commands for entering insert mode: e.g., `\i` inserts token before cursor; `\a` inserts token after cursor; `\I` inserts token at beginning of line; etc... Moreover, each of those commands has a variant beginning with `\v`, which returns to Normal mode after inserting the token. Finally, `CTRL-\CTRL-\` allows you to insert a token without leaving Insert mode.
+
+`:help txtfmt-ins-tok-maps`
+
 
 ## Cursor Positioning with Dot (`.`)
 As with auto map highlighting specs, multiple format/color specs can be concatenated in a comma or space-separated list. Moreover, you can replace one of the commas with a dot (`.`) to specify where the cursor should be positioned relative to the inserted tokens. These features provide a convenient way to enter both the start and end tokens of a region before beginning to type the highlighted text. If, for example, you wanted to enter red bold text on a yellow background, you could enter `cr fb ky . c- f- k-` to insert all the tokens at once, leaving the cursor between the start and end tokens.
@@ -339,7 +352,9 @@ Alternatively, you could customize `'tokrange'` for a single file using a Txtfmt
 `:help txtfmt-'MoveStartTok'`
 
 ### Displaying Token Range
-The `:ShowTokenMap` command provides a nicely-formatted table documenting the 'tokrange' in effect in the current buffer. Each row of the table lists a token's character code along with its meaning (e.g., "underline-bold" or "Color3"). Additionally, color tokens display the color name pattern, the color's RGB value (either as hex value or terminal-specific symbolic name) and whether or not the color is "active" in the current configuration.
+The `:ShowTokenMap` command provides a tabular illustration of the 'tokrange' in effect for the current buffer. Each row of the table lists a token's character code along with its meaning (e.g., "underline-bold" or "Color3"). Additional information is displayed for a color token: its name pattern, RGB value (either as hex value or terminal-specific color name) and enabled status.
+
+`:help txtfmt-:ShowTokenMap`
 
 # Installation
 Txtfmt can be installed using any of the standard Vim plugin mechanisms: e.g., Pathogen, Vundle, etc. If you're not using a plugin manager, simply drop the uncompressed Txtfmt distribution somewhere in your 'runtimepath', then run `helptags ALL` to prepare the Txtfmt help.

@@ -27,10 +27,10 @@ Prior to version 3, Txtfmt provided only what are now known as "manual maps". Ma
 1. Visual maps: operate on the visually selected text
 2. Operator maps: operate on the text moved over (or included in a "text object")
 
-Documentation Note: Auto maps have not yet been documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the usage examples below, coupled with the aforementioned README.md on Github, should be more than sufficient for most users to get started.
+Documentation Note: Auto maps are not yet fully documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the usage examples below, coupled with the aforementioned README.md on Github, should be more than sufficient for most users to get started.
 
 The next few sections give usage examples of visual/operator auto maps and manual maps.
-Note: If you wish to try the usage examples now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location, start Vim and execute the following in an empty buffer...
+Note: If you wish to try the examples now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location, start Vim and execute the following in an empty buffer...
     :set ft=txtfmt
 The "INSTALL DETAILS" section (further down) discusses plugin load in greater detail...
 
@@ -67,13 +67,13 @@ Up until now, we've been applying highlighting to all of the text in a range. Bu
 
 Selector patterns are essentially boolean expressions combining format/color specs with standard logical operators `&&', `||', `(...)', and `!'.
 
-Example: Suppose after highlighting many words and phrases in your document with f=b,cr,kg (bold, red text on green background), you decide that f=bi,cb (bold-italic, blue text) would have been a better choice. Making the change manually would be tedious; fortunately, selector patterns provide a better way. Simply select a range of lines containing all the text you wish to change and execute...
+Example: Suppose after highlighting many words and phrases in your document with f=b,cr,kg (bold, red text on green background), you decide that f=bi,cb (bold-italic, color blue) would have been a better choice. Making the change manually would be tedious; fortunately, selector patterns provide a better way. Simply select a range of lines containing all the text you wish to change and execute...
     \h
 At the prompt, type the following and hit Enter:
-    f+i,cb,k- / fb && cr && kg
+    f+i,cb,k-/ fb && cr && kg
 Explanation: The highlighting spec adds italic, changes text color to blue and removes background highlighting altogether, but affects *only* bold red text on a green background.
 
-The syntax of selector patterns is very similar to that of highlighting specs, and is best explained by examples:
+The syntax of selector patterns is very similar to that of highlighting specs, and is best explained with examples:
 
     fu/cr
         Action: Add underline attribute
@@ -91,7 +91,7 @@ The syntax of selector patterns is very similar to that of highlighting specs, a
 
     fi/cr||f=bu
         Action: Add italic attribute
-        Applies To: Text that is red OR has bold-underline attributes and no others
+        Applies To: Text that is red OR has bold-underline format attributes and no others
 
     cb kr f-i / fbi & !(cr & k-)
         Action: Set fg color blue, bg color red, and remove italic attribute
@@ -101,7 +101,7 @@ The syntax of selector patterns is very similar to that of highlighting specs, a
 Tip: Whitespace (ignored by Txtfmt) can be used to make the expressions (both highlighting and selector) easier to read.
 Caveat: `f&<attrs>' and `f|<attrs>' are atomic constructs: i.e., space is not permitted after the `f`, or between operators and attribute flags.
 Tip: For logical AND and OR, you can drop one of the &'s or |'s.
-Rationale: | and & are equivalent to || and &&, respectively, but to avoid confusion with the special `f|' and `f&' primitives, some users may prefer the longer forms.
+Rationale: Logical operators | and & are equivalent to || and &&, respectively, but to avoid confusion with the special `f|' and `f&' primitives, some users may prefer the longer forms.
 Tip: You can drop the `=' from `f=<attrs>' in a selector expression.
 Rationale: `=' is the default operator in selector expressions: i.e., f=ub is equivalent to fub.
 Distinction: In the auto-map highlighting spec itself (i.e., the "action" portion of the spec), f=ub and fub mean different things: the former means set to *exactly* underline-bold, whereas fub is a synonym for f+ub, which means add underline-bold on top of existing format attributes.
@@ -125,7 +125,14 @@ Now you wish to switch to a blue background. Execute another mapping (e.g., CTRL
 Mnemonic: bac_k_ground blue
 The text you type now is green bold-italic on a blue background.
 
-At some point, you may wish to return to default (unhighlighted) text. You can terminate the 3 active regions by executing the insert-token mapping (CTRL-\ CTRL-\) one last time and entering the following at the prompt:
+At this point, any of the open highlighting regions can be terminated with the corresponding `-' specifier:
+    `f-' (no format attributes)
+    `c-' (no color)
+    `k-' (no background color)
+
+Alternatively, you can enter a non-terminator highlighting spec to change subsequent highlighting without explicitly terminating the preceding region. Inserting "cr", for instance, would switch from green text color to red.
+
+To finish the example, let's terminate the 3 active regions by executing the insert-token mapping (CTRL-\ CTRL-\) one last time and entering the following at the prompt:
     c-,f-,k-
 Mnemonic: remove color, remove format, remove bac_k_ground color
 Now, the text you type should be plain, unhighlighted text. Notice how multiple format/color specifiers can be concatenated in a comma (or dot) separated list, thereby reducing the number of times you have to execute the mapping. You can use this feature to insert both the start and end tokens of a region at once: e.g.,
