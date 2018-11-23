@@ -15,7 +15,7 @@ The test page offers a quick way to verify that the plugin is installed properly
 
 `:help txtfmt-:MakeTestPage`
 
-The [Installation](.#Installation) section discusses plugin load in greater detail... 
+The [Installation](./README.md#Installation) section discusses plugin load in greater detail... 
 
 # Introduction
 Txtfmt brings rich text highlighting to plain text files. The commands used to accomplish highlighting fall into 2 basic categories:
@@ -70,7 +70,7 @@ k | background (highlighting) color
 <br>**Note:** Because the 3 types of highlighting are completely orthogonal, there is no need to specify components whose highlighting you do not wish to change: e.g., `fb` adds bold attribute without affecting foreground or background color in any way.
 
 ### Color Specs
-For fg/bg colors, either a color name or hyphen (`'-'`) must follow the `c` or `k`. The color names are configurable, but the defaults allow common colors to be abbreviated to a single letter: e.g., `r`=red, `b`=blue, `g`=green, etc... A `'-'` specifies "no color": i.e., it removes color from the region. Both the color RGB values and the color names are completely configurable. See section [Color Configuration](Color Configuration) for details...
+For fg/bg colors, either a color name or hyphen (`'-'`) must follow the `c` or `k`. The color names are configurable, but the defaults allow common colors to be abbreviated to a single letter: e.g., `r`=red, `b`=blue, `g`=green, etc... A `'-'` specifies "no color": i.e., it removes color from the region. Both the color RGB values and the color names are completely configurable. See section [Color Configuration](./README.md#Color Configuration) for details...
 
 ### Format Attribute Specs
 The `f` of a format specification is followed by a string of operators and single character format attribute flags:

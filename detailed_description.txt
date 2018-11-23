@@ -143,9 +143,13 @@ Explanation: Txtfmt lets you replace one of the commas with a dot to indicate wh
 === EXPORTING HIGHLIGHTED DOCUMENTS ===
 If you wish to make your highlighted documents available to non-Vim users, simply use the :TOhtml command distributed with Vim to output an HTML version of the Txtfmt buffer.
 
-=== LEARNING MORE... ===
+=== TUTORIAL ===
 
-https://github.com/bpstahlman/txtfmt
+https://github.com/bpstahlman/txtfmt/README.md
+
+=== ISSUES AND FEATURE REQUESTS ===
+
+https://github.com/bpstahlman/txtfmt/issues
 
 === FEEDBACK ===
 I would greatly appreciate your feedback on this plugin:
