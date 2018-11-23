@@ -11,11 +11,11 @@ Alternatively, you can have Txtfmt create a "test page" for you:
 
 `:MakeTestPage`
 
-The test page offers a quick way to verify that the plugin is installed properly, but it also provides a convenient mechanism for visualizing the effects of various configuration changes. When executed with no arguments, `:MakeTestPage` uses default settings, taking into account any Txtfmt option variables you've set in your vimrc. But if you supply arguments, `:MakeTestPage` will process them as though they were part of a "Txtfmt modeline" within the test page itself.
+The test page offers a quick way to verify that the plugin is installed properly, as well as a convenient mechanism for visualizing the effects of various configuration changes. When executed with no arguments, `:MakeTestPage` uses default settings, taking into account any Txtfmt option variables you've set in your vimrc. But if you supply arguments, `:MakeTestPage` will process them as though they were part of a "Txtfmt modeline" within the test page itself.
 
 `:help txtfmt-:MakeTestPage`
 
-The [Installation](Installation) section discusses plugin load in greater detail... 
+The [Installation](.#Installation) section discusses plugin load in greater detail... 
 
 # Introduction
 Txtfmt brings rich text highlighting to plain text files. The commands used to accomplish highlighting fall into 2 basic categories:
