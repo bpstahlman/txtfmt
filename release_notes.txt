@@ -1,0 +1,2 @@
+Syntax Engine Refactor: All code now generated dynamically. (Prior to this, certain sections of vimscript were generated offline by an embedded perl script.)
+New Feature: "Leading indent" option permits suppression of highlighting in various types of whitespace at start of line.

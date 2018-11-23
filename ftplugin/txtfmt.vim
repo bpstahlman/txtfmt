@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2016 Sep 03
+" Last Change: 2018 Nov 23
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
@@ -58,6 +58,8 @@ call s:Add_undo('unlet! b:loaded_txtfmt')
 " >>>
 " Set compatibility options <<<
 " (set to Vim defaults to avoid errors with line continuation)
+" Note: The cpo options generally affect only code outside functions; however,
+" the line continuation option takes effect when functions are parsed, not run.
 let s:save_cpo = &cpo
 set cpo&vim
 " >>>
@@ -738,6 +740,246 @@ fu! s:Can_delete_tok()
 	endif
 	return ret_val
 endfu
+" >>>
+" Shift functions <<<
+" Remove tokens within leading indent in each line in input range.
+" Special Case: In 'noconceal' case, temporarily remove tokens just past leading
+" indent (for li regimes in which such tokens would not be part of leading
+" indent).
+" Rationale: Before existence of 'leadingindent', 'noconceal' users may have
+" placed tokens just past leading indent to avoid spurious highlighting; in such
+" cases, it's best to perform the shift/indent without the tokens, then add them
+" back.
+" Note: As long as 'li' is forced to be 'white' or 'none' (as is currently the
+" case), the special logic will never be used.
+" Return: list indicating what was removed:
+" [
+"   {'lnum': lnum, 'toks': [{tokstr}...]}]
+" Note: Only lines with tokens removed are represented in list.
+fu! s:Remove_toks_in_li(l1, l2)
+	let ret = []
+	" Short-circuit on li=none (in case caller doesn't check).
+	if b:txtfmt_cfg_leadingindent == 'none'
+		return ret
+	endif
+	for lnum in range(a:l1, a:l2)
+		" Find extents of leading indent
+		let line_str = getline(lnum)
+		let [li_str, li_strlen, skip_bytes] = ['', 0, 0]
+		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
+		if li_end >= 0
+			" Grab the leading indent.
+			let li_str = strpart(line_str, 0, li_end)
+			let li_strlen = len(li_str)
+		else
+			let li_end = 0
+		endif
+		" Note: See comment in header describing this special 'noconceal' logic.
+		if !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent =~ '^\(smart\|tab\)'
+			" Check for tokens in whitespace past end of leading indent.
+			let end = matchend(line_str,
+				\ '^\%(' . b:txtfmt_re_any_tok . '\|\s\)\+', li_end)
+			if end >= 0
+				" Allow subsequent distinction between leading indent and any
+				" tokens immediately following it.
+				let skip_bytes = end - li_end
+				let li_str .= line_str[li_end:end-1]
+				let li_strlen += skip_bytes
+			endif
+		endif
+		" Don't add list element if no leading indent (or toks just past).
+		if !li_strlen
+			continue
+		endif
+		" Process all toks in the leading indent, rebuilding the line without
+		" them as we go...
+		let [toks, uniq] = [[], {}]
+		let [i, s] = [0, '']
+		let m = ['', -1, 0]
+		" Note: We're guaranteed to enter this while at least once.
+		while m[2] >= 0 && m[2] < li_strlen
+			let m = matchstrpos(li_str, b:txtfmt_re_any_tok, m[2])
+			if m[1] >= 0
+				" Found a token.
+				" Note: Uniquifying the list of tokens ensures that recombining
+				" them after the shift can't produce escape-escapee pairs,
+				" regardless of the 'escape' setting.
+				if !has_key(uniq, m[0])
+					let uniq[m[0]] = 1
+					" Add the token to the list.
+					call add(toks, m[0])
+				endif
+				" Accumulate up to tok.
+				let s .= strpart(li_str, i, m[1] - i)
+				" Note: Replacement considered only for toks in true leading
+				" indent.
+				if !b:txtfmt_cfg_conceal && m[2] < li_end
+					" Replace tok with space for alignment.
+					let s .= ' '
+				endif
+				" Skip over the token
+				let i = m[2]
+			else
+				" Accumulate remainder.
+				let s .= li_str[i:]
+			endif
+		endwhile
+		if empty(toks)
+			" Don't add list element if no toks in leading indent.
+			continue
+		endif
+		" Accumulate object representing this line into return list.
+		call add(ret, {'lnum': lnum, 'toks': toks})
+		" Modify the line in the buffer.
+		call setline(lnum, s . line_str[li_end + skip_bytes:])
+	endfor
+	return ret
+endfu
+
+fu! s:Restore_toks_after_shift(toks)
+	" Short-circuit on li=none (in case caller doesn't check).
+	if b:txtfmt_cfg_leadingindent == 'none'
+		return
+	endif
+	for t in a:toks
+		" Find extents of leading indent
+		let line_str = getline(t['lnum'])
+		if b:txtfmt_cfg_conceal
+			" Note: Regex will match at offset <= 0 when no leading indent.
+			let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
+			let toks = t['toks']
+			let pre = strpart(line_str, 0, li_end < 0 ? 0 : li_end)
+		else " noconceal
+			" Design Decision: In noconceal case, "hide" tokens whenever we can,
+			" even at the cost of replacing spaces that aren't technically
+			" considered leading indent.
+			let li_end = max([matchend(line_str, '^\s*'), 0])
+			let toks = t['toks'][:]
+			" Figure out how far back to start replacing tokens.
+			let [N, n, i] = [len(toks), 0, li_end - 1]
+			while i >= 0 && n < N
+				let n += line_str[i] == ' ' ? 1 : &ts
+				let i -= 1
+			endwhile
+			let n = min([n, N])
+			" Set i to index of first char to be overwritten (if any).
+			let i += 1
+			" Get leading portion of line that won't be modified.
+			let pre = strpart(line_str, 0, i)
+			" Overwrite whitespace with tokens, working from left to right.
+			while i < li_end && !empty(toks)
+				if line_str[i] == ' '
+					let pre .= remove(toks, 0)
+				else
+					" How many tokens can we fit in this tab?
+					let repl = min([len(toks), &ts])
+					let pre .= join(remove(toks, 0, repl - 1), '')
+						\ . (repl < &ts ? "\t" : '')
+				endif
+				" Advance to next tab or char.
+				let i += 1
+			endwhile
+		endif
+		call setline(t['lnum'], pre . join(toks, '') . line_str[li_end : ])
+	endfor
+endfu
+
+" Note: Although we're invoked from insert-mode map, we'll be in normal mode by
+" the time the function is called. This function is responsible for restoring
+" cursor position in a sensible manner, and returning to insert mode.
+fu! s:Indent(dedent)
+	" Undo the backwards char movement inherent in transition from insert to
+	" normal mode.
+	" Rationale: Allows us to save/restore this position and have subsequent
+	" :startinsert put cursor back where it was.
+	" Alternative: Could use CTRL-O prior to the <Esc> in imap.
+	normal! `^
+	let cur = getpos('.')
+	" Note: This regex is not the same as the more specific 'leadingindent'.
+	let re_leading_ws_or_tok = '^\%(\s\|' . b:txtfmt_re_any_tok . '\)*'
+	" Is portion of line preceding cursor nothing but whitespace and toks?
+	let in_ws = strpart(getline('.'), 0, cur[2] - 1) =~ re_leading_ws_or_tok . '$'
+	if !in_ws
+		" Cache distance from cursor to EOL (which should be unaffected by
+		" indent/dedent)
+		let edist = col('$') - cur[2]
+	endif
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(cur[1], cur[1])
+	" Let Vim's native CTRL-T/D perform the requested indent/dedent.
+	" Design Decision: CTRL-T and CTRL-D work most predictably (and sanely) when
+	" executed from end of line (after any leading whitespace).
+	exe 'norm! A' . (a:dedent ? "\<C-D>" : "\<C-T>")
+	call s:Restore_toks_after_shift(toks)
+	" Restore cursor position, according to following logic:
+	" If mapping was executed from (possibly empty) leading whitespace or tokens
+	" (not necessarily leading indent), position on first non-whitespace/token;
+	" else, attempt to preserve position by positioning cursor at its original
+	" distance from EOL.
+	if in_ws
+		" Note: Regex uses * quantifier; hence, failure (-1) not possible.
+		let cur[2] = matchend(getline('.'), re_leading_ws_or_tok) + 1
+	else
+		" Note: Cursor was positioned past a char that couldn't have been
+		" removed by indent/dedent.
+		let cur[2] = col('$') - edist
+	endif
+	call cursor(cur[1], cur[2])
+	" Return to insert mode on function return.
+	startinsert
+endfu
+
+fu! s:Lineshift(mode, dedent)
+	if a:mode == 'o'
+		let [l1, l2] = [line("'["), line("']")]
+	elseif a:mode == 'n'
+		" normal
+		let [l1, l2] = [line("."), line(".") + v:count1 - 1]
+	elseif a:mode[0] == 'c'
+		" command
+		" TODO: Perhaps implement a Lsh and Rsh command (to replace :< and :>
+		" commands, which can't be overridden)?
+	elseif a:mode =~ '[vV]'
+		" visual
+		let [l1, l2] = [line("'<"), line("'>")]
+	endif
+
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(l1, l2)
+	" Perform the indent in mode-appropriate manner, to ensure that cursor is
+	" left in correct location.
+	if a:mode == 'o'
+		exe printf("norm! %s%s",
+			\ a:dedent ? "<" : ">",
+			\ line(".") == l1 ? "']" : "'[")
+	elseif a:mode == 'n'
+		exe printf("norm! %d%s", v:count1, a:dedent ? "<<" : ">>")
+	elseif a:mode[0] == 'c'
+		" TODO: See earlier note.
+	elseif a:mode =~ '[vV]'
+		exe printf("norm! gv%s", a:dedent ? "<" : ">")
+	else
+		echoerr "Invalid mode for Txtfmt lineshift: " . a:mode
+	endif
+
+	" Put back uniquified, ordered list of removed tokens just past leading
+	" indent.
+	call s:Restore_toks_after_shift(toks)
+	" Note: Vim leaves cursor on first non-whitespace char (possibly token).
+	" In some cases (e.g., 'noconceal' and li=white), this would leave cursor
+	" within what appears to be leading whitespace.
+	" Solution: Place cursor just past all leading whitespace/tokens.
+	let col = matchend(getline('.'), '^\%(\s\|' . b:txtfmt_re_any_tok . '\)*') + 1
+	call cursor(0, col)
+endfu
+
+fu! s:Shift_left_operator(mode)
+	call s:Lineshift('o', 1)
+endfu
+fu! s:Shift_right_operator(mode)
+	call s:Lineshift('o', 0)
+endfu
+" >>>
 " >>>
 " TODO: Perhaps move elsewhere...
 fu! Is_cursor_on_char()
@@ -4151,6 +4393,9 @@ fu! s:dbg_display_toks(context, toks)
 endfu
 
 fu! s:Operate_region(pspecs, opt)
+	" Caveat: Because Vmap_compute() can move cursor off screen,
+	" saving/restoring view is needed to prevent spurious scrolling.
+	let wsv = winsaveview()
 	let pspecs = a:pspecs
 	if a:opt['op'] == 'delete'
 		" Assumption: Caller inputs empty pspecs for delete case; transform to
@@ -4206,6 +4451,7 @@ fu! s:Operate_region(pspecs, opt)
 		" types are involved in the operation.
 		call s:Vmap_protect_bslash(a:opt)
 	endif
+	call winrestview(wsv)
 endfu
 
 " Adjust region bounds (if necessary) to avoid splitting an escape-escapee pair,
@@ -4968,10 +5214,15 @@ endfu
 " Function: s:Def_map() <<<
 " Purpose: Define both the level 1 and level 2 map as appropriate.
 " Inputs:
-" mode 	- single char, used as input to maparg, mapcheck, etc...
-" lhs1	- lhs of first-level map
-" lhs2	- rhs of first-level map, lhs of second-level map
-" rhs2	- rhs of second-level map
+" mode 	    - single char, used as input to maparg, mapcheck, etc...
+" lhs1	    - lhs of first-level map
+"             empty if no first-level map required (special case)
+"             Rationale: Allows us to map to 2nd level internally (eg,
+"             TxtfmtIndent Normal mode maps).
+" lhs2	    - rhs of first-level map, lhs of second-level map
+" rhs2	    - rhs of second-level map
+" [noremap] - bool indicating whether 'noremap' should be used for 2nd-level map
+"             Default: 1
 " How: Consider whether user already has a map to level 2 (which should take
 " precedence over maplevel 1). Also, make sure the map from level 2, if it
 " exists, is not incorrect, etc...
@@ -4981,31 +5232,26 @@ endfu
 " 0			- success
 " nonzero	- error
 " NOTE: Function will echoerr to user
-fu! s:Def_map(mode, lhs1, lhs2, rhs2)
-	" TODO - Perhaps eventually support operator mode if needed
-	if a:mode=='n'
-		let cmd1 = 'nmap'
-		let cmd2 = 'nnoremap'
-	elseif a:mode=='i'
-		let cmd1 = 'imap'
-		let cmd2 = 'inoremap'
-	elseif a:mode=='o'
-		let cmd1 = 'omap'
-		let cmd2 = 'onoremap'
-	elseif a:mode=='v'
-		let cmd1 = 'vmap'
-		let cmd2 = 'vnoremap'
-	else
+fu! s:Def_map(mode, lhs1, lhs2, rhs2, ...)
+	" Determine whether 2nd level uses map or noremap.
+	let noremap = a:0 ? !!a:1 : 1
+	if a:mode !~ '^[niov]$'
 		echoerr 'Internal error - unsupported mapmode passed to Def_map()'
 		return 1
 	endif
+	" Construct the 1st/2nd level :map commands.
+	let l:cmd1 = a:mode . 'map'
+	let l:cmd2 = a:mode . (noremap ? 'nore' : '') . 'map'
 	" Do first map level <<<
+	" FIXME: I'm thinking the 1st level maps *we* create (ie, not the ones
+	" user has created) should also be reflected in undo_ftplugin.
 	" Caveat: This guard can prevent map changes from taking effect when changes
 	" are made and :Refresh is run without first quitting Vim. When sessions are
 	" involved, the problem can be even more insidious. The guard is important,
 	" though, to prevent creation of default map if user has already defined his
 	" own. Perhaps a warning in help, or some way of mitigating the issue?
-	if !hasmapto(a:lhs2, a:mode)
+	" TODO: Is the comment above still applicable?
+	if !empty(a:lhs1) && !hasmapto(a:lhs2, a:mode)
 		" User hasn't overridden the default level 1 mapping
 		" Make sure there's no conflict or ambiguity between an existing map
 		" and the default one we plan to add...
@@ -5774,7 +6020,12 @@ endfu
 " Needed only for ftplugin
 " Note: Performed after the Common Configuration, which sets the 'starttok'
 " option, needed when processing user maps
-
+" Check for vim-repeat <<<
+" Load the autoload function if it's available, calling with invalid number of
+" args to ensure the call is a nop either way.
+silent! call repeat#set()
+let s:have_repeat = exists('*repeat#set')
+" >>>
 " Function: s:Expand_user_map_macro() <<<
 " Purpose: Expand the input string, which is assumed to be the `...' in one of
 " the user-map expansion sequences of the form <...>.
@@ -6605,18 +6856,97 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\"<C-R>=<SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
 " >>>
+" auto-maps <<<
+" FIXME: Should probably use vim-repeat to make highlight-altering commands
+" repeatable whenever possible. The problem is that this will require
+" parameterizing somehow, since it would be pointless to repeat something like
+" \h if the highlighting-spec weren't somehow embodied in the repeat. Also note
+" that it would be nice to be able to repeat the highlight-changing operators,
+" but I don't think vim-repeat supports this.
+" Possible Solution: Allow highlight spec to be specified explicitly, not
+" accepted at prompt from user, and have this mechanism used in the call to
+" repeat#set(). Could be implemented as optional arg to functions like
+" Highlight_visual, or as wrapper function. Note that this doesn't really work
+" for operators; for the operator scenario, we might allow highlight spec itself
+" to be augmented with an operator motion that would be supplied to Vim with
+" feedkeys().
 " visual mode mappings <<<
 " Note: The following will work for either visual or select mode
 call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
 			\":<C-U>call <SID>Highlight_visual()<CR>")
-call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
+call s:Def_map('v', 'd', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
-" Operator-pending mode mappings <<<
+" operator mappings <<<
 call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
 			\":set opfunc=<SID>Highlight_operator<CR>g@")
-call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
+call s:Def_map('n', 'd', '<Plug>TxtfmtOperatorDelete',
 			\":set opfunc=<SID>Delete_operator<CR>g@")
+" >>>
+" >>>
+" shift/indent maps <<<
+" TODO: For certain combinations of 'leadingindent' with 'noconceal', we could
+" probably skip creating shift/indent overrides (although doing so is harmless,
+" as the override functions work for those cases as well).
+" normal mode shift mappings <<<
+call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
+			\":<C-U>call <SID>Lineshift('n', 1)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftLeft")'
+			\: '') . '<cr>')
+call s:Def_map('n', '>>', '<Plug>TxtfmtShiftRight',
+			\":<C-U>call <SID>Lineshift('n', 0)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftRight")'
+			\: '') . '<cr>')
+" >>>
+" visual mode shift mappings <<<
+" FIXME: Decide whether to define a separate Vmap-specific plug map.
+call s:Def_map('v', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
+			\":<C-U>call <SID>Lineshift('V', 1)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftLeft")'
+			\: '') . '<cr>')
+call s:Def_map('v', '>', '<Plug>TxtfmtOperatorShiftRight',
+			\":<C-U>call <SID>Lineshift('V', 0)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftRight")'
+			\: '') . '<cr>')
+" >>>
+" shift operator mappings <<<
+" TODO: Any way to make this work with vim-repeat's dot operator?
+call s:Def_map('n', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
+			\":set opfunc=<SID>Shift_left_operator<CR>g@")
+call s:Def_map('n', '>', '<Plug>TxtfmtOperatorShiftRight',
+			\":set opfunc=<SID>Shift_right_operator<CR>g@")
+" >>>
+" insert mode indent/dedent mappings <<<
+call s:Def_map('i', '<C-T>', '<Plug>TxtfmtIndent',
+			\"<Esc>:<C-U>call <SID>Indent(0)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtIndent)")'
+			\: '') . '<cr>')
+call s:Def_map('i', '<C-D>', '<Plug>TxtfmtDedent',
+			\"<Esc>:<C-U>call <SID>Indent(1)"
+			\.(s:have_repeat
+			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtDedent)")'
+			\: '') . '<cr>')
+
+" Kludge to allow vim-repeat to work with insert-mode <C-T> and <C-D>.
+" Background: Builtin <C-T> and <C-D> work with builtin `.', so our overrides
+" should as well. But there are several complications:
+" 1. Our overrides are insert-mode only, yet the dot operator can be executed
+" only from normal mode.
+" 2. Because of the way vim-repeat uses feedkeys(), dot after <C-o> works
+" slightly differently from normal dot: in particular, with <C-o>, we'll already
+" be back in insert mode before the fed keys are processed.
+" Solution: Create normal mode maps that trigger the insert mode maps, and
+" install the former with repeat#set() after execution of the latter.
+if s:have_repeat
+	call s:Def_map('n', '', '<Plug>(TxtfmtIndent)', 'i<Plug>TxtfmtIndent<Esc>', 0)
+	call s:Def_map('n', '', '<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 0)
+endif
+" >>>
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
@@ -6628,12 +6958,8 @@ call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
 " -<C-0> can't be used in insert-mode mapping for some reason...
 " >>>
 " TODO <<<
-" -Convert ASCII only pattern character classes to ones that will work with
-" multi-byte chars
 " -Add commands/functions for detecting and altering the range of character
 "  codes used for txtfmt tokens.
-" -Use syntax clusters instead of the double definition trickery I used when I
-"  didn't know about syntax clusters.
 " >>>
 " >>>
 " Restore compatibility options <<<
