@@ -45,6 +45,7 @@ Extracting a Vimball is easy. Simply edit the file with Vim and execute the foll
 That's it! If you haven't overridden any of the Vimball defaults, this will extract the plugin files under the first directory in your 'runtimepath'. Additionally, it will run :helptags to make the Txtfmt help topics searchable with Vim's help command. Note that it is necessary to restart Vim after installing the files before using the plugin.
 
 Note: If you wish to extract the files somewhere other than the first directory in your 'runtimepath', you can override the default location by setting the g:vimball_home option.
+
     :help g:vimball_home
 
 === DETECTING OR SETTING TXTFMT FILETYPE ===
@@ -55,18 +56,21 @@ Txtfmt requires both filetype detection and syntax highlighting to be enabled. T
     :syntax on
     :filetype plugin on
 
-:help :syntax-on
-:help :filetype-plugin-on
+    :help :syntax-on
+    :help :filetype-plugin-on
 
 Once you have copied the Txtfmt files to the appropriate directories in 'runtimepath', you can always use the Txtfmt syntax and mappings by manually setting the 'filetype' option. (I am assuming, of course, that you have enabled syntax at some point, most likely in your .vimrc. If you are not sure about this, :help syntax-enable.) The 'filetype' option may be set on the command line: e.g.,
+
     :set ft=txtfmt
 
 A better approach for a file designed to be viewed with Txtfmt highlighting would be to set the filetype in a Vim modeline: e.g.
-    vim:ft=txtfmt
 
-While the manual approach may be appropriate for some uses, if you find yourself always using Txtfmt with certain types of files, it probably makes sense to set up automatic detection via one of the methods discussed in the section "new-filetype" in the Vim help. The simplest approach is to create your own filetype.vim (assuming you haven't done so already) in a directory that comes before $VIMRUNTIME in 'runtimepath'. Within this script, you should define an autocommand that will :setfiletype to Txtfmt for any file with an appropriate extension.
+	vim:ft=txtfmt
+
+While the manual approach may be appropriate for some use cases, if you find yourself always using Txtfmt with certain types of files, it probably makes sense to set up automatic detection via one of the methods discussed in the section "new-filetype" in the Vim help. The simplest approach is to create your own filetype.vim (assuming you haven't done so already) in a directory that comes before $VIMRUNTIME in 'runtimepath'. Within this script, you should define an autocommand that will :setfiletype to Txtfmt for any file with an appropriate extension.
 
 Example:
+    " -- ~/.vim/filetype.vim --
     " Set up detection for Txtfmt files
     au! filetypedetect BufRead,BufNewFile *.txt    setfiletype txtfmt
 
