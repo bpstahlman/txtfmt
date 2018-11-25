@@ -21,8 +21,8 @@ https://github.com/bpstahlman/txtfmt
 http://www.txtfmt.webs.com
 
 === MANUAL VS AUTO MAPS ===
-!!!! NEW FEATURE (version 3.0) !!!!
-Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new highlighting token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced many users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. To simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduces several new types of maps, known collectively as "auto maps". Curently, auto maps fall into 2 basic categories:
+!!!! NEW FEATURE (introduced in version 3.0) !!!!
+Prior to version 3, Txtfmt provided only what are now known as "manual maps". Manual maps operate at the level of individual tokens: e.g., insert a new highlighting token or replace an existing one at or near the cursor location. Although there is no highlighting task that cannot be accomplished with manual maps, manual mode forced users to think too much about the details of how to accomplish a particular highlighting task, especially when regions with pre-existing highlighting were involved. To simplify the use-case of highlighting existing text, Txtfmt version 3.0 introduced several new types of maps, known collectively as "auto maps". Auto maps fall into 2 basic categories:
 
 1. Visual maps: operate on the visually selected text
 2. Operator maps: operate on the text moved over (or included in a "text object")
@@ -30,9 +30,11 @@ Prior to version 3, Txtfmt provided only what are now known as "manual maps". Ma
 Documentation Note: Auto maps are not yet fully documented in the Txtfmt help file, but their usage is quite simple (simpler than manual maps), so the usage examples below, coupled with the aforementioned README.md on Github, should be more than sufficient for most users to get started.
 
 The next few sections give usage examples of visual/operator auto maps and manual maps.
-Note: If you wish to try the examples now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location, start Vim and execute the following in an empty buffer...
+Note: If you wish to try the examples now, you will need to install and load the plugin. If you're in a hurry, and are familiar with plugin installation, just drop the bundle of files in the proper location, start Vim and execute the following in an empty buffer:
+
     :set ft=txtfmt
-The "INSTALL DETAILS" section (further down) discusses plugin load in greater detail...
+
+The "INSTALL DETAILS" section below discusses plugin load in greater detail...
 
 === USAGE EXAMPLE (VISUAL AUTO MAPS) ===
 Suppose you wish to make a block of text blue, bold-italic.
@@ -99,13 +101,12 @@ The syntax of selector patterns is very similar to that of highlighting specs, a
 
 ** Points to Note **
 Tip: Whitespace (ignored by Txtfmt) can be used to make the expressions (both highlighting and selector) easier to read.
-Caveat: `f&<attrs>' and `f|<attrs>' are atomic constructs: i.e., space is not permitted after the `f`, or between operators and attribute flags.
+Caveat: `f&<attrs>' and `f|<attrs>' are atomic constructs, which do not permit embedded spaces.
 Tip: For logical AND and OR, you can drop one of the &'s or |'s.
 Rationale: Logical operators | and & are equivalent to || and &&, respectively, but to avoid confusion with the special `f|' and `f&' primitives, some users may prefer the longer forms.
 Tip: You can drop the `=' from `f=<attrs>' in a selector expression.
 Rationale: `=' is the default operator in selector expressions: i.e., f=ub is equivalent to fub.
 Distinction: In the auto-map highlighting spec itself (i.e., the "action" portion of the spec), f=ub and fub mean different things: the former means set to *exactly* underline-bold, whereas fub is a synonym for f+ub, which means add underline-bold on top of existing format attributes.
-
 
 === USAGE EXAMPLE (MANUAL MAPS) ===
 Note: As mentioned earlier, auto maps are much easier to use than manual maps, but for the sake of completeness, here's a walkthrough showing the use of manual maps...
@@ -126,9 +127,9 @@ Mnemonic: bac_k_ground blue
 The text you type now is green bold-italic on a blue background.
 
 At this point, any of the open highlighting regions can be terminated with the corresponding `-' specifier:
-    `f-' (no format attributes)
-    `c-' (no color)
-    `k-' (no background color)
+    f- (no format attributes)
+    c- (no color)
+    k- (no background color)
 
 Alternatively, you can enter a non-terminator highlighting spec to change subsequent highlighting without explicitly terminating the preceding region. Inserting "cr", for instance, would switch from green text color to red.
 
@@ -145,9 +146,9 @@ If you wish to make your highlighted documents available to non-Vim users, simpl
 
 === TUTORIAL ===
 
-https://github.com/bpstahlman/txtfmt/README.md
+https://github.com/bpstahlman/txtfmt
 
-=== ISSUES AND FEATURE REQUESTS ===
+=== BUG REPORTS AND FEATURE REQUESTS ===
 
 https://github.com/bpstahlman/txtfmt/issues
 

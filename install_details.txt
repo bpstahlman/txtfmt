@@ -1,6 +1,5 @@
 === DISTRIBUTED FILES ===
-
-The Txtfmt distribution comprises the following 4 files:
+The Txtfmt distribution comprises the following files:
 
 doc/txtfmt.txt
     Txtfmt help file
@@ -18,60 +17,60 @@ indent_patch.txt
     than 7.2 and you plan to "nest" Txtfmt within other filetypes) For details,
         :help txtfmt-combining.
 
-All of the txtfmt files should be placed in their respective parent directories, somewhere in your 'runtimepath'. If you need the patch file, you may place it wherever you like (but if you're using a recent version of Vim, you won't need it).
+=== INSTALLATION ===
+Txtfmt can be installed using any of the standard Vim plugin mechanisms: e.g., Pathogen, Vundle, etc. If you're not using a plugin manager, simply uncompress the Txtfmt distribution somewhere in your 'runtimepath' (e.g., ~/.vim/) and run the following command to prepare the Txtfmt help:
 
-The instructions for extracting the Txtfmt files vary, depending upon the package file format you have chosen to download. Follow the instructions that apply...
+    :helptags ALL
 
---- Gzipped tarfile (.tar.gz) ---
+=== PLUGIN LOADING ===
+Caveat: Like most plugins, Txtfmt requires both filetype detection and syntax highlighting to be enabled, yet neither is enabled in Vim's default configuration; thus, unless you copied the commands from the example vimrc (or source the example file from your own vimrc), you will probably need to add something like the following to your vimrc:
 
-Choose the location where you wish to install the plugin. If you are unsure what location to choose, consider using the first directory in your 'runtimepath' option. You can see what this is by executing `:set rtp'.
+    syntax on
+    filetype plugin on
 
-Typical values are...
-    ~/.vim (Unix)
-    $HOME/vimfiles or $VIM/vimfiles (Windows)
-
-Go to the selected installation directory and extract the gzipped tarfile with a command similar to the following (replacing <path_to_tar_gz> with the actual path to the downloaded file).
-    tar xzvf <path_to_tar_gz>
-
-To make Txtfmt help topics visible to Vim's :help command, you must now run :helptags, passing as argument the path to the doc folder where you unpacked txtfmt.txt: e.g.,
-    :helptags ~/.vim/doc
-
---- Vimball (.vba) ---
-
-Extracting a Vimball is easy. Simply edit the file with Vim and execute the following at the Vim command line:
-    :so %
-    :q
-
-That's it! If you haven't overridden any of the Vimball defaults, this will extract the plugin files under the first directory in your 'runtimepath'. Additionally, it will run :helptags to make the Txtfmt help topics searchable with Vim's help command. Note that it is necessary to restart Vim after installing the files before using the plugin.
-
-Note: If you wish to extract the files somewhere other than the first directory in your 'runtimepath', you can override the default location by setting the g:vimball_home option.
-
-    :help g:vimball_home
-
-=== DETECTING OR SETTING TXTFMT FILETYPE ===
-
-!!! IMPORTANT CAVEAT !!!
-Txtfmt requires both filetype detection and syntax highlighting to be enabled. Though nearly everyone nowadays wants both, they are not enabled by default: unless you copied the commands from the example vimrc (or source the example file from your own .vimrc), you will probably need to add something like the following to your .vimrc...
-
-    :syntax on
-    :filetype plugin on
-
-    :help :syntax-on
-    :help :filetype-plugin-on
-
-Once you have copied the Txtfmt files to the appropriate directories in 'runtimepath', you can always use the Txtfmt syntax and mappings by manually setting the 'filetype' option. (I am assuming, of course, that you have enabled syntax at some point, most likely in your .vimrc. If you are not sure about this, :help syntax-enable.) The 'filetype' option may be set on the command line: e.g.,
+At this point, if the plugin has been properly installed, you can load the plugin manually by executing the following from the Vim command line:
 
     :set ft=txtfmt
 
-A better approach for a file designed to be viewed with Txtfmt highlighting would be to set the filetype in a Vim modeline: e.g.
+A better approach, however, is to ensure that Txtfmt is loaded automatically whenever you open certain files. Several approaches are outlined below...
 
-	vim:ft=txtfmt
+Method 1: Custom filetype.vim
+-----------------------------
 
-While the manual approach may be appropriate for some use cases, if you find yourself always using Txtfmt with certain types of files, it probably makes sense to set up automatic detection via one of the methods discussed in the section "new-filetype" in the Vim help. The simplest approach is to create your own filetype.vim (assuming you haven't done so already) in a directory that comes before $VIMRUNTIME in 'runtimepath'. Within this script, you should define an autocommand that will :setfiletype to Txtfmt for any file with an appropriate extension.
+If it doesn't already exist, create your own filetype.vim in the first directory of 'runtimepath' (e.g., ~/.vim) and add an autocommand that associates txtfmt with the desired file extensions.
 
 Example:
-    " -- ~/.vim/filetype.vim --
-    " Set up detection for Txtfmt files
-    au! filetypedetect BufRead,BufNewFile *.txt    setfiletype txtfmt
+    " -- filetype.vim --
+    augroup filetypedetect
+      " Treat files with the following extensions as Txtfmt files: .txt, .tf, .jnl
+      au! BufRead,BufNewFile *.txt,*.tf,*.jnl    setfiletype txtfmt
+    augroup END
 
-IMPORTANT NOTE: More information on this topic, such as how to use Txtfmt in combination with other filetypes (e.g. to format C comments), may be found in the Txtfmt help file. 
+Method 2: Plugin-specific file in ftdetect
+------------------------------------------
+
+If it doesn't already exist, create your own "ftdetect" folder in the first directory of 'runtimepath' (e.g., ~/.vim). In ftdetect, create a file called "txtfmt.vim" containing an autocommand that associates txtfmt with the desired file extensions.
+
+Example:
+    " -- ftdetect/txtfmt.vim --
+    " Treat files with the following extensions as Txtfmt files: .txt, .tf, .jnl
+    au! BufRead,BufNewFile *.txt,*.tf,*.jnl    set filetype=txtfmt
+
+Note: When ftdetect is used, there's no need to wrap your autocommands in an `augroup` block, as your script is sourced from within an autocommand group.
+
+    :help new-filetype
+
+Method 3: Modeline
+------------------
+
+Modelines can be used to set filetype=txtfmt when the files you wish to highlight do not share a common extension. Simply add a line like the following to the beginning or end of a file you wish to highlight:
+
+    vim:ft=txtfmt
+
+Note: You'll need to close and reopen the file to cause the line to be processed.
+
+=== COMBINING TXTFMT WITH OTHER FILETYPES ===
+It is quite possible to use Txtfmt highlighting in a file associated with another filetype plugin. For instance, if you're using a plugin that facilitates note-taking or journaling, you may wish to use Txtfmt to highlight the entries. It is even possible to "nest" Txtfmt highlighting regions within syntax regions defined by other plugins, but nesting must be enabled explicitly by setting the `txtfmt-'nested'` option.
+
+    :help txtfmt-combining
+    :help txtfmt-nesting
