@@ -1,2 +1,3 @@
-Syntax Engine Refactor: All code now generated dynamically. (Prior to this, certain sections of vimscript were generated offline by an embedded perl script.)
-New Feature: "Leading indent" option permits suppression of highlighting in various types of whitespace at start of line.
+Version 4.0 Alpha release:
+** New Feature: 'leadingindent' option permits suppression of highlighting in whitespace at start of line.
+** Syntax Engine Refactor: All syntax now generated dynamically. (Prior to this, certain sections of vimscript were generated offline by an embedded perl script.)

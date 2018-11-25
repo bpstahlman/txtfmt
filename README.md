@@ -159,16 +159,7 @@ Spec/Pattern | Action | Applies To
 **Note:** Highlighting types omitted from the selector expression are unconstrained: e.g., a selector expression of `fb` matches bold text of _any_ foreground/background color (including none).
 
 ## "Smart" Delete Operator Override
-Although Txtfmt renders the highlighting tokens invisible, to Vim they are simply characters in your buffer like any other: thus, Vim's builtin delete operators make no distinction between text and tokens. To see how this can be problematic, consider the following scenario... You execute `dd` to delete the first line of a block of highlighted text. Although you intended to delete only text, the `dd` also removed the hidden highlighting tokens at the start of the block; thus, you have inadvertently removed the highlighting of the entire block! To mitigate this issue, Txtfmt overrides the Normal and Visual mode delete operator (`d`) with its own "smart" version, which will add, remove and replace tokens as needed to prevent changes to the highlighting that follows the deleted text.
-
-**Note:** If you prefer not to remap the builtin delete operator, simply specify your own 1st level mapping to inhibit the default: e.g.,
-
-`nmap <buffer> <LocalLeader>d <Plug>TxtfmtOperatorDelete`<br>
-`xmap <buffer> <LocalLeader>d <Plug>TxtfmtVmapDelete`
-
-**Caveat:** The example above assumes you'll be defining the maps from an autocmd that runs only for Txfmt buffers. If you'd rather put the override in your vimrc, simply omit the `<buffer>` keyword from the map definitions, but be aware that this will define the maps globally (not only in Txtfmt buffers).
-
-`:help txtfmt-map-config`
+Although Txtfmt renders the highlighting tokens invisible, to Vim they are simply characters in your buffer like any other: thus, Vim's builtin delete operators make no distinction between text and tokens. To see how this can be problematic, consider the following scenario... You execute `dd` to delete the first line of a block of highlighted text. Although you intended to delete only text, the `dd` also removed the hidden highlighting tokens at the start of the block; thus, you have inadvertently removed the highlighting of the entire block! To mitigate this issue, Txtfmt provides a "smart" delete operator (`\d`) in both Normal and Visual mode, which will add, remove and replace tokens as needed to prevent changes to the highlighting that follows the deleted text.
 
 # Leading Indent (highlighting vs page/paragraph fill)
 If you've ever used a word-processor, you may have noticed that when a block of text is indented, attributes such as underline and background color are not visible in the margin. When leading spaces or tabs are used to indent blocks of text in Vim, it generally looks best not to highlight them. But what is "leading indent", exactly? All leading whitespace? Spaces only? Tabs only? Some combination of tabs and spaces, as determined by options such as 'tabstop' and 'shiftwidth'? The value of Txtfmt's `'leadingindent'` option provides the answer to this question, as shown in the table below:
