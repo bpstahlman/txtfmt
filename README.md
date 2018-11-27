@@ -3,7 +3,7 @@ Txtfmt (The Vim Highlighter)
 
 ### "Rich text" highlighting in Vim! (text color, highlighting, bold, underline, italic, etc...)
 
-**Note:** If you wish to try the examples below, you will first need to install the plugin. If you're unfamiliar with plugin installation, read [Installation](./README.md#Installation). The section on [Plugin Loading](./README.md#Plugin Loading) may be useful if you'd like to ensure that the Txtfmt plugin is loaded automatically every time you open certain files or types of file. If you're in a hurry to try the examples, you can execute the following at the Vim command line to enable highlighting in the current buffer.
+**Note:** If you wish to try the examples below, you will first need to install the plugin. If you're unfamiliar with plugin installation, read [Installation](./README.md#Installation). The section on [Plugin Loading](./README.md#plugin-loading) may be useful if you'd like to ensure that the Txtfmt plugin is loaded automatically every time you open certain files or types of file. If you're in a hurry to try the examples, you can execute the following at the Vim command line to enable highlighting in the current buffer.
 
 `:set ft=txtfmt`
 
@@ -344,6 +344,8 @@ The `:ShowTokenMap` command provides a tabular illustration of the 'tokrange' in
 # Installation
 Txtfmt can be installed using any of the standard Vim plugin mechanisms: e.g., Pathogen, Vundle, etc. If you're not using a plugin manager, simply uncompress the Txtfmt distribution somewhere in your 'runtimepath' (e.g., ~/.vim) and run <nobr>`:helptags ALL`</nobr> to prepare the Txtfmt help.
 
+
+<div id=plugin-loading />
 # Plugin Loading
 **_Caveat:_** Like most plugins, Txtfmt requires both filetype detection and syntax highlighting to be enabled, yet neither is enabled in Vim's default configuration; thus, unless you copied the commands from the example vimrc (or source the example vimrc from your own vimrc), you will probably need to add something like the following to your vimrc:
 
