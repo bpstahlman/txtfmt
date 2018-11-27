@@ -263,6 +263,7 @@ For a list of all supported options...
 `:help txtfmt-opt-list`
 
 <div id=color-configuration />
+
 ## Color Configuration
 Txtfmt's default configuration provides 8 foreground colors and 3 background colors:
 
@@ -307,8 +308,10 @@ Similarly, if the default for color #6 (violet) seems a bit too bright in the GU
 
 `:help txtfmt-color-config`
 
-<div id=token-range />
+<id=token-range />
+
 ## Token Range
+
 Txtfmt requires a block of contiguous characters for use as highlighting tokens. Both the location and size of the block are determined by the value of the `'tokrange'` option, which can be set via Txtfmt option variable or Txtfmt modeline. The `'tokrange'` option is a string consisting of a decimal or hexadecimal number with a trailing suffix: e.g., `"0xE000X"` or `"180S"`. The numeric value is the character code of the first character in the block, and the (case-insensitive) suffix determines the available highlighting, as shown in the following table:
 
 'tokrange' Suffix | Supported Highlighting | Number of Tokens in Range
@@ -346,6 +349,7 @@ Txtfmt can be installed using any of the standard Vim plugin mechanisms: e.g., P
 
 
 <div id=plugin-loading />
+
 # Plugin Loading
 **_Caveat:_** Like most plugins, Txtfmt requires both filetype detection and syntax highlighting to be enabled, yet neither is enabled in Vim's default configuration; thus, unless you copied the commands from the example vimrc (or source the example vimrc from your own vimrc), you will probably need to add something like the following to your vimrc:
 
