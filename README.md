@@ -308,7 +308,7 @@ Similarly, if the default for color #6 (violet) seems a bit too bright in the GU
 
 `:help txtfmt-color-config`
 
-<id=token-range />
+<div id=token-range />
 
 ## Token Range
 
