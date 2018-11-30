@@ -408,6 +408,7 @@ endfu
 " b:txtfmt_cfg_undercurl
 " b:txtfmt_cfg_starttok_display
 " b:txtfmt_cfg_formats_display
+" b:txtfmt_cfg_squiggle (colored undercurl)
 fu! s:Tokrange_translate_tokrange(tokrange)
 	" Extract starttok and formats from input tokrange
 	let starttok_str = substitute(a:tokrange, s:re_tokrange_spec, '\1', '') 
@@ -460,6 +461,14 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 		endif
 		" Note: This is no longer legal!!!!
 		let b:txtfmt_cfg_formats_display = 'XL'
+	elseif formats_str ==? 'XU'
+		" Background colors with short formats and colored undercurl
+		let b:txtfmt_cfg_bgcolor = 1
+		let b:txtfmt_cfg_longformats = 0
+		let b:txtfmt_cfg_undercurl = 0
+		" Assumption: TODO: Option validation ensures we don't get here if undercurl not supported.
+		let b:txtfmt_cfg_squiggle = 1
+		let b:txtfmt_cfg_formats_display = 'XU'
 	else
 		" Short formats
 		let b:txtfmt_cfg_bgcolor = 0
@@ -1619,31 +1628,38 @@ endfu
 " Inputs:
 " b:txtfmt_cfg_fgcolormask
 " b:txtfmt_cfg_bgcolormask
+" b:txtfmt_cfg_sqcolormask
 " Description: Each mask is a string of 8 chars, each of which must be either
 " '0' or '1'
 " Outputs:
 " b:txtfmt_cfg_fgcolor{} b:txtfmt_cfg_numfgcolors
 " b:txtfmt_cfg_bgcolor{} b:txtfmt_cfg_numbgcolors
-" Description: The <fg|bg>color arrays are 1-based indirection arrays, which
+" b:txtfmt_cfg_sqcolor{} b:txtfmt_cfg_numsqcolors
+" Description: The <fg|bg|sq>color arrays are 1-based indirection arrays, which
 " contain a single element for each of the active colors. The elements of
 " these arrays are the 1-based indices of the corresponding color in the
 " actual color definition array (which always contains 8 elements).
-" Note: num<fg|bg>colors will be 0 and corresponding array will be empty if
-" there are no 1's in the <fg|bg>colormask
-" Note: If 'tokrange' setting precludes background colors, the bg colormask
-" option will be all 0's at this point, regardless of how user has configured
-" the option.
+" Note: num<fg|bg|sq>colors will be 0 and corresponding array will be empty if
+" there are no 1's in the <fg|bg|sq>colormask
+" Note: If 'tokrange' setting precludes background colors or colored undercurl
+" (squiggle), the corresponding colormask option will be all 0's at this
+" point, regardless of how user has configured the option.
 fu! s:Process_clr_masks()
-	" Loop over fg and bg
-	let fgbg_idx = 0
-	let fg_or_bg{0} = 'fg'
-	let fg_or_bg{1} = 'bg'
-	while fgbg_idx < 2
+	" Loop over fg, bg and sq
+	" FIXME! Bring this up to v7 code level.
+	let fgbgsq_idx = 0
+	let fg_bg_sq{0} = 'fg'
+	let fg_bg_sq{1} = 'bg'
+	let fg_bg_sq{2} = 'sq'
+	while fgbgsq_idx < 2
 		" Cache the mask to be processed
-		let mask = b:txtfmt_cfg_{fg_or_bg{fgbg_idx}}colormask
+		let mask = b:txtfmt_cfg_{fg_bg_sq{fgbgsq_idx}}colormask
 		" Note: To be on the safe side, I'm going to zero the bg color mask
 		" whenever bg colors are disabled, just in case caller forgot.
-		if fg_or_bg{fgbg_idx} == 'bg' && !b:txtfmt_cfg_bgcolor && mask =~ '1'
+		if fg_bg_sq{fgbgsq_idx} == 'bg' && !b:txtfmt_cfg_bgcolor && mask =~ '1'
+			let mask = '00000000'
+		endif
+		if fg_bg_sq{fgbgsq_idx} == 'sq' && !b:txtfmt_cfg_squiggle && mask =~ '1'
 			let mask = '00000000'
 		endif
 		" Loop over all 8 'bits' in the mask
@@ -1658,14 +1674,14 @@ fu! s:Process_clr_masks()
 				" Append this color's (1-based) index to active color array
 				" (which is also 1-based)
 				let iadd = iadd + 1
-				let b:txtfmt_cfg_{fg_or_bg{fgbg_idx}}color{iadd} = i + 1
+				let b:txtfmt_cfg_{fg_bg_sq{fgbgsq_idx}}color{iadd} = i + 1
 			endif
-			let i = i + 1
+			let i += 1
 		endwhile
 		" Store number of active colors
-		let b:txtfmt_cfg_num{fg_or_bg{fgbg_idx}}colors = iadd
+		let b:txtfmt_cfg_num{fg_bg_sq{fgbgsq_idx}}colors = iadd
 		" Prepare for next iteration
-		let fgbg_idx = fgbg_idx + 1
+		let fgbgsq_idx += 1
 	endwhile
 endfu
 " >>>

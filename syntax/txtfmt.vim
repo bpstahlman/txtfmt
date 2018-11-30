@@ -528,7 +528,7 @@ fu! s:Hide_leading_indent_maybe()
 	endif
 endfu
 " >>>
-" Achieve clr->bgc->fmt order required for highlight command.
+" Achieve clr->bgc->sqc->fmt order required for highlight command.
 " Assumption: a and b will always be different.
 fu! s:Sort_rgn_types(a, b)
 	if a == 'clr'
@@ -536,7 +536,9 @@ fu! s:Sort_rgn_types(a, b)
 	elseif a == 'fmt'
 		return 1
 	elseif a == 'bgc'
-		return b == 'fmt' ? -1 : 1
+		return b == 'fmt' ? -1 : b == 'clr' ? 1 : -1
+	elseif a == 'sqc'
+		return b == 'fmt' ? -1 : b == 'clr' ? 1 : 1
 endfu
 " States: 0=empty, 1=expr, 2=literal
 fu! s:Make_exe_builder()
@@ -617,6 +619,7 @@ fu! s:Define_syntax()
 	" Define a convenience flag that indicates whether background colors are
 	" in effect
 	let bgc_enabled = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc_enabled = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_enabled = b:txtfmt_cfg_numfgcolors > 0
 
 	" cui (color uniqueness index) will contain a different index for each
@@ -868,21 +871,21 @@ fu! s:Define_syntax()
 			" the sort function (since VimL has no closures). Alternatively,
 			" could make a singleton object.
 			" TODO: Pull this out of this nested loop!!!
-			fu! Sort_rgn_types(a, b) dict
-				let ri = self.rgn_info
-				if ri[a:a].name == 'clr'
-					return -1
-				elseif ri[a:a].name == 'fmt'
-					return 1
-				elseif ri[a:a].name == 'bgc'
-					return ri[a:b].name == 'fmt' ? -1 : 1
-				endif
-			endfu
+			"fu! Sort_rgn_types(a, b) dict
+			"	let ri = self.rgn_info
+			"	if ri[a:a].name == 'clr'
+			"		return -1
+			"	elseif ri[a:a].name == 'fmt'
+			"		return 1
+			"	elseif ri[a:a].name == 'bgc'
+			"		return ri[a:b].name == 'fmt' ? -1 : 1
+			"	endif
+			"endfu
 			" Note: Must supply rgn_info within a dict.
 			" TODO: Consider refactoring so that the sort function is a true
 			" dict function (on actual dict).
 			let sidxs = sort(range(iord + 1),
-				\function('Sort_rgn_types'), {'rgn_info': rgn_info})
+				\function('s:Sort_rgn_types'), {'rgn_info': rgn_info})
 
 			" Build templates for current 'order' <<<
 			" Description of lors, sors, hors
