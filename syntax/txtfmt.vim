@@ -442,7 +442,7 @@ fu! s:Hide_leading_indent_maybe()
 
 endfu
 " >>>
-" Achieve clr->bgc->fmt order required for highlight command.
+" Achieve clr->bgc->sqc->fmt order required for highlight command.
 " Assumption: a and b will always be different.
 fu! s:Sort_rgn_types(a, b)
 	" Assumption: Elements to be sorted are either fmt/clr/bgc/... strings or
@@ -453,7 +453,9 @@ fu! s:Sort_rgn_types(a, b)
 	elseif a == 'fmt'
 		return 1
 	elseif a == 'bgc'
-		return b == 'fmt' ? -1 : 1
+		return b == 'fmt' ? -1 : b == 'clr' ? 1 : -1
+	elseif a == 'sqc'
+		return b == 'fmt' ? -1 : b == 'clr' ? 1 : 1
 endfu
 " States: 0=empty, 1=expr, 2=literal
 " FIXME_COMBINATIONS: Add constructor initialization.
@@ -602,6 +604,7 @@ fu! s:Define_syntax()
 	" Define a convenience flag that indicates whether background colors are
 	" in effect
 	let bgc_enabled = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc_enabled = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_enabled = b:txtfmt_cfg_numfgcolors > 0
 
 	" cui (color uniqueness index) will contain a different index for each
@@ -896,6 +899,31 @@ fu! s:Define_syntax()
 			" cterm=bold really means bold, and not bright color; note that
 			" bright colors can be achieved other ways (e.g., color # above 8)
 			" in terminals that support them.
+"<<<<<<< HEAD
+"=======
+" FIXME REBASE!!!! This commented segment is from the old undercurl branch.
+" The sidxs array doesn't appear to be used in the refactored syntax engine,
+" but I'm keeping it here till commented till I've had a chance to analyze...
+			" Note: dict attribute is used simply to allow us to pass data to
+			" the sort function (since VimL has no closures). Alternatively,
+			" could make a singleton object.
+			" TODO: Pull this out of this nested loop!!!
+			"fu! Sort_rgn_types(a, b) dict
+			"	let ri = self.rgn_info
+			"	if ri[a:a].name == 'clr'
+			"		return -1
+			"	elseif ri[a:a].name == 'fmt'
+			"		return 1
+			"	elseif ri[a:a].name == 'bgc'
+			"		return ri[a:b].name == 'fmt' ? -1 : 1
+			"	endif
+			"endfu
+			" Note: Must supply rgn_info within a dict.
+			" TODO: Consider refactoring so that the sort function is a true
+			" dict function (on actual dict).
+			let sidxs = sort(range(iord + 1),
+				\function('s:Sort_rgn_types'), {'rgn_info': rgn_info})
+">>>>>>> ed76c4a (Backing up initial work on new colored undercurl feature.)
 
 			" Build templates for current 'order' <<<
 			" Description of lors, sors, hors

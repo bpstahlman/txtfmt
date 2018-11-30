@@ -136,8 +136,13 @@ endfu
 " Function: s:Get_active_rgns() <<<
 fu! s:Get_active_rgns()
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let squ_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
-	return extend(extend(['fmt'], clr_active ? ['clr'] : []), bgc_active ? ['bgc'] : [])
+	" FIXME_SQUIGGLE: Different way?
+	return extend(extend(extend(['fmt'],
+				\ clr_active ? ['clr'] : []),
+				\ bgc_active ? ['bgc'] : []),
+				\ sqc_active ? ['sqc'] : [])
 endfu
 " >>>
 " Function: s:Move_cursor() <<<
@@ -1085,8 +1090,8 @@ endfu
 " Purpose: If cursor is within the body of a Txtfmt highlighting region (i.e.,
 " not on an escape, start or end token) return the applicable token;
 " otherwise, return empty string.
-" Inputs:
-" rgn    One of the following 3 strings: 'clr', 'fmt', 'bgc
+" Inputs: 
+" rgn    One of the following 4 strings: 'clr', 'fmt', 'bgc', 'sqc'
 "        Indicates the region type of interest
 " Return: If the cursor lies within a region of the following form...
 " Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
@@ -1105,6 +1110,7 @@ endfu
 " Get_cur_rgn_info), and hence, may be incomplete.
 fu! s:Get_cur_tok_for_rgn(rgn)
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
 	let rgn_idx_max_fmt = b:txtfmt_num_formats - 1
 	" Note: The following provide only upper bounds for color indices; an
@@ -1112,6 +1118,7 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 	" Note: b:txtfmt_num_colors includes the default token; hence, the -1
 	let rgn_idx_max_clr = b:txtfmt_num_colors - 1
 	let rgn_idx_max_bgc = b:txtfmt_num_colors - 1
+	let rgn_idx_max_sqc = b:txtfmt_num_colors - 1
 
 	if !s:Is_cursor_on_char()
 		" Nothing under cursor - we can't determine anything about current
@@ -1122,7 +1129,10 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 	let s = synIDattr(synID(line("."), col("."), 1), "name")
 	" Define regexes used in parsing syntax name
 	let re_hdr = '^\%(Tf\%(0\|[1-9][0-9]*\)_\)'
-	let re_rgn = '^\%(' . 'fmt' . (clr_active ? '\|\%(clr\)' : '') . (bgc_active ? '\|\%(bgc\)' : '') . '\)'
+	let re_rgn = '^\%(' . 'fmt'
+		\. (clr_active ? '\|\%(clr\)' : '')
+		\. (bgc_active ? '\|\%(bgc\)' : '')
+		\. (sqc_active ? '\|\%(sqc\)' : '') . '\)'
 	let re_num = '^\%(_\([1-9][0-9]*\)\)'
 	let re_ftr = '^\%(_rtd\)\?$'
 	" Assume highlighted region of the following form:
@@ -1141,7 +1151,9 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 			" Validate rgn
 			" Note: The following 2 tests obviate the need to test for too
 			" many rgns
-			if rgn == 'clr' && !clr_active || rgn == 'bgc' && !bgc_active
+			if rgn == 'clr' && !clr_active
+				\ || rgn == 'bgc' && !bgc_active
+				\ || rgn == 'sqc' && !sqc_active
 				" Ooops! This region shouldn't exist
 				return ''
 			endif
@@ -1185,7 +1197,7 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 				return ''
 			endif
 			" Additional tests for color regions
-			if rgns{num_idx} == 'clr' || rgns{num_idx} == 'bgc'
+			if rgns{num_idx} == 'clr' || rgns{num_idx} == 'bgc' || rgns{num_idx} == 'sqc'
 				if !s:Is_active_color_index(rgns{num_idx}, num)
 					" Ooops! num corresponds to inactive color
 					return ''
@@ -1228,13 +1240,13 @@ endfu
 " Function: s:Prompt_fmt_clr_spec() <<<
 " Purpose: Prompt user for type of formatting region desired, and return
 " the string entered
-" How: The user will be prompted to enter a fmt/clr[/bgc] list, consisting of
-" fmt/clr[/bgc] atoms separated by commas and/or dots. The format of a
-" fmt/clr[/bgc] atom is described in header of Translate_fmt_clr_spec().,
+" How: The user will be prompted to enter a fmt/clr[/bgc][/sqc] list, consisting
+" of fmt/clr[/bgc][/sqc] atoms separated by commas and/or dots. The format of a
+" fmt/clr[/bgc][/sqc] atom is described in header of Translate_fmt_clr_spec().,
 " Return: The entered string
 fu! s:Prompt_fmt_clr_spec()
 	" Prompt the user for fmt/clr spec string
-	" TODO: Decide whether prompt needs to distinguish between bgc and clr
+	" TODO: Decide whether prompt needs to distinguish between bgc, sqc and clr
 	call inputsave()
 	let str = input('Enter a fmt / clr string. (Enter to cancel): ')
 	call inputrestore()
@@ -1244,8 +1256,8 @@ endfu
 " Function: s:Lookup_clr_namepat() <<<
 " Purpose: Convert the input color name pattern to a color index in range
 " 1..8, using the buffer-specific color definition array
-" b:txtfmt_{clr|bgc}_namepat.
-" Use b:txtfmt_cfg_{fg|bg}color{} arrays to determine whether the specified
+" b:txtfmt_{clr|bgc|sqc}_namepat.
+" Use b:txtfmt_cfg_{fg|bg,sq}color{} arrays to determine whether the specified
 " color is active.
 " Return:
 "     Requested color valid and active: Color index between 1 and 8
@@ -1253,11 +1265,14 @@ endfu
 "     Requested color valid but inactive: -1 * {color_index}
 fu! s:Lookup_clr_namepat(typ, namepat)
 	if a:typ == 'c'
-		let fg_or_bg = 'fg'
-		let clr_or_bgc = 'clr'
+		let fg_bg_or_sq = 'fg'
+		let clr_bgc_or_sqc = 'clr'
 	elseif a:typ == 'k'
-		let fg_or_bg = 'bg'
-		let clr_or_bgc = 'bgc'
+		let fg_bg_or_sq = 'bg'
+		let clr_bgc_or_sqc = 'bgc'
+	elseif a:typ == 'u'
+		let fg_bg_or_sq = 'sq'
+		let clr_bgc_or_sqc = 'sqc'
 	else
 		echoerr "Internal error - Unknown color type `".a:typ."' passed to Lookup_clr_namepat()"
 		return 0
@@ -1266,9 +1281,9 @@ fu! s:Lookup_clr_namepat(typ, namepat)
 	" whose regex matches input color name
 	let i = 1
 	while i < b:txtfmt_num_colors
-		if a:namepat =~ b:txtfmt_{clr_or_bgc}_namepat{i}
+		if a:namepat =~ b:txtfmt_{clr_bgc_or_sqc}_namepat{i}
 			" We found a match!
-			if b:txtfmt_cfg_{fg_or_bg}colormask[i - 1] != '1'
+			if b:txtfmt_cfg_{fg_bg_or_sq}colormask[i - 1] != '1'
 				" Inactive color
 				return -1 * i
 			else
@@ -1304,7 +1319,7 @@ endfu
 " -- Colors --
 " cblue   fg clr blue
 " c=blue  same
-" Note: Default (no) clr/bgc forms identical to fmt forms.
+" Note: Default (no) clr/bgc/sqc forms identical to fmt forms.
 " Note: Color names such as 'blue' in the example must match one of the color
 " definitions specified by user (or default pattern if user hasn't overriden).
 " Note: Specification of an inactive color (or any background color when
@@ -1313,16 +1328,19 @@ endfu
 " 1) A single fmt token
 " 2) A single clr token
 " 3) A single bgc token
-" 4) empty string signals erroneous user entry
+" 4) A single sqc token
+" 5) empty string signals erroneous user entry
 " Error: If error, function will set the script-local s:err_str
 " Note: The function logic takes advantage of the fact that both strpart() and
 " string offset bracket notation (s[i]) allow indices past end of string, in
 " which case, they return empty strings.
 " TODO: Rework to use exceptions rather than s:err_str.
+" TODO: Rework everything to prefer normal VimL lists over brace vars.
 fu! s:Translate_fmt_clr_spec(spec)
 	" Design Decision: No whitespace permitted between type and what follows.
 	let [t, s] = [a:spec[0], a:spec[1:]]
 	if empty(s)
+		" FIXME_SQUIGGLE: Change fmt/clr to something that includes sqc?
 		let s:err_str = 'Empty fmt/clr spec: ' . t . ' must be followed by something.'
 		return ''
 	endif
@@ -1333,14 +1351,19 @@ fu! s:Translate_fmt_clr_spec(spec)
 		let s = s[1:]
 	endif
 	" Ensure valid component type.
-	if t !~? '[fc' . (b:txtfmt_cfg_bgcolor ? 'k' : '') . ']'
+	if t !~? '[fc' . (b:txtfmt_cfg_bgcolor ? 'k' : '') . (b:txtfmt_cfg_sqcolor ? 'u' : '') . ']'
 		if t ==? 'k'
 			" Oops! Background colors aren't active.
 			let s:err_str = "The current 'tokrange' setting does not support background colors."
 				\." (:help txtfmt-formats)"
+		if t ==? 'u'
+			" Oops! Colored squiggle isn't active.
+			let s:err_str = "The current 'tokrange' setting does not support colored undercurl."
+				\." (:help txtfmt-formats)"
 		else
-			let s:err_str = 'Invalid fmt/clr spec. Must begin with '
-				\.(b:txtfmt_cfg_bgcolor ? '"f", "c" or "k"' : '"f" or "c"')
+			let s:err_str = 'Invalid fmt/clr spec. Must begin with one of "f", "c"'
+				\. b:txtfmt_cfg_bgcolor ? ', "k"' : ''
+				\. b:txtfmt_cfg_sqcolor ? ', "u"' : ''
 		endif
 		return ''
 	endif
@@ -1392,10 +1415,10 @@ fu! s:Translate_fmt_clr_spec(spec)
 			endfor
 			return nr2char(b:txtfmt_fmt_first_tok + mask)
 		endif
-	elseif t ==? 'c' || t ==? 'k'
+	elseif t ==? 'c' || t ==? 'k' || t ==? 'u'
 		" Assumption: Type has already been validated.
-		" clr or bgc string
-		" Since not default clr/bgc request, spec must match color pattern.
+		" clr, bgc or sqc string
+		" Since not default clr/bgc/sqc request, spec must match color pattern.
 		" Determine which color index corresponds to color pattern.
 		let clr_ind = s:Lookup_clr_namepat(t, s)
 		if clr_ind == 0
@@ -1405,9 +1428,9 @@ fu! s:Translate_fmt_clr_spec(spec)
 			" TODO_BG: Make sure the help note below is still valid after
 			" help has been updated.
 			let s:err_str = "Color ".(-1 * clr_ind)." is not an active "
-				\.(t ==? 'c' ? "foreground" : "background")
+				\.(t ==? 'c' ? "foreground" : t ==? 'k' ? "background" : "undercurl")
 				\." color. (:help "
-				\.(t ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
+				\.(t ==? 'c' ? "txtfmtFgcolormask" : t ==? 'k' ? "txtfmtBgcolormask" : "txtfmtSqcolormask").")"
 			return ''
 		endif
 		" IMPORTANT NOTE: clr_ind is 1-based index (1 corresponds to first
@@ -1418,7 +1441,7 @@ fu! s:Translate_fmt_clr_spec(spec)
 endfu
 " >>>
 " Function: s:Translate_fmt_clr_list() <<<
-" Purpose: Translate the input comma/dot/space-separated list of fmt/clr/bgc
+" Purpose: Translate the input comma/dot/space-separated list of fmt/clr/bgc/sqc
 " spec atoms into a string of tokens suitable for insertion into the buffer.
 " Validation is performed. Also, cursor offset into translated token string is
 " determined based upon the presence of a dot (replaces comma when it appears
