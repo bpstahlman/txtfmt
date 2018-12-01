@@ -634,6 +634,54 @@ fu! s:Restore_visual_mode(pos_beg, pos_end, deactivate)
 	endif
 endfu
 " >>>
+" Function: s:Is_esc_tok_obsolete() <<<
+" Purpose: Determine whether the char under the cursor is a Txtfmt escape
+" token.
+" Inputs: 
+" Return: Nonzero if and only if the cursor is sitting on a Txtfmt escape
+" char.
+" Error: N/A
+" TESTING: Tested on both a self and bslash test page.
+" TODO: Remove this after 
+fu! s:Is_esc_tok_obsolete()
+	" Take care of the obvious cases first...
+	if !s:Is_cursor_on_char()
+		return 0
+	endif
+	if b:txtfmt_cfg_escape == 'none'
+		return 0
+	endif
+	" Get name of syntax group under cursor
+	let s = synIDattr(synID(line("."), col("."), 1), "name")
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	" Any of the following regions result in nonzero return
+	" Tf_outer_esc
+	" Tf_any_stok_inner_esc
+	" Tf_fmt_etok_inner_esc
+	" Tf_clr_etok_inner_esc
+	" Tf_bgc_etok_inner_esc
+	" Tf_sqc_etok_inner_esc
+	if s =~
+		\ '^Tf_\%('
+			\ . 'outer'
+			\ . '\|\%('
+				\ . 'any_s'
+				\ . '\|\%('
+					\ . 'fmt'
+					\ . (clr_active ? '\|clr' : '')
+					\ . (bgc_active ? '\|bgc' : '')
+					\ . (sqc_active ? '\|sqc' : '')
+				\ . '\)_e'
+			\ . '\)tok_inner'
+		\ . '\)_esc$'
+		return 1
+	else
+		return 0
+	endif
+endfu
+" >>>
 " Function: s:Can_delete_tok() <<<
 " Purpose: Return true if and only if the token under the cursor can be
 " deleted. A return of false indicates that the token should be replaced with
@@ -1445,9 +1493,9 @@ endfu
 " spec atoms into a string of tokens suitable for insertion into the buffer.
 " Validation is performed. Also, cursor offset into translated token string is
 " determined based upon the presence of a dot (replaces comma when it appears
-" between fmt/clr/bgc atoms - may also appear as first or last character in
-" fmt/clr/bgc spec list).
-" Input: Comma/dot-separated list of fmt/clr/bgc spec atoms.
+" between fmt/clr/bgc/sqc atoms - may also appear as first or last character in
+" fmt/clr/bgc/sqc spec list).
+" Input: Comma/dot-separated list of fmt/clr/bgc/sqc spec atoms.
 " Return: String of the following format:
 " <offset>,<tokstr>
 " Error: Return empty string and set s:err_str
@@ -1470,7 +1518,7 @@ fu! s:Translate_fmt_clr_list(s)
 	else
 		let i = 0
 	endif
-	" Process the fmt/clr/bgc spec atom(s) in a loop
+	" Process the fmt/clr/bgc/sqc spec atom(s) in a loop
 	" Note: We've already processed any leading `.'; at this point.
 	while i < len
 		" Get a term and whatever separates it from any following term.
@@ -1521,7 +1569,7 @@ fu! s:Translate_fmt_clr_list(s)
 		let s:err_str = "Trailing comma not allowed in fmt/clr spec list"
 		return ''
 	elseif !num_fld
-		let s:err_str = "Translate_fmt_clr_list: expected at least 1 term in fmt/clr/bgc list"
+		let s:err_str = "Translate_fmt_clr_list: expected at least 1 term in fmt/clr/bgc/sqc list"
 		return ''
 	endif
 	" Return the special format string
@@ -1529,17 +1577,19 @@ fu! s:Translate_fmt_clr_list(s)
 endfu
 " >>>
 " Function: s:Get_cur_rgn_info() <<<
-" Purpose: Parse the synstack to determine active fmt/clr/bgc regions at
+" Purpose: Parse the synstack to determine active fmt/clr/bgc/sqc regions at
 " cursor, returning a struct that contains either a mask (fmt) or color number
-" (clr/bgc) for each region type.
+" (clr/bgc/sqc) for each region type.
 " Return:
 " {
 "   fmt: <fmt-mask>
 "   clr: <fg-color-number>
 "   bgc: <bg-color-number>
+"   sqc: <sq-color-number>
 " }
 fu! s:Get_cur_rgn_info()
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
 	let rgn_idx_max_fmt = b:txtfmt_num_formats - 1
 	" Note: The following provide only upper bounds for color indices; an
@@ -1547,8 +1597,9 @@ fu! s:Get_cur_rgn_info()
 	" Note: b:txtfmt_num_colors includes the default token; hence, the -1
 	let rgn_idx_max_clr = b:txtfmt_num_colors - 1
 	let rgn_idx_max_bgc = b:txtfmt_num_colors - 1
+	let rgn_idx_max_sqc = b:txtfmt_num_colors - 1
 
-	let info = {'fmt': 0, 'clr': 0, 'bgc': 0}
+	let info = {'fmt': 0, 'clr': 0, 'bgc': 0, 'sqc': 0}
 	" TODO: Make this static everywhere it's used.
 	if !s:Is_cursor_on_char()
 		" Nothing under cursor - we can't determine anything about current
@@ -1557,18 +1608,21 @@ fu! s:Get_cur_rgn_info()
 	endif
 	" Define regexes used in parsing syntax name
 	let re_hdr = '\%(Tf\%(0\|[1-9][0-9]*\)_\)'
-	let re_rgn = '\%(' . 'fmt' . (clr_active ? '\|\%(clr\)' : '') . (bgc_active ? '\|\%(bgc\)' : '') . '\)'
+	let re_rgn = '\%(' . 'fmt'
+		\ . (clr_active ? '\|\%(clr\)' : '')
+		\ . (bgc_active ? '\|\%(bgc\)' : '')
+		\ . (sqc_active ? '\|\%(sqc\)' : '') . '\)'
 	let re_num = '\%([1-9][0-9]*\)'
 	let re_ftr = '\%(_rtd\)'
-	" Construct a regex using the atoms above.
+	" Construct a regex to match a highlighted region of the following form:
+	" Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
 	let re = '^' . re_hdr . '\%(\(' . re_rgn . '\)\%(\(' . re_rgn . '\)\(' . re_rgn . '\)\?\)\?\)'
 		\. '\%(_\(' . re_num . '\)\%(_\(' . re_num . '\)\%(_\(' . re_num . '\)\)\?\)\?\)'
 		\. re_ftr . '\?$'
 	" Get syntax stack at cursor
 	for id in synstack(line('.'), col('.'))
 		let s = synIDattr(id, "name")
-		" Assume highlighted region of the following form:
-		" Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
+		" Use regex to extract the fields of the syntax group name.
 		let m = matchlist(s, re)
 		if empty(m)
 			" Not what we're looking for...
@@ -1626,6 +1680,7 @@ endfu
 "       ],
 "     clr: 0-{max-active-clr-num}
 "     bgc: 0-{max-active-bgc-num}
+"     sqc: 0-{max-active-sqc-num}
 "   }
 " }
 " Note: The value 0 in an additive mode fmt mask is a NOP. In non-additive
@@ -1656,21 +1711,21 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	" superfluous.
 	let re_sep = '\s*,\s*\|\s\+'
 	let fcks = split(specs, re_sep, 1)
-	" Loop over the f/c/k components
-	for spec in fcks
+	" Loop over the f/c/k/u components
+	for spec in fckus
 		if empty(spec)
-			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc/sqc components not permitted"
 		endif
 		" Extract token type and remainder of spec
 		let [t, spec] = [spec[0], spec[1:]]
 		" Validate the type
-		if t !~ '[fck]'
+		if t !~ '[fcku]'
 			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
 		endif
 		if has_key(rgns, b:txtfmt_rgn_typ_abbrevs[t])
 			" We've already processed a component of this type.
 			throw "Parse_fmt_clr_transformer: no more than 1 component of"
-				\ . " each type (f|c|k) permitted"
+				\ . " each type (f|c|k|u) permitted"
 		endif
 		if empty(spec)
 			throw "Parse_fmt_clr_transformer: `" . t . "' must be followed by valid "
@@ -1723,9 +1778,13 @@ fu! s:Parse_fmt_clr_transformer(specs)
 					let rgns.fmt = masks['=']
 				endif
 			endif
-		elseif t == 'c' || t == 'k'
-			if t == 'k' && !b:txtfmt_cfg_bgcolor
-				throw "Use of `k' invalid when background colors are disabled"
+		elseif t == '[cku]' " Assumption: t is always single char
+			" FIXME_SQUIGGLE: Create parameterized mechanisms for dealing with
+			" some of this, to avoid spewing it around the codebase.
+			if t == 'k' && !b:txtfmt_cfg_bgcolor || t == 'u' && !b:txtfmt_cfg_sqcolor
+				throw "Use of `" . t . "' invalid when "
+					\ . (t == 'k' ? "background" : "undercurl")
+					\ . " colors are disabled"
 			endif
 			" Allow several special forms for default (no) color.
 			if spec == '=' || spec == '-' || spec == '=-'
@@ -1755,7 +1814,7 @@ endfu
 
 " This version enforced the simpler (Perl regex flag style) format for the fmt
 " spec: i.e., fxxx-xxx with f- by itself meaning clear formats.
-" TODO: Remove after commit, perhaps moving to 'code graveyard' first.
+" FIXME_SQUIGGLE: Remove this!!!!!
 fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 	" Initalize return object.
 	let ret = {}
@@ -1773,7 +1832,7 @@ fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 	for spec in fcks
 		let spec = TxtfmtUtil_strip(spec)
 		if empty(spec)
-			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc components not permitted"
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc/sqc components not permitted"
 		endif
 		" Extract token type and remainder of spec
 		let [tt, spec] = [spec[0], spec[1:]]
@@ -1783,7 +1842,7 @@ fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 		endif
 		let spec = TxtfmtUtil_lstrip(spec)
 		if empty(spec)
-			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc specs not permitted"
+			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc/sqc specs not permitted"
 		endif
 		if has_key(ret, tt)
 			throw "Parse_fmt_clr_transformer: no more than 1 component of each type (f|c|k) permitted"
@@ -1927,11 +1986,11 @@ endfu
 " c - token character
 " Return: Empty object if input char not a token, else
 " {
-"   rgn: 'fmt'|'clr'|'bgc',
+"   rgn: 'fmt'|'clr'|'bgc'|'sqc',
 "   %% Note that both color indices and fmt masks are actually indices.
 "   idx: <color-idx>|<fmt-mask>
 " }
-" Implementation Note: fg/bgcolormasks are strings of 1's and 0's, with string
+" Implementation Note: fg/bg/sqcolormasks are strings of 1's and 0's, with string
 " index correlating with color index as follows:
 " color index = string idx + 1
 " Example: 1st char in mask string corresponds to color 1
@@ -1941,8 +2000,15 @@ fu! s:Get_tok_info(c)
 	" Get char code.
 	let c_nr = char2nr(a:c)
 	" Determine tok type
-	" Start checking at final sub-region (clr < fmt < bgc)
-	if b:txtfmt_cfg_bgcolor && c_nr >= b:txtfmt_bgc_first_tok && c_nr < b:txtfmt_bgc_first_tok + b:txtfmt_num_colors
+	" Start checking at final sub-region (clr < fmt < bgc < sqc)
+	" FIXME_SQUIGGLE: Create function for this.
+	" FIXME_SQUIGGLE: Determine whether the end of range checks are strictly
+	" necessary, given that we're working backwards from end, and regions
+	" generally butt up against subsequent region (except for formats when
+	" 'pack' option is unset).
+	if b:txtfmt_cfg_sqcolor && c_nr >= b:txtfmt_sqc_first_tok && c_nr < b:txtfmt_sqc_first_tok + b:txtfmt_num_colors
+		let ret.rgn = 'sqc'
+	elseif b:txtfmt_cfg_bgcolor && c_nr >= b:txtfmt_bgc_first_tok && c_nr < b:txtfmt_bgc_first_tok + b:txtfmt_num_colors
 		let ret.rgn = 'bgc'
 	elseif c_nr >= b:txtfmt_fmt_first_tok && c_nr < b:txtfmt_fmt_first_tok + b:txtfmt_num_formats
 		let ret.rgn = 'fmt'
@@ -1954,7 +2020,9 @@ fu! s:Get_tok_info(c)
 			let ret.idx = c_nr - b:txtfmt_fmt_first_tok
 		else
 			let idx = c_nr - b:txtfmt_{ret.rgn}_first_tok
-			if idx == 0 || b:txtfmt_cfg_{ret.rgn == 'clr' ? 'f' : 'b'}gcolormask[idx - 1] == '1'
+			" FIXME_SQUIGGLE: Parameterize this more cleanly: e.g., function to
+			" convert between clr<->fg, bgc<->bg, etc...
+			if idx == 0 || b:txtfmt_cfg_{ret.rgn == 'clr' ? 'fg' : ret.rgn == 'bgc' ? 'bg' : 'sq'}colormask[idx - 1] == '1'
 				let ret.idx = idx
 			else
 				" Inactive color! Convention is to indicate with neg. index
@@ -2078,7 +2146,7 @@ endfu
 "   metadata (e.g., flags or enum).
 "   %% type of token found
 "   %% Note: Redundant with a:rgn if the latter is a string.
-"   rgn: 'fmt'|'clr'|'bgc'
+"   rgn: 'fmt'|'clr'|'bgc'|'sqc'
 "   -- The following apply only when typ == 'tok'
 "   %% integer value representing the tok found
 "   idx: <color-idx>|<fmt-mask>
@@ -2550,7 +2618,7 @@ endfu
 " non-aggressive mode).
 " Inputs:
 " tok_info: {} | {
-"   rgn:  'fmt'|'clr'|'bgc',
+"   rgn:  'fmt'|'clr'|'bgc'|'sqc',
 "   idx:  <color-idx>|<fmt-mask>
 " }
 " TODO: Should this be a function, or perhaps just a Dict?
@@ -2571,17 +2639,23 @@ fu! s:Get_hlable_patt(tok_info)
 	" Caveat: Using line/col constraints won't work when testing for '\n'
 	" between end of a blank line and beginning of next (since the '\n' is
 	" considered to have col pos of 1.
+	" FIXME_SQUIGGLE: I believe all of the "aggressive" logic can be removed
+	" now, as I decided against implementing the option.
+	" Rationale: The nzwbs approach is simpler and safer (at the cost of leaving
+	" some harmless tokens that will tend to get cleaned up over time anyways).
 	if aggressive && !empty(a:tok_info)
 		let [rgn, idx] = [a:tok_info.rgn, a:tok_info.idx]
-		if rgn != 'fmt' || idx == 0
-			" No need to test specific format attributes
-			" Design Decision: Default tok is special: whether it affects
+		if idx == 0
+			" Design Decision: A default tok is special: whether it affects
 			" subsequent whitespace depends upon what precedes it (think
 			" 'bleed-through'). We exclude whitespace here because we want
 			" supersedence logic to err on the side of considering a default tok
 			" redundant, with 'bleed-through' logic (which forces non-aggressive
 			" mode) making the final determination.
-			let ws_hlable = rgn == 'bgc' ? 1 : 0
+			let ws_hlable = 0
+		elseif rgn != 'fmt'
+			" Of the color region types, bgc and sqc affect whitespace.
+			let ws_hlable = rgn == 'bgc' || rgn == 'sqc' ? 1 : 0
 		else
 			" Check specific fmt attributes.
 			let ws_hlable_fmt_mask = or(or(or(
@@ -2613,7 +2687,7 @@ endfu
 " pos2: end of region to test
 " inc:  <both-inclusive>|[<beg-inclusive>, <end-inclusive>]
 " [tok_info]: {
-"   rgn:  'fmt'|'clr'|'bgc',
+"   rgn:  'fmt'|'clr'|'bgc'|'sqc',
 "   idx:  <color-idx>|<fmt-mask>
 " }
 " Tested: 08Jan2015 (but modified 27Nov2015)
@@ -3058,7 +3132,7 @@ fu! s:Vmap_apply(pspecs, toks, opt)
 	" Initialize to sentinel so that we know when we encounter first of a type.
 	" Note: Having unused keys in old_idx is harmless; rgn types present in
 	" a:toks determines which keys will be used.
-	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1}
+	let old_idx = {'fmt': -1, 'clr': -1, 'bgc': -1, 'sqc': -1}
 	let new_idx = {}
 	for tok in a:toks
 		" Skip non-tokens (e.g., <eob>).
@@ -3102,7 +3176,7 @@ fu! s:Vmap_apply(pspecs, toks, opt)
 				if tok.rgn == 'fmt'
 					let set_idx = s:Vmap_apply_fmt(a:pspecs.rgns.fmt, old_idx.fmt)
 				else
-					"clr/bgc
+					"clr/bgc/sqc
 					let set_idx = a:pspecs.rgns[tok.rgn]
 				endif
 			else
@@ -3749,7 +3823,7 @@ endfu
 " -Make changes specified by 'action' values.
 " -Adjust positions in input object to account for changes made.
 " toks: [{
-"     rgn: fmt|bgc|clr,
+"     rgn: fmt|bgc|clr|sqc,
 "     idx: 0-N,
 "     pos: [N,M],
 "     action: '[iard]?',
@@ -3828,10 +3902,10 @@ endfu
 " Function: s:Vmap_cleanup() <<<
 " Format of toks array:
 " toks: [{
-"     rgn: 'fmt|clr|bgc',
+"     rgn: 'fmt|clr|bgc|sqc',
 "     idx: -1 | 0 | 1..N,
 "     pos: [row, col],
-"     % action == 'd' can exist only for 'clr|bgc' before this function.
+"     % action == 'd' can exist only for 'clr|bgc|sqc' before this function.
 "     action: '[iard]?'
 "     loc: <|{|=|}|>
 " }, ...]
@@ -3839,7 +3913,7 @@ endfu
 " Remove superseded and redundant toks.
 " Definitions:
 "   Superseded: A superseded tok is one whose effect is never felt because it is
-"   followed by a tok of the same rgn type (fmt/clr/bgc) with no intervening
+"   followed by a tok of the same rgn type (fmt/clr/bgc/sqc) with no intervening
 "   hlable.
 "   Example: <fb><fi> (the <fb> is superseded)
 "   Redundant: A redundant tok is one that is unnecessary because its
@@ -4494,9 +4568,9 @@ endfu
 " >>>
 " Function: s:Sel_parser_try_ckterm() <<<
 fu! s:Sel_parser_try_ckterm(ps)
-	let m = s:Sel_parser_match(a:ps, '[ck]')
+	let m = s:Sel_parser_match(a:ps, '[cku]')
 	if !empty(m)
-		" Looks like fg/bg color.
+		" Looks like fg/bg/sq color.
 		let term = {'op': m[0]}
 		" TODO: Regex for color name chars would simplify things.
 		let re_cname_char = '[-_a-zA-Z0-9]'
@@ -4520,19 +4594,22 @@ fu! s:Sel_parser_try_ckterm(ps)
 			elseif term.idx < 0
 				" TODO_BG: Make sure the help note below is still valid after
 				" help has been updated.
+				" FIXME_SQUIGGLE: Cleanup/hide this ugly error-handling boilerplate.
 				throw "Color ".(-1 * term.idx)." is not an active "
-					\.(term.op ==? 'c' ? "foreground" : "background")
+					\.(term.op ==? 'c' ? "foreground" : term.op ==? 'k' ? "background" : "undercurl")
 					\." color. (:help "
-					\.(term.op ==? 'c' ? "txtfmtFgcolormask" : "txtfmtBgcolormask").")"
+					\.(term.op ==? 'c' ? "txtfmtFgcolormask" : term.op ==? 'k' ? "txtfmtBgcolormask" : "txtfmtSqcolormask").")"
 			endif
 		endif
 		return term
 	endif
-	" No clr/bgc term
+	" No clr/bgc/sqc term
 	return {}
 endfu
 " >>>
 " Function: s:Sel_parser_term() <<<
+" FIXME_SQUIGGLE: Rename the 'Sel_*' family of functions to make their role wrt
+" 'selector patterns' more obvious.
 fu! s:Sel_parser_term(ps)
 	let term = s:Sel_parser_try_fterm(a:ps)
 	if !empty(term) | return term | endif
@@ -4657,9 +4734,9 @@ endfu
 " >>>
 " Function: s:Jump_to_tok() <<<
 " Purpose: Jumps forward or backwards (as determined by a:dir), to the
-" v:count1'th nearest token of type given by a:type ('c'=clr 'k'=bgc 'f'=fmt
-" 'a'=any (clr, bgc or fmt)). If 'till' argument is nonzero, jump will
-" position cursor one char position closer to starting location than the
+" v:count1'th nearest token of type given by a:type ('c'=clr 'k'=bgc 'u'=sqc
+" 'f'=fmt 'a'=any (clr, bgc, sqc or fmt)). If 'till' argument is nonzero, jump
+" will position cursor one char position closer to starting location than the
 " sought token. (This behavior is analogous to t and T normal mode commands.)
 " Note: If the map that invokes this function is a visual-mode mapping,
 " special logic is required to restore the visual selection prior to
@@ -4720,9 +4797,9 @@ fu! s:Jump_to_tok(mode, type, dir, till, ...)
 	" Get the search pattern
 	" Design Decision Needed: Decide whether to permit inactive color tokens
 	" to serve as target of jump. If this is desired, perhaps create special
-	" b:txtfmt_re_CLR_<...> and b:txtfmt_re_BGC_<...> regexes. Alternatively,
-	" use the b:re_no_self_esc and b:re_no_bslash_esc patterns on the
-	" <...>_atom regexes.
+	" b:txtfmt_re_CLR_<...>, b:txtfmt_re_BGC_<...> and b:txtfmt_re_SQC_<...>
+	" regexes. Alternatively, use the b:re_no_self_esc and b:re_no_bslash_esc
+	" patterns on the <...>_atom regexes.
 	" Note: Let jumptoinactive option determine whether inactive tokens can
 	" serve as jump targets.
 	if a:type == 'c'
@@ -4737,6 +4814,12 @@ fu! s:Jump_to_tok(mode, type, dir, till, ...)
 		let re = b:txtfmt_re_{jtin ? 'BGC' : 'bgc'}_stok
 	elseif a:type == 'ek'
 		let re = b:txtfmt_re_{jtin ? 'BGC' : 'bgc'}_etok
+	elseif a:type == 'u'
+		let re = b:txtfmt_re_{jtin ? 'SQC' : 'sqc'}_tok
+	elseif a:type == 'bu'
+		let re = b:txtfmt_re_{jtin ? 'SQC' : 'sqc'}_stok
+	elseif a:type == 'eu'
+		let re = b:txtfmt_re_{jtin ? 'SQC' : 'sqc'}_etok
 	elseif a:type == 'f'
 		let re = b:txtfmt_re_fmt_tok
 	elseif a:type == 'bf'
@@ -5085,7 +5168,7 @@ endfu
 " >>>
 " Function: s:ShowTokenMap() <<<
 " Purpose: Echo to user a table showing the current use of all tokens in the
-" range of fmt/clr tokens.
+" range of fmt/clr/bgc/sqc tokens.
 " How: Use echo, as this is intended as a temporary showing for informational
 " purposes only. Highlighting of column headers is accomplished via echohl
 " Format: Should be something like the sample table shown below...
@@ -5125,6 +5208,18 @@ endfu
 " 200      Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
 " .
 " .
+" Important Note: The subsequent lines will be output if and only if
+" colored undercurl is enabled.
+"=== UNDERCURL COLORS ===
+"char-nr   description        clr-pattern                                clr-def
+" 205      no color           -
+"*206      Color0 (inactive)  ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000  #000000
+" 207      Color1             ^blu\\%[e]$,c:DarkBlue,g:#0000FF           #0000FF
+" 208      Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
+" .
+" .
+" FIXME_SQUIGGLE: Hold off on this purely cosmetic function until I've gotten
+" colored undercurl basically working.
 fu! s:ShowTokenMap()
 	" Loop 2 times - first time is just to calculate column widths
 	let cw1 = 0 | let cw2 = 0 | let cw3 = 0 | let cw4 = 0
@@ -5359,6 +5454,8 @@ endfu
 " it invokes :Refresh command, which causes the script to be re-sourced. This
 " leads to E127 'Cannot redefine function' when fu[!] is encountered, since
 " the function is in the process of executing.
+" FIXME_SQUIGGLE: Hold off on this little-used function till colored undercurl
+" is basically working.
 if !exists('*s:MoveStartTok')
 fu! s:MoveStartTok(moveto, ...)
 	if a:0
@@ -5592,6 +5689,8 @@ endif	" if !exists('*s:MoveStartTok')
 " assumes cursor position) and from a command (which permits user to specify
 " position).
 " IMPORTANT NOTE: This function is multibyte-safe.
+" FIXME_SQUIGGLE: Hold off on auxiliary functions till colored undercurl is
+" basically working.
 fu! s:GetTokInfo(...)
 	" The output of the if/else will be line/col of character of interest,
 	" assuming the inputs are valid.
@@ -5748,6 +5847,7 @@ fu! S_Build_menus()
 	call s:Build_format_submenu('Txtfmt')
 	call s:Build_color_submenu('clr', 'Txtfmt', 'Set foreground color')
 	call s:Build_color_submenu('bgc', 'Txtfmt', 'Set background color')
+	call s:Build_color_submenu('sqc', 'Txtfmt', 'Set undercurl color')
 
 endfu
 " >>>

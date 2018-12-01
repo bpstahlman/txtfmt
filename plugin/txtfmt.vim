@@ -45,7 +45,7 @@ let s:TESTPAGE_WINHEIGHT = 20
 "	{tokrange|rng}=<hex>|<dec>[sSlL]
 "	{escape|esc}={self|bslash|none}
 "	{sync}={<hex>|<dec>|fromstart|none}
-"	{bgcolor|bg}=<color>
+"	{bgcolormask|bcm}=<colormask>
 "	{nested|nst}
 "	{concealcursor|cocu}=[n][v][i][c]
 " Must be no whitespace surrounding the '='
@@ -183,6 +183,7 @@ let b:txtfmt_const_formats_def_{'u'}     = 'X'
 " option into account.
 " TODO: Fix the final 3 elements or get rid of this array altogether. Note
 " that it doesn't take 'pack' option into account
+" FIXME_SQUIGGLE: Add 4th dimension for colored undercurl?
 let b:txtfmt_const_tokrange_size_{0}{0}{0} = 17 
 let b:txtfmt_const_tokrange_size_{0}{1}{0} = 41 
 let b:txtfmt_const_tokrange_size_{0}{1}{1} = 73 
@@ -408,7 +409,7 @@ endfu
 " b:txtfmt_cfg_undercurl
 " b:txtfmt_cfg_starttok_display
 " b:txtfmt_cfg_formats_display
-" b:txtfmt_cfg_squiggle (colored undercurl)
+" b:txtfmt_cfg_sqcolor (colored undercurl)
 fu! s:Tokrange_translate_tokrange(tokrange)
 	" Extract starttok and formats from input tokrange
 	let starttok_str = substitute(a:tokrange, s:re_tokrange_spec, '\1', '') 
@@ -467,7 +468,7 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 		let b:txtfmt_cfg_longformats = 0
 		let b:txtfmt_cfg_undercurl = 0
 		" Assumption: TODO: Option validation ensures we don't get here if undercurl not supported.
-		let b:txtfmt_cfg_squiggle = 1
+		let b:txtfmt_cfg_sqcolor = 1
 		let b:txtfmt_cfg_formats_display = 'XU'
 	else
 		" Short formats
@@ -1659,7 +1660,7 @@ fu! s:Process_clr_masks()
 		if fg_bg_sq{fgbgsq_idx} == 'bg' && !b:txtfmt_cfg_bgcolor && mask =~ '1'
 			let mask = '00000000'
 		endif
-		if fg_bg_sq{fgbgsq_idx} == 'sq' && !b:txtfmt_cfg_squiggle && mask =~ '1'
+		if fg_bg_sq{fgbgsq_idx} == 'sq' && !b:txtfmt_cfg_sqcolor && mask =~ '1'
 			let mask = '00000000'
 		endif
 		" Loop over all 8 'bits' in the mask

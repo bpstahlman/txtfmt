@@ -1362,7 +1362,7 @@ COLORS						*txtfmt-color-config*
 
 IMPORTANT NOTE: This section makes no attempt to distinguish between
 foreground and background colors. The description of the |txtfmtColor{}| array
-applies equally to the|txtfmtBgcolor{}| array, which permits background colors
+applies equally to the |txtfmtBgcolor{}| array, which permits background colors
 to be configured independently of their foreground color counterparts.
 
 As mentioned previously, there are 9 tokens used to begin Txtfmt color
