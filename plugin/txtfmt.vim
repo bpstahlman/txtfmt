@@ -164,9 +164,12 @@ let b:txtfmt_const_starttok_def_{'2'}    = '180'
 let b:txtfmt_const_formats_def_{'2'}     = 'X'
 let b:txtfmt_const_starttok_def_{'u'}    = '0xE000'
 let b:txtfmt_const_formats_def_{'u'}     = 'X'
+
 " Define the number of tokens in the txtfmt token range as a function of
 " the format variant flags (which determine num_attributes in the equations
 " below):
+" FIXME_SQUIGGLE: Update this comment!!!!!!!!!!! Also, consider moving this
+" function.
 " --no background colors--
 " N = 2 ^ {num_attributes} + 9
 " --background colors--
@@ -174,22 +177,26 @@ let b:txtfmt_const_formats_def_{'u'}     = 'X'
 " Important Note: The numbers are not dependent upon the number of active fg
 " and bg colors, since we always reserve 8 colors.
 
-" The 3 parameters in the following constants represent the following 3 format
-" variant flags:
-" txtfmt_cfg_bgcolor
-" txtfmt_cfg_longformats
-" txtfmt_cfg_undercurl
-" Note: Value supplied for longformats and undercurl indices must take 'pack'
-" option into account.
-" TODO: Fix the final 3 elements or get rid of this array altogether. Note
-" that it doesn't take 'pack' option into account
-" FIXME_SQUIGGLE: Add 4th dimension for colored undercurl?
-let b:txtfmt_const_tokrange_size_{0}{0}{0} = 17 
-let b:txtfmt_const_tokrange_size_{0}{1}{0} = 41 
-let b:txtfmt_const_tokrange_size_{0}{1}{1} = 73 
-let b:txtfmt_const_tokrange_size_{1}{0}{0} = 26 
-let b:txtfmt_const_tokrange_size_{1}{1}{0} = 82 
-let b:txtfmt_const_tokrange_size_{1}{1}{1} = 82 
+" Note: The inputs to this function are denormalized by design. (Consider that
+" it would be sufficient to accept tokrange suffix, but some callers use the
+" function in a way that would make it inconvenient to supply suffix.)
+fu! s:Get_tokrange_size(bgcolor, sqcolor, longformats, undercurl)
+	" Determine 'effective' longformats flag, which depends on a:bgcolor and
+	" the 'pack' option.
+	" Note: Undercurl attribute is irrelevant when either bgcolor or sqcolor
+	" is enabled.
+	let longformats = a:longformats || a:bgcolor && !b:txtfmt_cfg_pack
+	if a:sqcolor
+		let sz = 9 + (longformats ? 64 : 8) + 9 + 9
+	elseif a:bgcolor
+		let sz = 9 + (longformats ? 64 : 8) + 9
+	elseif longformats
+		" Nothing past long
+		let sz = 9 + (a:undercurl ? 64 : 32)
+	else
+		let sz = 17
+	endif
+endfu
 
 " Make sure we can easily deduce the suffix from the format variant flags
 let b:txtfmt_const_tokrange_suffix_{0}{0}{0} = 'S'
@@ -213,8 +220,8 @@ let b:txtfmt_re_number_atom = '\([1-9]\d*\|0x\x\+\)'
 
 " Map the single-char fmt spec types to their 3-char equivalents.
 " TODO: The abbrevs/names suffixes seem rather backwards...
-let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc'}
-let b:txtfmt_rgn_typ_names = {'fmt': 'f', 'clr': 'c', 'bgc': 'k'}
+let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc', 'u': 'sqc'}
+let b:txtfmt_rgn_typ_names = {'fmt': 'f', 'clr': 'c', 'bgc': 'k', 'sqc': 'u'}
 
 " >>>
 " General utility functions <<<
@@ -483,6 +490,7 @@ endfu
 " Note: Now that I'm reserving 8 colors even when numfgcolors and numbgcolors
 " are less than 8, this function can probably be removed, or at least renamed
 " (e.g., Tokrange_used_size).
+" FIXME_SQUIGGLE: No one is currently using this; probably remove...
 fu! s:Tokrange_size(formats)
 	return b:txtfmt_const_tokrange_size_{a:formats}
 endfu
@@ -654,9 +662,14 @@ fu! s:Set_tokrange()
 		" Decompose valid tokrange setting via s:Tokrange_translate_tokrange,
 		" which sets all constituent variables.
 		call s:Tokrange_translate_tokrange(b:txtfmt_cfg_tokrange)
-		" Perform upper-bound validation
+		" Perform upper-bound validation, taking 'pack' into account.
+		" HOTFIX_V32: Pre-squiggle didn't take 'pack' into account.
 		if b:txtfmt_cfg_starttok +
-			\ b:txtfmt_const_tokrange_size_{b:txtfmt_cfg_bgcolor}{b:txtfmt_cfg_longformats}{b:txtfmt_cfg_undercurl}
+			\ s:Get_tokrange_size(
+				\ b:txtfmt_cfg_bgcolor,
+				\ b:txtfmt_cfg_sqcolor,
+				\ b:txtfmt_cfg_bgcolor && (b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack),
+				\ b:txtfmt_cfg_undercurl)
 			\ - 1
 			\ > b:txtfmt_const_tokrange_limit_{enc_class}
 			" Warn user and use default
@@ -1800,24 +1813,38 @@ fu! s:Define_fmtclr_vars()
 	let b:txtfmt_clr_last_tok = b:txtfmt_cfg_starttok + b:txtfmt_num_colors - 1
 	let b:txtfmt_fmt_first_tok = b:txtfmt_clr_last_tok + 1
 	let b:txtfmt_fmt_last_tok = b:txtfmt_fmt_first_tok + b:txtfmt_num_formats - 1
+	" Note: Last tok may be updated below.
+	let b:txtfmt_last_tok = b:txtfmt_fmt_last_tok
+	" Note: Locations of both bg and sq color ranges depend upon longformats
+	" and 'pack' setting.
+	" Cache flag indicating whether we need to reserve full space for
+	" longformats when either bgcolor or sqcolor is enabled. This flag is used
+	" for both 'longformats' and 'undercurl' args to s:Get_tokrange_size(),
+	" though the latter is unused when either bgcolor or sqcolor is set.
+	let lf_reserved = b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack ? 1 : 0
+	" Background color
 	if b:txtfmt_cfg_bgcolor
-		" Location of bg color range depends upon 'pack' setting as well
-		" as well as type of formats in effect
-		" Note: Intentionally hardcoding bgcolor index to 0 and undercurl
-		" index to 1 (when formats are long) to get desired length
-		" TODO: Replace ternaries with normal if block
 		let b:txtfmt_bgc_first_tok = b:txtfmt_cfg_starttok +
-			\ b:txtfmt_const_tokrange_size_{0}{
-				\(b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack ? 1 : 0)}{
-				\(b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack ? 1 : 0)}
+			\ s:Get_tokrange_size(0, 0, lf_reserved, lf_reserved)
 		let b:txtfmt_bgc_last_tok = b:txtfmt_bgc_first_tok + b:txtfmt_num_colors - 1
 		let b:txtfmt_last_tok = b:txtfmt_bgc_last_tok
 	else
 		" nothing after the fmt range
 		let b:txtfmt_bgc_first_tok = -1
 		let b:txtfmt_bgc_last_tok = -1
-		let b:txtfmt_last_tok = b:txtfmt_fmt_last_tok
 	endif
+	" Squiggle color
+	if b:txtfmt_cfg_sqcolor
+		let b:txtfmt_sqc_first_tok = b:txtfmt_cfg_starttok +
+			\ s:Get_tokrange_size(1, 0, lf_reserved, lf_reserved)
+		let b:txtfmt_sqc_last_tok = b:txtfmt_sqc_first_tok + b:txtfmt_num_colors - 1
+		let b:txtfmt_last_tok = b:txtfmt_sqc_last_tok
+	else
+		" nothing after the fmt range
+		let b:txtfmt_sqc_first_tok = -1
+		let b:txtfmt_sqc_last_tok = -1
+	endif
+
 endfu
 " >>>
 " Function: s:Define_fmtclr_regexes() <<<

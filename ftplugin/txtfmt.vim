@@ -5487,12 +5487,13 @@ fu! s:MoveStartTok(moveto, ...)
 	let new_starttok = a:moveto
 	" Determine amount of shift (signed value)
 	let l:offset = new_starttok - old_starttok
-
-	" Before proceeding, cache 'effective' values for bgcolor, longformats and
-	" undercurl. Note that 'effective' values are those that would be in
-	" effect if current Vim version were old_ver. Note that effective
-	" undercurl may differ from b:txtfmt_cfg_undercurl.
+	
+	" Before proceeding, cache 'effective' values for bgcolor, sqcolor,
+	" longformats and undercurl. Note that 'effective' values are those that
+	" would be in effect if current Vim version were old_ver. Note that
+	" effective undercurl may differ from b:txtfmt_cfg_undercurl.
 	let bgcolor = b:txtfmt_cfg_bgcolor
+	let sqcolor = b:txtfmt_cfg_sqcolor
 	let longformats = b:txtfmt_cfg_longformats
 	if old_ver != v:version
 		" Effective undercurl could differ from b:txtfmt_cfg_undercurl
@@ -5507,13 +5508,12 @@ fu! s:MoveStartTok(moveto, ...)
 		let undercurl = b:txtfmt_cfg_undercurl
 	endif
 	" Set a flag that indicates whether we will be reserving space for long
-	" formats before the start of bgc range. Note that this value can be true
-	" even if longformats is false. Also note that its value is N/A if
-	" bgcolors are disabled.
+	" formats before the start of bgc range. Note that this flag can be set even
+	" if longformats and/or undercurl are false. Also note that its value is a
+	" 'don't care' if bgcolors are disabled.
 	let lf_reserved = bgcolor && (longformats || !b:txtfmt_cfg_pack)
 	" Determine size of the entire range
-	let rangelen =
-		\ b:txtfmt_const_tokrange_size_{bgcolor}{lf_reserved}{lf_reserved}
+	let rangelen = s:Get_tokrange_size(bgcolor, sqcolor, lf_reserved, lf_reserved)
 	" Perform upper-bound check on new range
 	if !(new_starttok + rangelen - 1 <=
 		\ b:txtfmt_const_tokrange_limit_{b:txtfmt_cfg_enc_class})
@@ -5528,6 +5528,7 @@ fu! s:MoveStartTok(moveto, ...)
 	" required.
 	let b:txtfmt_ml_save_modified = &modified
 
+	" FIXME_SQUIGGLE: Convert all this to use .=
 	" Build 2 character class interiors (i.e., without the [ ]):
 	" 1) all chars that are tokens under old range
 	" 2) all chars that are tokens under new range
@@ -5541,23 +5542,36 @@ fu! s:MoveStartTok(moveto, ...)
 	if !bgcolor || !(longformats && undercurl)
 		" End first range after format tokens
 		" Calculate length of range
-		let end_offset = b:txtfmt_const_tokrange_size_{0}{longformats}{undercurl} - 1
+		let end_offset = s:Get_tokrange_size(0, 0, longformats, undercurl) - 1
 		" Close the range
 		let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + end_offset)
 		let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + end_offset)
 		" If bgcolor is enabled, start a new range so that logic after this if
 		" block needn't know or care whether it was entered
 		if bgcolor
-			" Determine offset to start of bgc range
-			let start_offset = b:txtfmt_const_tokrange_size_{0}{lf_reserved}{lf_reserved}
+			" Determine offset to start of bgc range (takes reserved toks into
+			" account).
+			let start_offset = s:Get_tokrange_size(0, 0, lf_reserved, lf_reserved)
 			let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + start_offset).'-'
 			let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + start_offset).'-'
 		endif
 	endif
-	" If bgcolor is enabled, need to close the first or second range. (If no
-	" bgcolor, first and only range has already been closed.)
+	" If bgcolor is enabled, need to close the first or second set of ranges.
+	" (If no bgcolor, first and only range has already been closed.)
 	if bgcolor
-		let end_offset = b:txtfmt_const_tokrange_size_{1}{lf_reserved}{lf_reserved} - 1
+		let end_offset = s:Get_tokrange_size(1, 0, lf_reserved, lf_reserved) - 1
+		let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + end_offset)
+		let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + end_offset)
+	endif
+	" Note: Though sqcolor and bgcolor can be enabled independently, space is
+	" reserved unconditionally for bgcolor.
+	if sqcolor
+		" Determine offset to start of sqc range (takes reserved toks into
+		" account).
+		let start_offset = s:Get_tokrange_size(1, 0, lf_reserved, lf_reserved)
+		let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + start_offset).'-'
+		let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + start_offset).'-'
+		let end_offset = s:Get_tokrange_size(1, 1, lf_reserved, lf_reserved) - 1
 		let re_old_tokrange = re_old_tokrange.nr2char(old_starttok + end_offset)
 		let re_new_tokrange = re_new_tokrange.nr2char(new_starttok + end_offset)
 	endif
