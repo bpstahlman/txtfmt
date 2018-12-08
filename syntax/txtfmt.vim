@@ -616,17 +616,18 @@ endfu
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Cache some useful vars <<<
-	" Define a convenience flag that indicates whether background colors are
-	" in effect
+	" Define convenience flags that indicate which colors are in effect
 	let bgc_enabled = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
 	let sqc_enabled = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_enabled = b:txtfmt_cfg_numfgcolors > 0
 
 	" cui (color uniqueness index) will contain a different index for each
 	" color configuration (and will be empty string in the unlikely event that
-	" both numfgcolors and numbgcolors are 0 - i.e., no colors used)
+	" all of numfg/bg/sqcolors are 0 - i.e., no colors used)
 	" Note: This strategy is necessary because Vim's highlight groups are not
 	" buffer-specific, but there is a buffer-specific version of txtfmtColor{}
+	" Question from future Brett: Seriously!?!?!? Why??? Is there really a
+	" sufficiently common use case to justify the added complexity??
 	let cui = b:txtfmt_color_uniq_idx
 
 	" Determine whether to use gui or cterm definitions.
@@ -649,10 +650,12 @@ fu! s:Define_syntax()
 	if use_gui_defs
 		let eq_clr = ' guifg='
 		let eq_bgc = ' guibg='
+		let eq_sqc = ' guisp='
 		let eq_fmt = ' gui='
 	else
 		let eq_clr = ' ctermfg='
 		let eq_bgc = ' ctermbg='
+		let eq_sqc = ' ctermsp='
 		let eq_fmt = ' cterm='
 	endif
 
@@ -721,6 +724,8 @@ fu! s:Define_syntax()
 		" a hole in background color, and given that none of this even applies
 		" outside the rarely used 'noconceal' case, the complexity and
 		" performance hit is definitely *not* warranted.
+		" SQUIGGLE_NOTE: This rationale above is even stronger now that
+		" colored undercurl would need to be added to the mix.
 		" Note: Use of 'cui' indices allows each buffer (potentially) to have
 		" its own set of background colors; for performance reasons, however,
 		" this power should be used sparingly, as it increases the total
@@ -811,11 +816,12 @@ fu! s:Define_syntax()
 	endif
 	" >>>
 	" Build rgn_info list <<<
-	" The rgn_info list contains metadata pertaining to the 3 types of regions
-	" (fmt, clr, bgc), which is used in the loops below.
+	" The rgn_info list contains metadata pertaining to the 4 types of regions
+	" (fmt, clr, bgc, sqc), which is used in the loops below.
 	let rgn_info = [
 		\{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}
 	\]
+	" FIXME_SQUIGGLE: Probably parameterize...
 	if clr_enabled
 		call add(rgn_info,
 			\{'name': 'clr', 'abbrev': 'fg', 'max': b:txtfmt_cfg_numfgcolors, 'offs': []})
@@ -823,6 +829,10 @@ fu! s:Define_syntax()
 	if bgc_enabled
 		call add(rgn_info,
 			\{'name': 'bgc', 'abbrev': 'bg', 'max': b:txtfmt_cfg_numbgcolors, 'offs': []})
+	endif
+	if sqc_enabled
+		call add(rgn_info,
+			\{'name': 'sqc', 'abbrev': 'sq', 'max': b:txtfmt_cfg_numsqcolors, 'offs': []})
 	endif
 	" For color elements (all but first element of rgn_info), build a list
 	" mapping 0-based indices to actual color numbers (as used in txtfmtColor
@@ -870,17 +880,6 @@ fu! s:Define_syntax()
 			" Note: dict attribute is used simply to allow us to pass data to
 			" the sort function (since VimL has no closures). Alternatively,
 			" could make a singleton object.
-			" TODO: Pull this out of this nested loop!!!
-			"fu! Sort_rgn_types(a, b) dict
-			"	let ri = self.rgn_info
-			"	if ri[a:a].name == 'clr'
-			"		return -1
-			"	elseif ri[a:a].name == 'fmt'
-			"		return 1
-			"	elseif ri[a:a].name == 'bgc'
-			"		return ri[a:b].name == 'fmt' ? -1 : 1
-			"	endif
-			"endfu
 			" Note: Must supply rgn_info within a dict.
 			" TODO: Consider refactoring so that the sort function is a true
 			" dict function (on actual dict).
@@ -1234,6 +1233,9 @@ fu! s:Define_syntax()
 		" 'transparent' on Tf_esc groups, but define bgc-specific esc groups
 		" in both 'conceal' and 'noconceal' cases. Tf_tok, on the other hand,
 		" can use transparent because it doesn't limit highlighting with he=.
+		" Note: To understand why we create regions for bgc but not (eg)
+		" underline, undercurl, etc., see rationale near creation of
+		" bgc-specific token concealment regions.
 		exe 'syn cluster Tf'.cui.'_esc add=Tf_esc'
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
@@ -1339,385 +1341,4 @@ call s:Set_current_syntax()
 " Workaround: \(ab\)\%(\1\@=..\)*
 " >>>
 
-" IMPORTANT NOTE: The Vim script ends here. The perl script used to generate
-" portions of this file follows...
-finish
-
-#!perl
-
-# This script generates the core of the Define_syntax function of Brett
-# Stahlman's Txtfmt Vim plugin
-# It is designed to be invoked from a Vim external program read filter, as
-# follows:
-# :r !gen_txtfmt_def_syn.pl
-# There are 2 passes:
-# Pass 1) Generates definitions, which are specific to a token type combination
-# (e.g., "fmt", "fmtclr", etc...)
-# Pass 2) Generates the nested loops used to define syntax regions
-
-@rgn = qw(clr bgc fmt);
-# TODO: If I keep support for separate bgc and clr definitions, I can get rid
-# of the %rhs hash (after making corresponding code modifications)
-%rhs = qw(clr clr bgc bgc fmt fmt);
-%ord = qw(clr 0 bgc 1 fmt 2);
-# Note which types of regions can be disabled through Vim options
-@can_dsbl = qw(clr bgc);
-# Subtract 1 from b:txtfmt_num_formats (which currently includes the default
-# format token)
-%loopinfo = (
-	clr => {
-		cnt =>'b:txtfmt_cfg_numfgcolors',
-		indarr => 'b:txtfmt_cfg_fgcolor',
-	},
-	bgc => {
-		cnt =>'b:txtfmt_cfg_numbgcolors',
-		indarr => 'b:txtfmt_cfg_bgcolor',
-	},
-	fmt => {
-		cnt =>'b:txtfmt_num_formats - 1',
-		indarr => undef,
-	},
-);
-# TODO: Get rid of %cnt and %idxind if I elect to keep %loopinfo
-%cnt = (
-	clr => 'b:txtfmt_cfg_numfgcolors',
-	bgc => 'b:txtfmt_cfg_numbgcolors',
-	fmt => 'b:txtfmt_num_formats - 1'
-);
-# Define a hash supporting index indirection
-%idxind = (
-	clr => 'b:txtfmt_cfg_fgcolor',
-	bgc => 'b:txtfmt_cfg_bgcolor',
-	fmt => undef
-	# Could omit fmt or leave it undef
-);
-
-# Define base indentlevel of the entire block
-$init_il = 1;
-
-# This semaphore helps determine when an "if <typ>_enabled" construct in the
-# Vim code would be redundant with a containing one.
-# TODO: Currently unused - remove...
-my $bgc_guard_cnt = 0;
-
-sub do_lvl($$)
-{
-	# Description of arrays
-	# @a1 - $_[1]: lhs (fixed) array of token type names. Upon function entry,
-	#      this array represents the most recent region combination to have
-	#      been processed.
-	# @a1n - lhs (fixed) array of token type names that will be passed in next
-	#       recursive call to this function. Created by appending a single
-	#       token type name from @a2
-	# @a2 - $_[2]: rhs (unfixed) array of token type names. Upon function
-	#       entry, this array contains the token type names not included in the
-	#       currently processed region combination. (e.g, if we're currently
-	#       processing "fmt-clr" regions, then @a2 contains "bgc")
-	# @a2n - rhs (unfixed) array of token type names that will be passed in
-	#        next recursive call to this function. Created by removing a single
-	#        token type name from @a2
-
-	# Basic algorithm
-	# Loop over the token type names in @a2, appending each, in turn, to @a1
-	# (and calling the result @a1n). For each iteration, process the
-	# corresponding region combination, which will involve all token type names
-	# contained in @a1n, then call self recursively (passing @a1n and @a2n) to
-	# process the next level.
-	my @a1 = @{shift()}; # Fixed portion
-	my @a2 = @{shift()}; # Unfixed portion
-	# Determine the level of this recursive call according to number of
-	# elements in @a1
-	my $lvl = @a1;
-	# Loop over unfixed portion
-	for my $a2 (@a2) {
-		my @a1n = (@a1, $a2);
-		# Create a hash mapping region names to loop var names
-		my %idx = ();
-		my $var = 'i';
-		for my $a1n (@a1n) {
-			$idx{$a1n} = $var++;
-		}
-
-		my @a2n = grep { $_ ne $a2 } @a2;
-		# Description of @lor, @sor, @hor
-		# These 3 arrays are a convenience. They are 2D arrays containing
-		# specific useful combinations of token type names corresponding to the
-		# preceding level, the current level, and the next level, respectively.
-
-		# Lower order
-		# Remove each element in turn from @a1n
-		my @lor = ();
-		if (@a1n > 1) {
-			for my $r (@a1n) {
-				push @lor, [ grep { $_ ne $r } @a1n ];
-			}
-		}
-		# Same order
-		# Move each element within @a1n to the end
-		my @sor = ();
-		for (my $i = 0; $i < @a1n; $i++) {
-			my @r = @a1n;
-			my $r = splice @r, $i, 1;
-			push @sor, [ @r, $r ];
-		}
-		# Higher order
-		# Add region types from @a2n to the end
-		my @hor = ();
-		for my $r (@a2n) {
-			push @hor, [ @a1n, $r ];
-		}
-		# Determine initial indent level
-		my $il = "\t" x ($init_il + $lvl);
-
-		# Set convenience variable $need_r2_guard if and only if all the
-		# region types yet to be pulled in (i.e., the ones whose end tokens
-		# could begin the current region) are regions that can be disabled.
-		my $need_r2_guard = join('', sort @can_dsbl) =~ join('', sort @a2n);
-
-		# Begin outputting
-		# Insert an "if <typ>_enabled" if and only if the rightmost region
-		# type in the fixed array is <typ> (i.e., the region being begun
-		# should not exist if <typ>_enabled is false). (If the fixed portion
-		# contains <typ> prior to the last element, we're already inside an
-		# "if <typ>_enabled", in which case, another would be redundant.)
-		for my $typ (grep { $_ eq $a1n[-1] } @can_dsbl) {
-			print "\n$il", '"============= BEGIN NON-INDENTING BLOCK =============';
-			print "\n$il", "if ${typ}_enabled";
-		}
-
-		# PRE RECURSION
-		# Determine current level's indent
-		$il = "\t" x ($init_il + $lvl);
-		print "\n$il\"===";
-		print "\n$il\"*** Loop over ", join("-", @a1n), " levels";
-		print "\n$il\"===";
-		# TODO: Think about cleaning this up a bit and adding comments for
-		# the index indirection...
-		print "\n$il", "let $idx{$a1n[-1]}", ($loopinfo{$a1n[-1]}{indarr} ? 'p' : ''), " = 1";
-		print "\n$il", "while $idx{$a1n[-1]}", ($loopinfo{$a1n[-1]}{indarr} ? 'p' : ''), " <= $loopinfo{$a1n[-1]}{cnt}";
-		$il .= "\t";
-		print "\n$il", "let $idx{$a1n[-1]} = $loopinfo{$a1n[-1]}{indarr}\{$idx{$a1n[-1]}p\}"
-			if $loopinfo{$a1n[-1]}{indarr};
-		print "\n$il", "let ch$idx{$a1n[-1]} = nr2char(b:txtfmt_$a1n[-1]_first_tok + $idx{$a1n[-1]})";
-
-		print "\n$il\" Add to appropriate clusters";
-		print "\n$il", "exe 'syn cluster Tf'.cui.'_all add=Tf'.cui.'_",
-			join("", @a1n), "_'.",
-			join(".'_'.", @idx{@a1n})
-		;
-		print "\n$il", "exe 'syn cluster Tf'.cui.'_",
-			join("", @a1n),
-			(@a1n > 1
-				? "_'." . join(".'_'.", @idx{@a1n[0 .. $#a1n - 1]}) . ".'"
-				: ""
-			),
-			"_all add=Tf'.cui.'_",
-			join("", @a1n),
-			"_'.",
-			join(".'_'.", @idx{@a1n})
-		;
-		# Define tok/esc concealment group if background color could be changing (i.e., if
-		# last element of @a1n is 'bgc')
-		# Note: tok/esc concealment group will retain setting given until we move back to
-		# a lower order region
-		# Also note: bgc_enabled check would be superfluous here, since
-		# code won't be executed if bgc_enabled is false
-		if ($a1n[-1] eq 'bgc') {
-			# Note: Leave Tf_{tok,esc}_group's at their defaults when conceal is disabled.
-			print "\n$il", 'if !b:txtfmt_cfg_conceal';
-			print "\n$il\t", '" Ensure that this and higher order regions use bgc-specific concealment group';
-			print "\n$il\t", "let Tf_tok_group = 'Tf'.cui.'_tok_'.$idx{$a1n[-1]}";
-			print "\n$il\t", "if b:txtfmt_cfg_escape != 'none'";
-			print "\n$il\t\t", '" Ensure that this and higher order regions use bgc-specific esc group';
-			print "\n$il\t\t", "let Tf_esc_group = 'Tf'.cui.'_esc_'.$idx{$a1n[-1]}";
-			print "\n$il\t", 'endif';
-			print "\n$il", 'endif';
-		}
-
-		# Define nextgroup
-		my $ng = "";
-		for my $lor (@lor) {
-			# Transitions to lower-order groups (used to be rtd group)
-			# TODO: Consider whether better way to do this now that no '_rtd' appended.
-			$ng .= ",Tf'.cui.'_" . join("", @$lor) . "_'." . join(".'_'.", @idx{@$lor}) . ".'";
-		}
-		for my $sor (@sor) {
-			$ng .= ",\@Tf'.cui.'_" . join("", @$sor) .
-				(@$sor > 1
-					? "_'." . join(".'_'.", @idx{@{$sor}[0 .. $#$sor - 1]}) . ".'"
-					: ""
-				) .
-				"_all";
-		}
-		# Note: We didn't need to worry about checking <typ>_enabled for
-		# the lor and sor case (since this code will be inside an "if
-		# <typ>_enabled" if <typ> is in either of those arrays); however,
-		# the hor case pulls in a new region type, so we will need to
-		# check it.
-		my $unquoted = 0;
-		for my $hor (@hor) {
-			my $typ;
-			if (($typ) = grep { $_ eq $hor->[-1] } @can_dsbl) {
-				$ng .= ($unquoted ? '' : "'") . ".(${typ}_enabled ? '";
-			}
-			elsif ($unquoted) {
-				$ng .= ".'";
-			}
-			$ng .= ",\@Tf'.cui.'_" . join("", @$hor) . "_'." .
-				join(".'_'.", @idx{@a1n}) .
-				".'_all";
-			if ($typ) {
-				$ng .= "' : '')";
-				$unquoted = 1;
-			}
-			else {
-				$unquoted = 0;
-			}
-		}
-		if (@a1n == 1) {
-			$ng .= ($unquoted ? ".'" : '') . ",Tf_tok'";
-		} elsif (!$unquoted) {
-			$ng .= "'";
-		}
-		# Use substr to strip off the leading comma at the head of $ng
-		$ng = "' nextgroup=" . substr($ng, 1);
-
-		# Add to nextgroup the special transparent group whose purpose is to
-		# prevent match of useless end toks within the region.
-
-		# Build shared portion of syn region command.
-		my $rgn_body = 
-			"skip" .
-			"\n$il\t\\.' keepend contains='.Tf_tok_group" .
-			"\n$il\t\\.(b:txtfmt_cfg_escape != 'none'" .
-			"\n$il\t\\\t? ','.Tf_esc_group" .
-			"\n$il\t\\\t: '')" .
-			"\n$il\t\\.' end=/['.b:txtfmt_re_any_stok_atom." .
-			join(".", map { "b:txtfmt_re_${_}_etok_atom" } @a1n) .
-			".']/me=e-'.tok_off.',he=e-'.tok_off" .
-			"\n$il\t\\.$ng";
-
-		# If shared body is about to be used in 2 region definitions (r1
-		# r2), assign it to a variable for efficiency. (Many
-		# concatenations are required to build the entire nextgroup
-		# clause.)
-		# Note: If there are no more regions to pull in, the shared stuff
-		# will be used only once, so it's more efficient to build it
-		# within the region definition itself.
-		if (@a2n) {
-			print "\n$il\" Cache the shared stuff";
-			print "\n$il", "let rgn_body = ", $rgn_body;
-			# Obviate the need for subsequent logic within this script to
-			# know whether we're caching nextgroup clause or not
-			$rgn_body = 'rgn_body';
-		}
-
-		# Define the rgn that is begun with an stok
-		print "\n$il\" Define region that is begun by a start token";
-		# Save the beginning of the `syn region' statement, which is
-		# common to both the region begun by start tok and the region
-		# begun by end tok. (Note that they diverge where there *once*
-		# was - but no longer is - an `_rtd' in the latter's region name.)
-		my $rgn_head = "\n$il" .
-			"exe 'syn region " .
-			"Tf'.cui.'_" . join("", @a1n) . "_'." . join(".'_'.", @idx{@a1n});
-		print "$rgn_head",
-			"\n$il\t\\.' start=/'.ch$idx{$a1n[-1]}.'/'",
-			"\n$il\t\\.", $rgn_body,
-			"\n$il\t\\.",
-			# TODO: containedin_def only for single regions!!!
-			@a1n == 1 ? "containedin_def" : "' contained'";
-
-		# Define the region introduced by 'no rgn' token (if it exists)
-		if (@a2n) {
-			# Ensure that we don't define the region if all of the <typ>'s
-			# whose end token could begin the region are inactive. If at
-			# least one of these <typ>'s is active, the region will be
-			# defined, and <typ>_enabled ternaries will be used as
-			# necessary to ensure that we don't consider end tokens for
-			# inactive region types.
-			if ($need_r2_guard) {
-				print "\n$il", '" Define the following region if and only if at least one of the';
-				print "\n$il", '" region types whose end token could begin this region is active';
-				print "\n$il", '"============= BEGIN NON-INDENTING BLOCK =============';
-				print "\n$il", "if ",
-					join ' || ', map { "${_}_enabled" } @a2n
-				;
-			}
-			print "\n$il\" Define region that is begun by an end token";
-			print "\n$il\" (when permitted by a nextgroup)";
-			print "$rgn_head",
-				"\n$il\t\\.", $rgn_body,
-				"\n$il\t\\.' start=/['.",
-				join(".", map {
-					# Ternary redundant when inside single-region type guard.
-					# E.g., no need for "bgc_enabled ? ..." inside "if bgc_enabled"
-					$_ =~ 'bgc|clr' && @a2n > 1
-						? "(${_}_enabled ? b:txtfmt_re_${_}_etok_atom : '')"
-						: "b:txtfmt_re_${_}_etok_atom"
-				} @a2n),
-				".']/'",
-				"\n$il\t\\.' contained'";
-
-			if ($need_r2_guard) {
-				print "\n$il", "endif \" ",
-					join ' || ', map { "${_}_enabled" } @a2n;
-				print "\n$il", '"=============  END NON-INDENTING BLOCK  =============';
-			}
-		}
-		# Define the highlighting region
-		print "\n$il\" Define highlighting for this region";
-		print "\n$il\" Note: cterm= MUST come after ctermfg= to ensure that bold attribute is";
-		print "\n$il\" handled correctly in a cterm.";
-		print "\n$il\"\t:help cterm-colors";
-		print "\n$il", "exe 'hi Tf'.cui.'_", join("", @a1n), "_'.",
-			join(".'_'.", @idx{@a1n}),
-			"\n$il\t\\.",
-			join(".", map {
-				"eq_$_.b:txtfmt_$rhs{$_}\{$idx{$_}\}"
-				} sort { $ord{$a} <=> $ord{$b} } @a1n
-			)
-		;
-
-		# RECURSE
-		# Call ourself recursively to handle the next level
-		do_lvl(\@a1n, \@a2n);
-
-		# POST RECURSION
-		# Update for next iteration
-		my $idx = $idx{$a1n[-1]};
-		if ($a1n[-1] eq 'fmt') {
-			print "\n$il", "let $idx = $idx + 1";
-		} else {
-			print "\n$il", "let ${idx}p = ${idx}p + 1";
-		}
-		# Strip a level of indent
-		chop $il;
-		print "\n$il", "endwhile";
-		# Handle departure from blocks corresponding to <typ>'s that can be
-		# disabled
-		if (my ($typ) = grep { $_ eq $a1n[-1] } @can_dsbl) {
-			if ($typ eq 'bgc') {
-				# Revert to toplevel (no bgc) matchgroup
-				# Note: Code emitted won't be reached if bgc_enabled is false
-				print "\n$il", '" Revert to toplevel (no background color) matchgroup';
-				print "\n$il", "let Tf_tok_group = Tf_top_tok_group";
-				print "\n$il", "if b:txtfmt_cfg_escape != 'none'";
-				print "\n\t$il", "let Tf_esc_group = Tf_top_esc_group";
-				print "\n$il", "endif";
-			}
-			print "\n$il", "endif \" ${typ}_enabled";
-			print "\n$il", '"=============  END NON-INDENTING BLOCK  =============';
-		}
-	}
-}
-
-# Top level recursion
-# When the following call returns, all of the loops will have been output
-print "\t\" BEGIN AUTOGENERATED CODE BLOCK ", "<<<";
-print "\n\t\" Last update: ", scalar(localtime), "\n";
-do_lvl([], \@rgn);
-print "\n\t\" END AUTOGENERATED CODE BLOCK ", ">>>";
-
-__END__
 	" vim: sw=4 ts=4 foldmethod=marker foldmarker=<<<,>>> :
