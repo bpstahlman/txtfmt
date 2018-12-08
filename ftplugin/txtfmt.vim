@@ -136,7 +136,7 @@ endfu
 " Function: s:Get_active_rgns() <<<
 fu! s:Get_active_rgns()
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-	let squ_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
+	let sqc_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
 	" FIXME_SQUIGGLE: Different way?
 	return extend(extend(extend(['fmt'],

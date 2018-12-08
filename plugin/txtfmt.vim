@@ -199,12 +199,15 @@ fu! s:Get_tokrange_size(bgcolor, sqcolor, longformats, undercurl)
 endfu
 
 " Make sure we can easily deduce the suffix from the format variant flags
+" FIXME_SQUIGGLE: Consider whether to rework this...
 let b:txtfmt_const_tokrange_suffix_{0}{0}{0} = 'S'
-let b:txtfmt_const_tokrange_suffix_{0}{1}{0} = 'L'
-let b:txtfmt_const_tokrange_suffix_{0}{1}{1} = 'L'
+let b:txtfmt_const_tokrange_suffix_{0}{0}{1} = 'L'
 let b:txtfmt_const_tokrange_suffix_{1}{0}{0} = 'X'
-let b:txtfmt_const_tokrange_suffix_{1}{1}{0} = 'XL'
-let b:txtfmt_const_tokrange_suffix_{1}{1}{1} = 'XL'
+let b:txtfmt_const_tokrange_suffix_{1}{0}{1} = 'XL'
+let b:txtfmt_const_tokrange_suffix_{0}{1}{0} = 'U'
+let b:txtfmt_const_tokrange_suffix_{0}{1}{1} = 'UL'
+let b:txtfmt_const_tokrange_suffix_{1}{1}{0} = 'XU'
+let b:txtfmt_const_tokrange_suffix_{1}{1}{1} = 'XUL'
 
 " Define the maximum character code that may be used as a txtfmt token as a
 " function of encoding class. (Encoding class is specified as '1' for single
@@ -344,6 +347,18 @@ fu! s:Parse_free(parse_id)
 endfu
 " >>>
 " Configuration utility functions (common) <<<
+" Function: Get_active_color_rgn_abbrevs() <<<
+fu! s:TxtfmtCommon_Get_active_color_rgn_abbrevs()
+	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
+	let clr_active = b:txtfmt_cfg_numfgcolors > 0
+	" FIXME_SQUIGGLE: Different way?
+	return extend(extend(
+				\ clr_active ? [{'short': 'fg', 'long': 'clr'}] : [],
+				\ bgc_active ? [{'short': 'bg', 'long': 'bgc'}] : []),
+				\ sqc_active ? [{'short': 'sq', 'long': 'sqc'}] : [])
+endfu
+" >>>
 " >>>
 " encoding utility functions (common) <<<
 let s:re_encs_1 = '^\%('
@@ -435,16 +450,21 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 	" 'undercurl' option even when it is supported.)
 	" Note: b:txtfmt_cfg_undercurl is always set explicitly to 0 when it
 	" doesn't apply, so that it can be used in parameterized variable names.
+	" FIXME_SQUIGGLE: Probably refactor this big if/else to make it more
+	" data-driven.
 	if strlen(formats_str) == 0
 		" Format suffix was omitted. Default to 'extended' formats (background
 		" colors with short formats)
+		" FIXME_SQUIGGLE: Probably default to XU eventually.
 		let b:txtfmt_cfg_bgcolor = 1
+		let b:txtfmt_cfg_sqcolor = 0
 		let b:txtfmt_cfg_longformats = 0
 		let b:txtfmt_cfg_undercurl = 0
 		let b:txtfmt_cfg_formats_display = 'X'
 	elseif formats_str ==? 'L'
 		" Long formats with no background colors
 		let b:txtfmt_cfg_bgcolor = 0
+		let b:txtfmt_cfg_sqcolor = 0
 		let b:txtfmt_cfg_longformats = 1
 		if v:version >= b:txtfmt_const_vimver_undercurl && b:txtfmt_cfg_undercurlpref
 			let b:txtfmt_cfg_undercurl = 1
@@ -455,12 +475,14 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 	elseif formats_str ==? 'X'
 		" Background colors with short formats
 		let b:txtfmt_cfg_bgcolor = 1
+		let b:txtfmt_cfg_sqcolor = 0
 		let b:txtfmt_cfg_longformats = 0
 		let b:txtfmt_cfg_undercurl = 0
 		let b:txtfmt_cfg_formats_display = 'X'
 	elseif formats_str ==? 'XL'
 		" Background colors with long formats
 		let b:txtfmt_cfg_bgcolor = 1
+		let b:txtfmt_cfg_sqcolor = 0
 		let b:txtfmt_cfg_longformats = 1
 		if v:version >= b:txtfmt_const_vimver_undercurl && b:txtfmt_cfg_undercurlpref
 			let b:txtfmt_cfg_undercurl = 1
@@ -472,27 +494,19 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 	elseif formats_str ==? 'XU'
 		" Background colors with short formats and colored undercurl
 		let b:txtfmt_cfg_bgcolor = 1
-		let b:txtfmt_cfg_longformats = 0
-		let b:txtfmt_cfg_undercurl = 0
 		" Assumption: TODO: Option validation ensures we don't get here if undercurl not supported.
 		let b:txtfmt_cfg_sqcolor = 1
+		let b:txtfmt_cfg_longformats = 0
+		let b:txtfmt_cfg_undercurl = 0
 		let b:txtfmt_cfg_formats_display = 'XU'
 	else
 		" Short formats
 		let b:txtfmt_cfg_bgcolor = 0
+		let b:txtfmt_cfg_sqcolor = 0
 		let b:txtfmt_cfg_longformats = 0
 		let b:txtfmt_cfg_undercurl = 0
 		let b:txtfmt_cfg_formats_display = 'S'
 	endif
-endfu
-" >>>
-" Function: s:Tokrange_size() <<<
-" Note: Now that I'm reserving 8 colors even when numfgcolors and numbgcolors
-" are less than 8, this function can probably be removed, or at least renamed
-" (e.g., Tokrange_used_size).
-" FIXME_SQUIGGLE: No one is currently using this; probably remove...
-fu! s:Tokrange_size(formats)
-	return b:txtfmt_const_tokrange_size_{a:formats}
 endfu
 " >>>
 " >>>
@@ -570,9 +584,10 @@ endfu
 " >>>
 " Function: s:Set_tokrange() <<<
 " Purpose: Set b:txtfmt_cfg_starttok, b:txtfmt_cfg_bgcolor,
-" b:txtfmt_cfg_longformats and b:txtfmt_cfg_undercurl options, taking into
-" account any user-setting of 'tokrange' option, and if necessary, the txtfmt
-" defaults, which may take 'encoding' into consideration.
+" b:txtfmt_cfg_sqcolor, b:txtfmt_cfg_longformats and b:txtfmt_cfg_undercurl
+" options, taking into account any user-setting of 'tokrange' option, and if
+" necessary, the txtfmt defaults, which may take 'encoding' into
+" consideration.
 " Note: If set via modeline, tokrange option value must be a literal tokrange
 " specification; however, buf-local and global option variables may be set to
 " either a valid tokrange spec, or a Vim expression that evaluates to one.
@@ -586,7 +601,7 @@ fu! s:Set_tokrange()
 	" variables are the decomposition of b:txtfmt_cfg_tokrange, which may or
 	" may not be set at this point.
 	unlet! b:txtfmt_cfg_starttok
-		\ b:txtfmt_cfg_bgcolor b:txtfmt_cfg_longformats b:txtfmt_cfg_undercurl
+		\ b:txtfmt_cfg_bgcolor b:txtfmt_cfg_sqcolor b:txtfmt_cfg_longformats b:txtfmt_cfg_undercurl
 		\ b:txtfmt_cfg_starttok_display b:txtfmt_cfg_formats_display
 	" Cache the 'encoding' in effect
 	let enc = &encoding
@@ -654,10 +669,11 @@ fu! s:Set_tokrange()
 
 	" Note: The output from the preceding stage is b:txtfmt_cfg_tokrange,
 	" which we must now decompose into b:txtfmt_cfg_starttok,
-	" b:txtfmt_cfg_bgcolor, b:txtfmt_cfg_longformats, b:txtfmt_cfg_undercurl,
-	" b:txtfmt_cfg_starttok_display and b:txtfmt_cfg_formats_display. If
-	" b:txtfmt_cfg_tokrange is nonexistent or null, there is no valid user
-	" setting, in which case, we'll supply default.
+	" b:txtfmt_cfg_bgcolor, b:txtfmt_cfg_bgcolor, b:txtfmt_cfg_longformats,
+	" b:txtfmt_cfg_undercurl, b:txtfmt_cfg_starttok_display and
+	" b:txtfmt_cfg_formats_display. If b:txtfmt_cfg_tokrange is nonexistent or
+	" null, there is no valid user setting, in which case, we'll supply
+	" default.
 	if exists('b:txtfmt_cfg_tokrange') && strlen(b:txtfmt_cfg_tokrange)
 		" Decompose valid tokrange setting via s:Tokrange_translate_tokrange,
 		" which sets all constituent variables.
@@ -669,7 +685,7 @@ fu! s:Set_tokrange()
 				\ b:txtfmt_cfg_bgcolor,
 				\ b:txtfmt_cfg_sqcolor,
 				\ b:txtfmt_cfg_bgcolor && (b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack),
-				\ b:txtfmt_cfg_undercurl)
+				\ b:txtfmt_cfg_bgcolor && (b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack))
 			\ - 1
 			\ > b:txtfmt_const_tokrange_limit_{enc_class}
 			" Warn user and use default
@@ -960,8 +976,8 @@ fu! s:Translate_color_optstr(optstr)
 endfu
 " >>>
 " Function: s:Get_color_uniq_idx() <<<
-" Purpose: Convert the rhs of b:txtfmt_clr and b:txtfmt_bgc (if applicable) to
-" a single string. Look the string up in global array
+" Purpose: Convert the rhs of b:txtfmt_clr and b:txtfmt_bgc/sqc (as
+" applicable) to a single string. Look the string up in global array
 " g:txtfmt_color_configs{}. If the color config already exists, return its
 " index; otherwise, append the color config to a new element at the end of
 " g:txtfmt_color_configs{}, and return the corresponding index.
@@ -969,28 +985,26 @@ endfu
 " used for this buffer are specific to the color configuration.
 " Input: none
 " Return: Uniqueness index corresponding to the color configuration stored in
-" b:txtfmt_clr and b:txtfmt_bgc (if applicable). In the unlikely event that no
-" colors are active in the current configuration (i.e., numfgcolors and
-" numbgcolors both equal 0), we return an empty string.
+" b:txtfmt_clr and b:txtfmt_bgc/sqc (as applicable). In the unlikely event
+" that no colors are active in the current configuration (i.e.,
+" numfg/bg/sqcolors all 0), we return an empty string.
 fu! s:Get_color_uniq_idx()
 	" Build the string to be looked up
 	let s = ''
-	let fgbg_idx = 0
-	let clr_or_bgc{0} = 'clr'
-	let clr_or_bgc{1} = 'bgc'
-	let fg_or_bg{0} = 'fg'
-	let fg_or_bg{1} = 'bg'
-	while fgbg_idx < (b:txtfmt_cfg_bgcolor ? 2 : 1)
+	" FIXME_SQUIGGLE: Convert this function to more modern vimL.
+	let rgns = TxtfmtCommon_Get_active_color_rgn_abbrevs()
+	for rgn in rgns
 		" Loop over all used colors
 		" TODO_BG: Does it make sense to include unused ones? It shouldn't be
 		" necessary...
 		" Note: Index 1 corresponds to first non-default color
 		let i = 1
-		while i <= b:txtfmt_cfg_num{fg_or_bg{fgbg_idx}}colors
-			let s = s.b:txtfmt_{clr_or_bgc{fgbg_idx}}{i}."\<NL>"
-			let i = i + 1
+		" FIXME_SQUIGGLE: A lot of simplification could result from collapsing
+		" the 2 sets of rgn names (e.g., fg/clr) down to a single one.
+		while i <= b:txtfmt_cfg_num{rgn.short}colors
+			let s = s . b:txtfmt_{rgn.long}{i}."\<NL>"
+			let i += 1
 		endwhile
-		let fgbg_idx = fgbg_idx + 1
 	endwhile
 	" In the unlikely event that string is still empty, config is such that no
 	" colors are in use, in which case, we return an empty string, since no
@@ -1002,6 +1016,7 @@ fu! s:Get_color_uniq_idx()
 	if !exists('g:txtfmt_color_configs_len')
 		let g:txtfmt_color_configs_len = 0
 	endif
+	" FIXME_SQUIGGLE: Use sha256() now that VimL has it.
 	let i = 0
 	while i < g:txtfmt_color_configs_len
 		if g:txtfmt_color_configs{i} == s
@@ -1037,7 +1052,8 @@ endfu
 " Builds the following buffer-scope arrays: (indexed by 1-based color index)
 " b:txtfmt_clr_namepat{}, b:txtfmt_clr{}
 " b:txtfmt_bgc_namepat{}, b:txtfmt_bgc{}
-" Note: bgc arrays will not be built if background colors are disabled.
+" b:txtfmt_sqc_namepat{}, b:txtfmt_sqc{}
+" Note: bgc/sqc arrays will not be built if bg/sq colors are disabled.
 " Details: The format of the color array is as follows:
 " The array has 8 elements (1..8), each of which represents a color region
 " begun with one of the 8 successive color tokens in the token range. Each
@@ -1057,6 +1073,89 @@ endfu
 " intact for now. (We don't really need both ctermfg and guifg values any
 " more, but s:Translate_color_optstr still returns both...)
 fu! s:Process_color_options()
+	" FIXME: Probably remove this.
+	"let arrnames = {
+	"	\ 'bg': ['b:txtfmtBgcolor', 'g:txtfmtBgcolor', 'b:txtfmtColor', 'g:txtfmtColor', 's:txtfmt_clr'],
+	"	\ 'sq': ['b:txtfmtSqColor', 'g:txtfmtSqColor', 'b:txtfmtColor', 'g:txtfmtColor', 's:txtfmt_clr'],
+	"	\ 'fg': ['b:txtfmtColor', 'g:txtfmtColor', 's:txtfmt_clr']
+	"\ }
+
+	" FIXME: Loop over clr/bgc/sqc list.
+	" FIXME_SQUIGGLE: Consider allowing user to use regular lists, in addition
+	" to the curly braces (still required for backwards compat).
+	let rgns = TxtfmtCommon_Get_active_color_rgn_abbrevs()
+	for rgn in rgns
+		" Loop over all colors (1st non-default color at index 1)
+		for i in range(b:txtfmt_num_colors)
+			" Init strings to value signifying not specified or error
+			let namepat = '' | let clr_rhs = ''
+			" Loop over the possible color arrays
+			let arrnames = (rgn.short == 'bg'
+				\ ? ['b:txtfmtBgcolor', 'g:txtfmtBgcolor']
+				\ : rgn.short == 'sq' ? ['b:txtfmtSqColor', 'g:txtfmtSqColor'] : [])
+				\ + ['b:txtfmtColor', 'g:txtfmtColor', 's:txtfmt_clr']
+			for arrname in arrnames
+				" Skip nonexistent color definitions
+				if exists(arrname . '{' . i . '}')
+					exe 'let l:el = ' . arrname . '{' . i . '}'
+					" If here, color definition exists. Let's see whether it contains
+					" a match...
+					let s = s:Translate_color_optstr(el)
+					if s != ''
+						" Extract fields from the escaped return string (which
+						" is internally generated, and hence, does not require
+						" validation)
+						" TODO - Perhaps standardize this in one spot (function or
+						" static return variables)
+						let re_fld = '\%(\%(\\.\|[^,]\)*\)'
+						let re_sfld = '\(\%(\\.\|[^,]\)*\)'
+						let namepat = substitute(s, re_sfld.'.*', '\1', '')
+						if has('gui_running')
+							let clr_rhs = substitute(s, re_fld.','.re_fld.','.re_sfld, '\1', '')
+						else
+							let clr_rhs = substitute(s, re_fld.','.re_sfld.'.*', '\1', '')
+						endif
+						" Note: clr_rhs may be null at this point; if so, there
+						" was no applicable color definition, though the color def
+						" element was valid
+						if strlen(clr_rhs)
+							" Remove extra level of backslashes
+							let namepat = substitute(namepat, '\\\(.\)', '\1', 'g')
+							let clr_rhs = substitute(clr_rhs, '\\\(.\)', '\1', 'g')
+						endif
+					elseif arrname[0] == 'b' || arrname[0] == 'g'
+						echomsg "Ignoring invalid user-specified color def " . arrname . i . " due to error: "
+							\.s:err_str
+					else
+						" Shouldn't get here! Problem with defaults...
+						echomsg "Internal error within Process_color_options - bad default for txtfmtColors"
+							\. i . " - contact developer."
+					endif
+					" Are we done yet?
+					if strlen(clr_rhs)
+						break
+					endif
+				endif
+			endfor
+			" Assumption: Lack of color rhs at this point implies internal error.
+			" Build the buffer-specific array used in syntax file...
+			" Note: In the following 2 arrays, an index of 1 corresponds to the
+			" first non-default color.
+			let b:txtfmt_{rgn.long}_namepat{i} = namepat
+			let b:txtfmt_{rgn.long}{i} = clr_rhs
+		endfor
+	endfor
+	" Now that the color configuration is completely determined (and loaded
+	" into b:txtfmt_clr/bgc/sqc{} (as applicable)), determine the 'uniqueness
+	" index' for this color configuration. The uniqueness index is used to
+	" ensure that each color configuration has its own set of syntax groups.
+	" TODO_BG: Is the _cfg_ infix appropriate for such variables? For now, I'm
+	" using it only for option vars (with one exception that needs looking at)
+	let b:txtfmt_color_uniq_idx = s:Get_color_uniq_idx()
+endfu
+
+" FIXME_SQUIGGLE: Get rid of this...
+fu! s:Process_color_options_orig()
 	let arrname{0} = 'b:txtfmtBgcolor'
 	let arrname{1} = 'g:txtfmtBgcolor'
 	let arrname{2} = 'b:txtfmtColor'
@@ -1074,6 +1173,7 @@ fu! s:Process_color_options()
 	let arr_beg{1} = 0
 	let arr_end{1} = 4
 	" Determine arrays that don't apply to fg color
+	" FIXME_SQUIGGLE: Are the skip arrays actually needed?
 	let skip{0}_{0} = 1
 	let skip{0}_{1} = 1
 	let skip{0}_{2} = 0
@@ -1245,6 +1345,8 @@ fu! s:Process_txtfmt_modeline(line)
 		let optv = substitute(optstr, re_opt, '\4', '')
 		" Remove the option about to be processed from head of opt str
 		let optstr = substitute(optstr, re_opt, '\5', '')
+		" FIXME_SQUIGGLE: This *really* needs refactor now! Vim 7+, colored
+		" undercurl, etc. has really made it look ugly.
 		" IMPORTANT TODO: The following if/else needs major refactoring to
 		" avoid duplication. There are ways of doing this that require far
 		" less brute-force. I'm saving it for a subsequent release to mitigate
@@ -1270,7 +1372,7 @@ fu! s:Process_txtfmt_modeline(line)
 					" unlet *only* at the top of Set_tokrange; thus, we can
 					" assume they will be valid here.
 					let optv = s:txtfmt_ml_new_starttok
-						\.b:txtfmt_const_tokrange_suffix_{b:txtfmt_cfg_bgcolor}{b:txtfmt_cfg_longformats}{b:txtfmt_cfg_undercurl}
+						\.b:txtfmt_const_tokrange_suffix_{b:txtfmt_cfg_bgcolor}{b:txtfmt_cfg_sqcolor}{b:txtfmt_cfg_longformats}
 					" Record fact that change was made
 					unlet s:txtfmt_ml_new_starttok
 					let line_changed = 1
@@ -1331,6 +1433,19 @@ fu! s:Process_txtfmt_modeline(line)
 				let ret_val = -1
 			else
 				let b:txtfmt_cfg_bgcolormask = optv
+			endif
+		elseif optn == 'sqcolormask' || optn == 'sqm'
+			if !has_eq
+				let s:err_str = "Value required for non-boolean txtfmt option 'sqcolormask'"
+				let b:txtfmt_cfg_sqcolormask = ''
+				let ret_val = -1
+			elseif !s:Clrmask_is_valid(optv)
+				" Invalid number of colors
+				let s:err_str = "Invalid squiggle (undercurl) color mask - must be string of 8 ones and zeroes"
+				let b:txtfmt_cfg_sqcolormask = ''
+				let ret_val = -1
+			else
+				let b:txtfmt_cfg_sqcolormask = optv
 			endif
 		elseif optn == 'sync'
 			"format: sync={<hex>|<dec>|fromstart|none}
@@ -1574,13 +1689,14 @@ fu! s:Do_txtfmt_modeline()
 		" TODO: Decide whether it matters that this strategy will put a
 		" useless space at end of modeline in the unlikely event that the
 		" original modeline contained no options
-		" Assumption: b:txtfmt_cfg_bgcolor, b:txtfmt_cfg_longformats, and
-		" b:txtfmt_cfg_undercurl are unlet *only* at the top of Set_tokrange;
-		" thus, we can assume they will be valid here.
+		" Assumption: b:txtfmt_cfg_bgcolor, b:txtfmt_cfg_sqcolor,
+		" b:txtfmt_cfg_longformats, and b:txtfmt_cfg_undercurl are unlet
+		" *only* at the top of Set_tokrange; thus, we can assume they will be
+		" valid here.
 		let l:ml_new_opts = l:ml_new_opts
 			\.'tokrange='
 			\.s:txtfmt_ml_new_starttok
-			\.b:txtfmt_const_tokrange_suffix_{b:txtfmt_cfg_bgcolor}{b:txtfmt_cfg_longformats}{b:txtfmt_cfg_undercurl}
+			\.b:txtfmt_const_tokrange_suffix_{b:txtfmt_cfg_bgcolor}{b:txtfmt_cfg_sqcolor}{b:txtfmt_cfg_longformats}
 			\.' '
 	endif
 	" Any additional requests would go here
@@ -1661,11 +1777,14 @@ endfu
 fu! s:Process_clr_masks()
 	" Loop over fg, bg and sq
 	" FIXME! Bring this up to v7 code level.
+	" FIXME_SQUIGGLE: In other places, I process only *used* region types? Why
+	" the inconsistency? Do we need the indirection array for unused region
+	" types??? If not, harmonize...
 	let fgbgsq_idx = 0
 	let fg_bg_sq{0} = 'fg'
 	let fg_bg_sq{1} = 'bg'
 	let fg_bg_sq{2} = 'sq'
-	while fgbgsq_idx < 2
+	while fgbgsq_idx < 3
 		" Cache the mask to be processed
 		let mask = b:txtfmt_cfg_{fg_bg_sq{fgbgsq_idx}}colormask
 		" Note: To be on the safe side, I'm going to zero the bg color mask
@@ -1794,18 +1913,17 @@ fu! s:Define_fmtclr_vars()
 	let s:txtfmt_clr{8} = '^w\\%[hite]$,c:White,g:#FFFFFF'
 	" Note: The following variable indicates the total number of colors
 	" possible, including 'no color', which is not in the txtfmt_clr array.
-	" TODO: See how this is used to see how to use numfgcolors and numbgcolors...
+	" TODO: See how this is used to see how to use numfg/bg/sqcolors...
 	let b:txtfmt_num_colors = 9
 	" >>>
 	" Set fmt/clr specific values for convenience
+	" FIXME_SQUIGGLE: These should be converted to dictionaries.
 	" txtfmt_<rgn>_first_tok:      1st (default) token
 	" txtfmt_<rgn>_last_tok:       last (reserved) token
-	" txtfmt_last_tok:             last token that could be used (if
-	"                              txtfmt_cfg_numbgcolors is applicable,
-	"                              assumes it to be 8)
-	" TODO NOTE - If desired, could allow the fmt/clr ranges to be split, in
-	" which case, the following 2 would be user-configurable. For now, just
-	" base them on txtfmtStarttok.
+	" txtfmt_last_tok:             last token overall
+	" TODO NOTE - If desired, could allow the fmt/clr/bgc/sqc ranges to be
+	" split, in which case, the following 2 would be user-configurable. For
+	" now, just base them on txtfmtStarttok.
 	" TODO: Decide whether to keep this here or move outside this function
 	call s:Process_clr_masks()
 	" Save some useful char codes
@@ -1822,6 +1940,7 @@ fu! s:Define_fmtclr_vars()
 	" for both 'longformats' and 'undercurl' args to s:Get_tokrange_size(),
 	" though the latter is unused when either bgcolor or sqcolor is set.
 	let lf_reserved = b:txtfmt_cfg_longformats || !b:txtfmt_cfg_pack ? 1 : 0
+	" FIXME_SQUIGGLE: No reason not to parameterize the following.
 	" Background color
 	if b:txtfmt_cfg_bgcolor
 		let b:txtfmt_bgc_first_tok = b:txtfmt_cfg_starttok +
@@ -1829,7 +1948,6 @@ fu! s:Define_fmtclr_vars()
 		let b:txtfmt_bgc_last_tok = b:txtfmt_bgc_first_tok + b:txtfmt_num_colors - 1
 		let b:txtfmt_last_tok = b:txtfmt_bgc_last_tok
 	else
-		" nothing after the fmt range
 		let b:txtfmt_bgc_first_tok = -1
 		let b:txtfmt_bgc_last_tok = -1
 	endif
@@ -1840,7 +1958,6 @@ fu! s:Define_fmtclr_vars()
 		let b:txtfmt_sqc_last_tok = b:txtfmt_sqc_first_tok + b:txtfmt_num_colors - 1
 		let b:txtfmt_last_tok = b:txtfmt_sqc_last_tok
 	else
-		" nothing after the fmt range
 		let b:txtfmt_sqc_first_tok = -1
 		let b:txtfmt_sqc_last_tok = -1
 	endif
@@ -1848,90 +1965,86 @@ fu! s:Define_fmtclr_vars()
 endfu
 " >>>
 " Function: s:Define_fmtclr_regexes() <<<
-" Purpose: Define regexes involving the special fmt/clr tokens.
+" Purpose: Define regexes involving the special fmt/clr/bgc/sqc tokens.
 " Assumption: The following variable(s) has been defined for the buffer:
 " b:txtfmt_cfg_starttok
 " Note: The start tok is user-configurable. Thus, this function should be
 " called only after processing options.
 fu! s:Define_fmtclr_regexes()
-	" Cache bgc enabled flag for subsequent tests
+	" Cache bgc/sqc enabled flags for subsequent tests
 	let bgc = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+	let sqc = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr = b:txtfmt_cfg_numfgcolors > 0
-	" 0 1 3 4 5 7 8
-	"   1 3 4 5 7 8
-	let fgbg_idx = 0
-	let clr_or_bgc{0} = 'clr' | let fg_or_bg{0} = 'fg'
-	let clr_or_bgc{1} = 'bgc' | let fg_or_bg{1} = 'bg'
-	while fgbg_idx < 2
-		if b:txtfmt_cfg_num{fg_or_bg{fgbg_idx}}colors
-			" Note: Handle first active color here, outside the loop. To handle it
-			" inside the loop, I would need to initialize tok_cnt to 0 and tok_i
-			" to -1 and handle tok_i == -1 specially within the loop. (tok_i == -1
-			" indicates that we don't have the potential beginning of a range)
-			let tok_i = b:txtfmt_cfg_{fg_or_bg{fgbg_idx}}color{1}
-			let tok_cnt = 1
-			let i = 2 " first active color already accounted for
-			" Initialize regex string to be built within loop
-			let b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_stok_atom = ''
-			" Loop over active colors (and one fictitious element past end of
-			" array). Note that first active color was handled in initializations.
-			while i <= b:txtfmt_cfg_num{fg_or_bg{fgbg_idx}}colors + 1
-				" We know something is ending (atom or range) if any of the
-				" following conditions is true:
-				" -We're on the non-existent element one past end of active color
-				"  array
-				" -The current active color index is not 1 greater than the last
-				" TODO_BG: Can't compare with tok_i + 1 since tok_i isn't
-				" updated through range.
-				if i >= b:txtfmt_cfg_num{fg_or_bg{fgbg_idx}}colors + 1 || (b:txtfmt_cfg_{fg_or_bg{fgbg_idx}}color{i} != tok_i + tok_cnt)
-					" Something is ending
-					if tok_cnt > 1
-						" Append range if more than 2 chars; otherwise, make
-						" it a double atom.
-						let b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_stok_atom = b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_stok_atom
-							\.nr2char(b:txtfmt_{clr_or_bgc{fgbg_idx}}_first_tok + tok_i)
-							\.(tok_cnt > 2 ? '-' : '')
-							\.nr2char(b:txtfmt_{clr_or_bgc{fgbg_idx}}_first_tok + tok_i + tok_cnt - 1)
-					else
-						" Append atom
-						let b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_stok_atom = b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_stok_atom
-							\.nr2char(b:txtfmt_{clr_or_bgc{fgbg_idx}}_first_tok + tok_i)
-					endif
-					" Start something new unless at end
-					if i <= b:txtfmt_cfg_num{fg_or_bg{fgbg_idx}}colors
-						let tok_cnt = 1
-						let tok_i = b:txtfmt_cfg_{fg_or_bg{fgbg_idx}}color{i}
-					endif
+
+	for rgn in TxtfmtCommon_Get_active_color_rgn_abbrevs()
+		" Note: Handle first active color here, outside the loop. To handle it
+		" inside the loop, I would need to initialize tok_cnt to 0 and tok_i
+		" to -1 and handle tok_i == -1 specially within the loop. (tok_i == -1
+		" indicates that we don't have the potential beginning of a range)
+		let tok_i = b:txtfmt_cfg_{rgn.short}color{1}
+		let tok_cnt = 1
+		let i = 2 " first active color already accounted for
+		" Initialize regex string to be built within loop
+		let b:txtfmt_re_{rgn.long}_stok_atom = ''
+		" Loop over active colors (and one fictitious element past end of
+		" array). Note that first active color was handled in initializations.
+		while i <= b:txtfmt_cfg_num{rgn.short}colors + 1
+			" We know something is ending (atom or range) if any of the
+			" following conditions is true:
+			" -We're on the non-existent element one past end of active color
+			"  array
+			" -The current active color index is not 1 greater than the last
+			" TODO_BG: Can't compare with tok_i + 1 since tok_i isn't
+			" updated through range.
+			if i >= b:txtfmt_cfg_num{rgn.short}colors + 1
+				\ || (b:txtfmt_cfg_{rgn.short}color{i} != tok_i + tok_cnt)
+				" Something is ending
+				if tok_cnt > 1
+					" Append range if more than 2 chars; otherwise, make
+					" it a double atom.
+					let b:txtfmt_re_{rgn.long}_stok_atom = b:txtfmt_re_{rgn.long}_stok_atom
+						\.nr2char(b:txtfmt_{rgn.long}_first_tok + tok_i)
+						\.(tok_cnt > 2 ? '-' : '')
+						\.nr2char(b:txtfmt_{rgn.long}_first_tok + tok_i + tok_cnt - 1)
 				else
-					" Nothing is ending - record continuation
-					let tok_cnt = tok_cnt + 1
+					" Append atom
+					let b:txtfmt_re_{rgn.long}_stok_atom = b:txtfmt_re_{rgn.long}_stok_atom
+						\.nr2char(b:txtfmt_{rgn.long}_first_tok + tok_i)
 				endif
-				let i = i + 1
-			endwhile
-			" Create the _tok_ version from the _stok_ version by prepending
-			" default (end) token
-			" Decision Needed: Do I want to create tok this way, or would it be
-			" better to gain a slight bit of highlighting efficiency in some cases
-			" by putting the default tok into a range if possible.
-			" Note: I'm leaning against this optimization. Consider that it would
-			" be possible only for color configurations in which the first color
-			" is active; hence, if there were any speed difference in the
-			" highlighting (and a significant one is doubtful in my opinion), it
-			" would depend upon the specific color masks, which seems inconsistent
-			" and therefore inappropriate.
-			let b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_tok_atom =
-				\ nr2char(b:txtfmt_{clr_or_bgc{fgbg_idx}}_first_tok)
-				\ . b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_stok_atom
-			let b:txtfmt_re_{clr_or_bgc{fgbg_idx}}_etok_atom =
-				\ nr2char(b:txtfmt_{clr_or_bgc{fgbg_idx}}_first_tok)
-		endif
-		let fgbg_idx = fgbg_idx + 1
-	endwhile
+				" Start something new unless at end
+				if i <= b:txtfmt_cfg_num{rgn.short}colors
+					let tok_cnt = 1
+					let tok_i = b:txtfmt_cfg_{rgn.short}color{i}
+				endif
+			else
+				" Nothing is ending - record continuation
+				let tok_cnt = tok_cnt + 1
+			endif
+			let i = i + 1
+		endwhile
+		" Create the _tok_ version from the _stok_ version by prepending
+		" default (end) token
+		" Decision Needed: Do I want to create tok this way, or would it be
+		" better to gain a slight bit of highlighting efficiency in some cases
+		" by putting the default tok into a range if possible.
+		" Note: I'm leaning against this optimization. Consider that it would
+		" be possible only for color configurations in which the first color
+		" is active; hence, if there were any speed difference in the
+		" highlighting (and a significant one is doubtful in my opinion), it
+		" would depend upon the specific color masks, which seems inconsistent
+		" and therefore inappropriate.
+		let b:txtfmt_re_{rgn.long}_tok_atom =
+			\ nr2char(b:txtfmt_{rgn.long}_first_tok)
+			\ . b:txtfmt_re_{rgn.long}_stok_atom
+		let b:txtfmt_re_{rgn.long}_etok_atom =
+			\ nr2char(b:txtfmt_{rgn.long}_first_tok)
+	endfor
 	" Format region tokens
 	let b:txtfmt_re_fmt_tok_atom = nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
 	let b:txtfmt_re_fmt_stok_atom = nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
 	let b:txtfmt_re_fmt_etok_atom = nr2char(b:txtfmt_fmt_first_tok)
 	" Color regions that include inactive colors
+	" FIXME_SQUIGGLE: No reason not to parameterize the following.
 	if clr
 		let b:txtfmt_re_CLR_tok_atom = nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok)
 		let b:txtfmt_re_CLR_stok_atom = nr2char(b:txtfmt_clr_first_tok + 1).'-'.nr2char(b:txtfmt_clr_last_tok)
@@ -1942,25 +2055,34 @@ fu! s:Define_fmtclr_regexes()
 		let b:txtfmt_re_BGC_stok_atom = nr2char(b:txtfmt_bgc_first_tok + 1).'-'.nr2char(b:txtfmt_bgc_last_tok)
 		let b:txtfmt_re_BGC_etok_atom = nr2char(b:txtfmt_bgc_first_tok)
 	endif
+	if sqc
+		let b:txtfmt_re_BGC_tok_atom = nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok)
+		let b:txtfmt_re_BGC_stok_atom = nr2char(b:txtfmt_sqc_first_tok + 1).'-'.nr2char(b:txtfmt_sqc_last_tok)
+		let b:txtfmt_re_BGC_etok_atom = nr2char(b:txtfmt_sqc_first_tok)
+	endif
 	" Combined regions
 	let b:txtfmt_re_any_tok_atom =
 				\(clr ? b:txtfmt_re_clr_tok_atom : '')
 				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
 				\.(bgc ? b:txtfmt_re_bgc_tok_atom : '')
+				\.(sqc ? b:txtfmt_re_sqc_tok_atom : '')
 	" TODO: Perhaps get rid of dependence upon b:txtfmt_clr_last_tok?
 	" TODO: Refactor to use newly-created CLR and BGC atoms
 	let b:txtfmt_re_ANY_tok_atom =
 				\(clr ? nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok) : '')
 				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
 				\.(bgc ? nr2char(b:txtfmt_bgc_first_tok).'-'.nr2char(b:txtfmt_bgc_last_tok) : '')
+				\.(sqc ? nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok) : '')
 	let b:txtfmt_re_any_stok_atom =
 				\(clr ? b:txtfmt_re_clr_stok_atom : '')
 				\.nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
 				\.(bgc ? b:txtfmt_re_bgc_stok_atom : '')
+				\.(sqc ? b:txtfmt_re_sqc_stok_atom : '')
 	let b:txtfmt_re_any_etok_atom =
 				\(clr ? b:txtfmt_re_clr_etok_atom : '')
 				\.b:txtfmt_re_fmt_etok_atom
 				\.(bgc ? b:txtfmt_re_bgc_etok_atom : '')
+				\.(sqc ? b:txtfmt_re_sqc_etok_atom : '')
 
 	if b:txtfmt_cfg_escape == 'bslash'
 		" The following pattern is a zero-width look-behind assertion, which
@@ -1971,6 +2093,7 @@ fu! s:Define_fmtclr_regexes()
 		let noesc = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
 		" Make this persistent, as it's used elsewhere...
 		let b:re_no_bslash_esc = noesc
+		" FIXME_SQUIGGLE: No reason not to parameterize the following.
 		" clr
 		if clr
 			" Active clr only
@@ -1997,12 +2120,25 @@ fu! s:Define_fmtclr_regexes()
 			let b:txtfmt_re_BGC_etok = noesc.b:txtfmt_re_BGC_etok_atom
 			let b:txtfmt_re_BGC_ntok = '\%('.b:txtfmt_re_BGC_tok.'\)\@!.'
 		endif
+		" sqc
+		if sqc
+			" Active sqc only
+			let b:txtfmt_re_sqc_tok = noesc.'['.b:txtfmt_re_sqc_tok_atom.']'
+			let b:txtfmt_re_sqc_stok = noesc.'['.b:txtfmt_re_sqc_stok_atom.']'
+			let b:txtfmt_re_sqc_etok = noesc.b:txtfmt_re_sqc_etok_atom
+			let b:txtfmt_re_sqc_ntok = '\%('.b:txtfmt_re_sqc_tok.'\)\@!.'
+			" Active and inactive sqc
+			let b:txtfmt_re_SQC_tok = noesc.'['.b:txtfmt_re_SQC_tok_atom.']'
+			let b:txtfmt_re_SQC_stok = noesc.'['.b:txtfmt_re_SQC_stok_atom.']'
+			let b:txtfmt_re_SQC_etok = noesc.b:txtfmt_re_SQC_etok_atom
+			let b:txtfmt_re_SQC_ntok = '\%('.b:txtfmt_re_SQC_tok.'\)\@!.'
+		endif
 		" fmt
 		let b:txtfmt_re_fmt_tok = noesc.'['.b:txtfmt_re_fmt_tok_atom.']'
 		let b:txtfmt_re_fmt_stok = noesc.'['.b:txtfmt_re_fmt_stok_atom.']'
 		let b:txtfmt_re_fmt_etok = noesc.b:txtfmt_re_fmt_etok_atom
 		let b:txtfmt_re_fmt_ntok = '\%('.b:txtfmt_re_fmt_tok.'\)\@!.'
-		" clr/bgc/fmt combined
+		" clr/bgc/sqc/fmt combined
 		let b:txtfmt_re_any_tok = noesc.'['.b:txtfmt_re_any_tok_atom.']'
 		let b:txtfmt_re_ANY_tok = noesc.'['.b:txtfmt_re_ANY_tok_atom.']'
 		let b:txtfmt_re_any_stok = noesc.'['.b:txtfmt_re_any_stok_atom.']'
@@ -2010,6 +2146,7 @@ fu! s:Define_fmtclr_regexes()
 					\ noesc.'['
 						\ . (clr ? b:txtfmt_re_clr_etok_atom : '')
 						\ . (bgc ? b:txtfmt_re_bgc_etok_atom : '')
+						\ . (sqc ? b:txtfmt_re_sqc_etok_atom : '')
 						\ . b:txtfmt_re_fmt_etok_atom
 					\ . ']'
 		let b:txtfmt_re_any_ntok = '\%('.b:txtfmt_re_any_tok.'\)\@!.'
@@ -2028,6 +2165,7 @@ fu! s:Define_fmtclr_regexes()
 		let g:tmp = tmpl
 		" Make this persistent, as it's used elsewhere...
 		let b:re_no_self_esc = tmpl
+		" FIXME_SQUIGGLE: No reason not to parameterize the following.
 		" clr
 		if clr
 			" Active clr only
@@ -2054,6 +2192,19 @@ fu! s:Define_fmtclr_regexes()
 			let b:txtfmt_re_BGC_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_BGC_etok_atom, '')
 			let b:txtfmt_re_BGC_ntok = '\%('.b:txtfmt_re_BGC_tok.'\)\@!.'
 		endif
+		" sqc
+		if sqc
+			" Active sqc only
+			let b:txtfmt_re_sqc_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_sqc_tok_atom.']', '')
+			let b:txtfmt_re_sqc_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_sqc_stok_atom.']', '')
+			let b:txtfmt_re_sqc_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_sqc_etok_atom, '')
+			let b:txtfmt_re_sqc_ntok = '\%('.b:txtfmt_re_sqc_tok.'\)\@!.'
+			" Active and inactive sqc
+			let b:txtfmt_re_SQC_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_SQC_tok_atom.']', '')
+			let b:txtfmt_re_SQC_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_SQC_stok_atom.']', '')
+			let b:txtfmt_re_SQC_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_SQC_etok_atom, '')
+			let b:txtfmt_re_SQC_ntok = '\%('.b:txtfmt_re_SQC_tok.'\)\@!.'
+		endif
 		" fmt
 		let b:txtfmt_re_fmt_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_fmt_tok_atom.']', '')
 		let b:txtfmt_re_fmt_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_fmt_stok_atom.']', '')
@@ -2067,11 +2218,13 @@ fu! s:Define_fmtclr_regexes()
 					\'['
 					\.(clr ? nr2char(b:txtfmt_clr_first_tok) : '')
 					\.(bgc ? nr2char(b:txtfmt_bgc_first_tok) : '')
+					\.(sqc ? nr2char(b:txtfmt_sqc_first_tok) : '')
 					\.nr2char(b:txtfmt_fmt_first_tok)
 					\.']', '')
 		let b:txtfmt_re_any_ntok = '\%('.b:txtfmt_re_any_tok.'\)\@!.'
 	else
 		" No escaping of tokens
+		" FIXME_SQUIGGLE: No reason not to parameterize the following.
 		" clr
 		if clr
 			" Active clr only
@@ -2098,6 +2251,19 @@ fu! s:Define_fmtclr_regexes()
 			let b:txtfmt_re_BGC_etok = b:txtfmt_re_BGC_etok_atom
 			let b:txtfmt_re_BGC_ntok = '[^'.b:txtfmt_re_BGC_tok_atom.']'
 		endif
+		" sqc
+		if sqc
+			" Active sqc only
+			let b:txtfmt_re_sqc_tok = '['.b:txtfmt_re_sqc_tok_atom.']'
+			let b:txtfmt_re_sqc_stok = '['.b:txtfmt_re_sqc_stok_atom.']'
+			let b:txtfmt_re_sqc_etok = b:txtfmt_re_sqc_etok_atom
+			let b:txtfmt_re_sqc_ntok = '[^'.b:txtfmt_re_sqc_tok_atom.']'
+			" Active and inactive sqc
+			let b:txtfmt_re_SQC_tok = '['.b:txtfmt_re_SQC_tok_atom.']'
+			let b:txtfmt_re_SQC_stok = '['.b:txtfmt_re_SQC_stok_atom.']'
+			let b:txtfmt_re_SQC_etok = b:txtfmt_re_SQC_etok_atom
+			let b:txtfmt_re_SQC_ntok = '[^'.b:txtfmt_re_SQC_tok_atom.']'
+		endif
 		" fmt
 		let b:txtfmt_re_fmt_tok = '['.b:txtfmt_re_fmt_tok_atom.']'
 		let b:txtfmt_re_fmt_stok = '['.b:txtfmt_re_fmt_stok_atom.']'
@@ -2111,12 +2277,14 @@ fu! s:Define_fmtclr_regexes()
 					\'['
 					\.(clr ? b:txtfmt_re_clr_etok_atom : '')
 					\.(bgc ? b:txtfmt_re_bgc_etok_atom : '')
+					\.(sqc ? b:txtfmt_re_sqc_etok_atom : '')
 					\.b:txtfmt_re_fmt_etok_atom
 					\.']'
 		let b:txtfmt_re_any_ntok =
 					\'[^'
 					\.(clr ? b:txtfmt_re_clr_tok_atom : '')
 					\.(bgc ? b:txtfmt_re_bgc_tok_atom : '')
+					\.(sqc ? b:txtfmt_re_sqc_tok_atom : '')
 					\.b:txtfmt_re_fmt_tok_atom
 					\.']'
 	endif
@@ -2130,8 +2298,8 @@ fu! s:Do_config_common()
 	unlet! b:txtfmt_cfg_tokrange
 				\ b:txtfmt_cfg_sync b:txtfmt_cfg_escape
 				\ b:txtfmt_cfg_pack b:txtfmt_cfg_nested
-				\ b:txtfmt_cfg_numfgcolors b:txtfmt_cfg_numbgcolors
-				\ b:txtfmt_cfg_fgcolormask b:txtfmt_cfg_bgcolormask
+				\ b:txtfmt_cfg_numfgcolors b:txtfmt_cfg_numbgcolors b:txtfmt_cfg_numsqcolors
+				\ b:txtfmt_cfg_fgcolormask b:txtfmt_cfg_bgcolormask b:txtfmt_cfg_sqcolormask
 				\ b:txtfmt_cfg_undercurlpref b:txtfmt_cfg_conceal
 				\ b:txtfmt_cfg_concealcursor b:txtfmt_cfg_concealcursor_invalid
 				\ b:txtfmt_cfg_leadingindent
@@ -2346,108 +2514,81 @@ fu! s:Do_config_common()
 	" within modeline, there is work yet to be done.
 	call s:Set_tokrange()
 	" >>>
-	" 'fgcolormask' option <<<
-	if !exists('b:txtfmt_cfg_fgcolormask') || strlen(b:txtfmt_cfg_fgcolormask) == 0
-		" Either option wasn't set within modeline, or it was set to invalid
-		" value
-		unlet! l:bad_set_by
-		if exists('b:txtfmt_cfg_fgcolormask') && strlen(b:txtfmt_cfg_fgcolormask) == 0
-			" Bad modeline set
-			let l:bad_set_by = 'm'
-		elseif exists('b:txtfmtFgcolormask')
-			" User overrode buf-local option
-			if s:Clrmask_is_valid(b:txtfmtFgcolormask)
-				let b:txtfmt_cfg_fgcolormask = b:txtfmtFgcolormask
-			else
-				let l:bad_set_by = 'b'
+	" 'fg/bg/sqcolormask' options <<<
+	" FIXME_SQUIGGLE: Clean this up!!!
+	" FIXME_SQUIGGLE: Determine whether we really need to process inactive rgn
+	" types? This is the way it's always been done, but I suspect it's
+	" unnecessary.
+	for rgn in [
+		\ {'short': 'fg', 'capshort': 'Fg', 'long': 'clr'},
+		\ {'short': 'bg', 'capshort': 'Bg', 'long': 'bgc'},
+		\ {'short': 'sq', 'capshort': 'Sq', 'long': 'sqc'}]
+		if !exists('b:txtfmt_cfg_' . rgn.short . 'colormask')
+			\ || strlen(b:txtfmt_cfg_{rgn.short}colormask) == 0
+			" Either option wasn't set within modeline, or it was set to invalid
+			" value
+			unlet! l:bad_set_by
+			if exists('b:txtfmt_cfg_' . rgn.short . 'colormask')
+				\ && strlen(b:txtfmt_cfg_{rgn.short}colormask) == 0
+				" Bad modeline set
+				let l:bad_set_by = 'm'
+			elseif exists('b:txtfmt' . rgn.capshort . 'colormask')
+				" User overrode buf-local option
+				if s:Clrmask_is_valid(b:txtfmtBgcolormask)
+					let b:txtfmt_cfg_{rgn.short}colormask = b:txtfmtBgcolormask
+				else
+					let l:bad_set_by = 'b'
+				endif
+			elseif exists('g:txtfmt' . rgn.capshort . 'colormask')
+				" User overrode global option
+				if s:Clrmask_is_valid(g:txtfmt{rgn.capshort}colormask)
+					let b:txtfmt_cfg_{rgn.short}colormask = g:txtfmt{rgn.capshort}colormask
+				else
+					let l:bad_set_by = 'g'
+				endif
 			endif
-		elseif exists('g:txtfmtFgcolormask')
-			" User overrode global option
-			if s:Clrmask_is_valid(g:txtfmtFgcolormask)
-				let b:txtfmt_cfg_fgcolormask = g:txtfmtFgcolormask
-			else
-				let l:bad_set_by = 'g'
+			" Warn user if invalid user-setting is about to be overridden
+			if exists('l:bad_set_by')
+				" Note: Display the offending option value for buf-local or global
+				" option, but not for modeline, since modeline processing has
+				" already reported the error.
+				echoerr "Warning: Ignoring invalid ".(
+					\ l:bad_set_by == 'm' ? "modeline" :
+					\ l:bad_set_by == 'b' ? "buf-local" :
+					\ "global") . " value for txtfmt `" . rgn.short . "colormask' option" . (
+					\ l:bad_set_by == 'm' ? '' :
+					\ l:bad_set_by == 'b' ? (': ' . b:txtfmt{rgn.capshort}colormask) :
+					\ (': ' . g:txtfmt{rgn.capshort}colormask))
 			endif
-		endif
-		" Warn user if invalid user-setting is about to be overridden
-		if exists('l:bad_set_by')
-			" Note: Display the offending option value for buf-local or global
-			" option, but not for modeline, since modeline processing has
-			" already reported the error.
-			echoerr "Warning: Ignoring invalid ".(
-				\ l:bad_set_by == 'm' ? "modeline" :
-				\ l:bad_set_by == 'b' ? "buf-local" :
-				\ "global") . " value for txtfmt `fgcolormask' option" . (
-				\ l:bad_set_by == 'm' ? '' :
-				\ l:bad_set_by == 'b' ? (': ' . b:txtfmtFgcolormask) :
-				\ (': ' . g:txtfmtFgcolormask))
-		endif
-		if !exists('b:txtfmt_cfg_fgcolormask') || strlen(b:txtfmt_cfg_fgcolormask) == 0
-			" Set to default - all foreground colors active (for backward
-			" compatibility)
-			" TODO: Don't hardcode
-			let b:txtfmt_cfg_fgcolormask = '11111111'
-		endif
-	endif
-	" >>>
-	" 'bgcolormask' option <<<
-	if !exists('b:txtfmt_cfg_bgcolormask') || strlen(b:txtfmt_cfg_bgcolormask) == 0
-		" Either option wasn't set within modeline, or it was set to invalid
-		" value
-		unlet! l:bad_set_by
-		if exists('b:txtfmt_cfg_bgcolormask') && strlen(b:txtfmt_cfg_bgcolormask) == 0
-			" Bad modeline set
-			let l:bad_set_by = 'm'
-		elseif exists('b:txtfmtBgcolormask')
-			" User overrode buf-local option
-			if s:Clrmask_is_valid(b:txtfmtBgcolormask)
-				let b:txtfmt_cfg_bgcolormask = b:txtfmtBgcolormask
-			else
-				let l:bad_set_by = 'b'
-			endif
-		elseif exists('g:txtfmtBgcolormask')
-			" User overrode global option
-			if s:Clrmask_is_valid(g:txtfmtBgcolormask)
-				let b:txtfmt_cfg_bgcolormask = g:txtfmtBgcolormask
-			else
-				let l:bad_set_by = 'g'
-			endif
-		endif
-		" Warn user if invalid user-setting is about to be overridden
-		if exists('l:bad_set_by')
-			" Note: Display the offending option value for buf-local or global
-			" option, but not for modeline, since modeline processing has
-			" already reported the error.
-			echoerr "Warning: Ignoring invalid ".(
-				\ l:bad_set_by == 'm' ? "modeline" :
-				\ l:bad_set_by == 'b' ? "buf-local" :
-				\ "global") . " value for txtfmt `bgcolormask' option" . (
-				\ l:bad_set_by == 'm' ? '' :
-				\ l:bad_set_by == 'b' ? (': ' . b:txtfmtBgcolormask) :
-				\ (': ' . g:txtfmtBgcolormask))
-		endif
-		if !exists('b:txtfmt_cfg_bgcolormask') || strlen(b:txtfmt_cfg_bgcolormask) == 0
-			" Set to default of red, green and blue if background colors are
-			" active; otherwise, disable all colors.
-			" TODO_BG: Decide whether it makes sense to unlet the variable
-			" completely.
-			" TODO_BG: b:txtfmt_cfg_bgcolor is probably not set yet!!!! This
-			" needs to be moved till after Set_tokrange
-			if b:txtfmt_cfg_bgcolor
-				" TODO: Don't hardcode
-				let b:txtfmt_cfg_bgcolormask = '01101000'
-			else
-				" No background color supported
-				let b:txtfmt_cfg_bgcolormask = '00000000'
+			if !exists('b:txtfmt_cfg_' . rgn.short . 'colormask')
+				\ || strlen(b:txtfmt_cfg_{rgn.short}colormask) == 0
+				if rgn.short == 'fg'
+					" Set to default - all foreground colors active (for
+					" backward compatibility)
+					" TODO: Don't hardcode
+					let b:txtfmt_cfg_xxcolormask = '11111111'
+				else
+					" Set to default of red, green and blue if bg/sq colors
+					" are active; otherwise, disable all colors.
+					" TODO_BG: Decide whether it makes sense to unlet the variable
+					" completely.
+					if b:txtfmt_cfg_{rgn.short}color
+						" TODO: Don't hardcode
+						let b:txtfmt_cfg_{rgn.short}colormask = '01101000'
+					else
+						" No background color supported
+						let b:txtfmt_cfg_{rgn.short}colormask = '00000000'
+					endif
+				endif
 			endif
 		endif
-	endif
-	" Force mask to all zeroes if background colors are disabled.
-	" Assumption: Set_tokrange has already run; thus, b:txtfmt_cfg_bgcolor has
-	" been set.
-	if !b:txtfmt_cfg_bgcolor
-		let b:txtfmt_cfg_bgcolormask = '00000000'
-	endif
+		" Force mask to all zeroes if bg/sq colors are disabled.
+		" Assumption: Set_tokrange has already run; thus,
+		" b:txtfmt_cfg_bg/sqcolor have been set.
+		if rgn.short != 'fg' && !b:txtfmt_cfg_{rgn.short}color
+			let b:txtfmt_cfg_{rgn.short}colormask = '00000000'
+		endif
+	endfor
 	" >>>
 	" 'sync' option <<<
 	" Note: 'syncmethod' and 'synclines' are distinct options internally, but
@@ -2714,6 +2855,8 @@ endfu
 " re-sourced. This leads to E127 'Cannot redefine function' when fu[!] is
 " encountered, since the function is in the process of executing.
 if !exists('*s:MakeTestPage')
+" FIXME_SQUIGGLE: Hold off on this purely cosmetic function until I've gotten
+" colored undercurl basically working.
 fu! s:MakeTestPage(...)
 	if a:0 == 1
 		" User provided optional modeline arguments. Before opening scratch
