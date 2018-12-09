@@ -456,9 +456,13 @@ fu! s:Sort_rgn_types(a, b)
 		return b == 'fmt' ? -1 : b == 'clr' ? 1 : -1
 	elseif a == 'sqc'
 		return b == 'fmt' ? -1 : b == 'clr' ? 1 : 1
+	endif
 endfu
 " States: 0=empty, 1=expr, 2=literal
 " FIXME_COMBINATIONS: Add constructor initialization.
+" FIXME_SQUIGGLE: Make_exe_builder is called inside loops: I have a feeling
+" VimL re-compiles the inner functions over and over. Change this!!!!! The
+" whole point of the exe builder was speed...
 fu! s:Make_exe_builder()
 	let o = {'st': 0, 'st_beg': 0, 's': ''}
 	" Add list of deferred exprs and const separator.
@@ -910,8 +914,9 @@ fu! s:Define_syntax()
 "<<<<<<< HEAD
 "=======
 " FIXME REBASE!!!! This commented segment is from the old undercurl branch.
-" The sidxs array doesn't appear to be used in the refactored syntax engine,
-" but I'm keeping it here till commented till I've had a chance to analyze...
+" The sidxs array wasn't used in the refactored syntax engine, but I'm keeping
+" it here (after rebase of colored_undercurl onto master) till I've had a
+" chance to analyze its usage...
 			" Note: dict attribute is used simply to allow us to pass data to
 			" the sort function (since VimL has no closures). Alternatively,
 			" could make a singleton object.
@@ -1119,8 +1124,13 @@ fu! s:Define_syntax()
 			call hi_xb.add('hi ', 1)
 			call hi_xb.add(rgn_name_xb)
 			for idx in range(iord + 1)
-				call hi_xb.add(eq_{rgns[idx]}, 1)
-				call hi_xb.add('b:txtfmt_{rgns[' . idx . ']}{offs[' . idx . ']} ')
+				let sidx = sidxs[idx]
+				call hi_xb.add(eq_{rgns[sidx]}, 1)
+				" FIXME_SQUIGGLE: Need to set fmt undercurl attribute. Figure
+				" out what the previous sentence means; also, figure out why
+				" the idx->sidx translation is needed. (Comment added while
+				" fixing rebase conflict after a long hiatus.)
+				call hi_xb.add('b:txtfmt_{rgns[' . sidx . ']}{offs[' . sidx . ']} ')
 			endfor
 			let rgn2_xb = s:Make_exe_builder()
 			if iord < num_rgn_typs - 1
@@ -1143,6 +1153,17 @@ fu! s:Define_syntax()
 			let cls_all_estr = cls_all_xb.get_estr()
 			let rgn1_estr = rgn1_xb.get_estr()
 			let hi_estr = hi_xb.get_estr()
+			" FIXME_SQUIGGLE: This is a short-term hack!!!!!!!
+			if hi_estr =~ 'sp='
+				" Make sure there's a gui= containing undercurl
+				if hi_estr !~ '\v<(gui|cterm)='
+					let hi_estr .= " . ' gui=undercurl cterm=undercurl'"
+				else
+					let hi_estr = substitute(hi_estr,
+						\ '\v%(gui|cterm)\=', '&undercurl,', 'g')
+				endif
+			endif
+			" END SHORT-TERM HACK!!!!!
 			let rgn2_estr = rgn2_xb.get_estr()
 			"let profs['cmn'] += str2float(reltimestr(reltime(ts)))
 			"let ts = reltime()
