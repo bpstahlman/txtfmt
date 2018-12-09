@@ -2079,7 +2079,7 @@ fu! s:Translate_fmt_clr_spec(spec)
 		let s:err_str = 'Empty fmt/clr spec: ' . t . ' must be followed by something.'
 		return ''
 	endif
-	" If here, we don't have (illegal) bare f/c/k.
+	" If here, we don't have (illegal) bare f/c/k/u.
 	" Permit (and ignore) a single `=' following type.
 	if s[0] == '='
 		" Note: After this point, empty(s) is valid default indication.
@@ -2091,7 +2091,7 @@ fu! s:Translate_fmt_clr_spec(spec)
 			" Oops! Background colors aren't active.
 			let s:err_str = "The current 'tokrange' setting does not support background colors."
 				\." (:help txtfmt-formats)"
-		if t ==? 'u'
+		elseif t ==? 'u'
 			" Oops! Colored squiggle isn't active.
 			let s:err_str = "The current 'tokrange' setting does not support colored undercurl."
 				\." (:help txtfmt-formats)"
@@ -2311,6 +2311,8 @@ fu! s:Get_cur_rgn_info()
 	let re_ftr = '\%(_rtd\)'
 	" Construct a regex to match a highlighted region of the following form:
 	" Tf<idx>_<rgn>[<rgn> ...]_<num>[_<num> ...][_rtd]
+	" FIXME_SQUIGGLE: Add one more component. Actually, I think this regex can
+	" be simplified - just check for 1-4 occurrences of fmt|clr|bgc|sqc
 	let re = '^' . re_hdr . '\%(\(' . re_rgn . '\)\%(\(' . re_rgn . '\)\(' . re_rgn . '\)\?\)\?\)'
 		\. '\%(_\(' . re_num . '\)\%(_\(' . re_num . '\)\%(_\(' . re_num . '\)\)\?\)\?\)'
 		\. re_ftr . '\?$'
@@ -2405,7 +2407,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	" component can be caused only by comma; accordingly, the \ze\S is
 	" superfluous.
 	let re_sep = '\s*,\s*\|\s\+'
-	let fcks = split(specs, re_sep, 1)
+	let fckus = split(specs, re_sep, 1)
 	" Loop over the f/c/k/u components
 	for spec in fckus
 		if empty(spec)
@@ -2473,7 +2475,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 					let rgns.fmt = masks['=']
 				endif
 			endif
-		elseif t == '[cku]' " Assumption: t is always single char
+		elseif t =~ '[cku]' " Assumption: t is always single char
 			" FIXME_SQUIGGLE: Create parameterized mechanisms for dealing with
 			" some of this, to avoid spewing it around the codebase.
 			if t == 'k' && !b:txtfmt_cfg_bgcolor || t == 'u' && !b:txtfmt_cfg_sqcolor
@@ -3781,7 +3783,7 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 		return 1
 	elseif act_b == 'i'
 		return 1
-	elseif t_a.rgn != t_b.rgn
+	elseif a:t_a.rgn != a:t_b.rgn
 		" Ordering is inconsequential. Just be deterministic.
 		" (TODO - which way?)
 		return -1

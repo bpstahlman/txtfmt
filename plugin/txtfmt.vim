@@ -348,7 +348,7 @@ endfu
 " >>>
 " Configuration utility functions (common) <<<
 " Function: Get_active_color_rgn_abbrevs() <<<
-fu! s:TxtfmtCommon_Get_active_color_rgn_abbrevs()
+fu! TxtfmtCommon_Get_active_color_rgn_abbrevs()
 	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
 	let sqc_active = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr_active = b:txtfmt_cfg_numfgcolors > 0
@@ -398,13 +398,25 @@ endfu
 " 'tokrange' utility functions <<<
 " Construct pattern that will capture char code in \1 and optional size
 " specification (sSlLxX) in \2.
-if exists('g:txtfmtAllowxl') && g:txtfmtAllowxl
-	" Note: By default, XL suffix is illegal, but user has overridden the
-	" default
-	let s:re_tokrange_spec = '^\([1-9]\d*\|0x\x\+\)\(\%([sSlL]\|[xX][lL]\?\)\?\)$'
-else
-	let s:re_tokrange_spec = '^\([1-9]\d*\|0x\x\+\)\([sSlLxX]\?\)$'
-endif
+" S X L U
+" 1 0 0 0 (short formats always avail, this implies only shorts)
+" 0 0 0 1 (just squiggle and shorts)
+" 0 0 1 0 (long)
+" 0 0 1 1 (long with squiggle)
+" 0 1 0 0 (extended - old default)
+" 0 1 0 1 (extended with squiggle - should probably be new default)
+" 0 1 1 0 (XL is more expensive, less useful than XU)
+" 0 1 1 1 (XUL is the new XL)
+" S|U|L|X|LU|UL|XU|UX + |XL|LX|XLU|XUL|LUX|LXU|UXL|ULX
+" Note: By default, all suffix combinations containing XL are illegal, but
+" user can override with g:txtfmtAllowxl.
+" FIXME_SQUIGGLE: Need to rethink which possibilities are allowed!
+" TODO: Should we encode case-insensitivity here?
+let s:re_tokrange_spec = '^\c\v([1-9]\d*|0x\x+)('
+	\ . '%(S|U|L|X|LU|UL|XU|UX'
+	\ . (exists('g:txtfmtAllowxl') && g:txtfmtAllowxl
+	\    ? '|XL|LX|XLU|XUL|LUX|LXU|UXL|ULX' : '')
+	\ .	')?)$'
 
 " Function: s:Tokrange_is_valid() <<<
 " Purpose: Indicate whether input string is a valid tokrange spec.
@@ -491,6 +503,14 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 		endif
 		" Note: This is no longer legal!!!!
 		let b:txtfmt_cfg_formats_display = 'XL'
+	elseif formats_str ==? 'U'
+		" Short formats and colored undercurl
+		let b:txtfmt_cfg_bgcolor = 0
+		" Assumption: TODO: Option validation ensures we don't get here if undercurl not supported.
+		let b:txtfmt_cfg_sqcolor = 1
+		let b:txtfmt_cfg_longformats = 0
+		let b:txtfmt_cfg_undercurl = 0
+		let b:txtfmt_cfg_formats_display = 'U'
 	elseif formats_str ==? 'XU'
 		" Background colors with short formats and colored undercurl
 		let b:txtfmt_cfg_bgcolor = 1
@@ -501,6 +521,7 @@ fu! s:Tokrange_translate_tokrange(tokrange)
 		let b:txtfmt_cfg_formats_display = 'XU'
 	else
 		" Short formats
+		" FIXME_SQUIGGLE: Shouldn't this be explicit?
 		let b:txtfmt_cfg_bgcolor = 0
 		let b:txtfmt_cfg_sqcolor = 0
 		let b:txtfmt_cfg_longformats = 0
@@ -1005,7 +1026,7 @@ fu! s:Get_color_uniq_idx()
 			let s = s . b:txtfmt_{rgn.long}{i}."\<NL>"
 			let i += 1
 		endwhile
-	endwhile
+	endfor
 	" In the unlikely event that string is still empty, config is such that no
 	" colors are in use, in which case, we return an empty string, since no
 	" uniqueness index applies.
@@ -2056,9 +2077,9 @@ fu! s:Define_fmtclr_regexes()
 		let b:txtfmt_re_BGC_etok_atom = nr2char(b:txtfmt_bgc_first_tok)
 	endif
 	if sqc
-		let b:txtfmt_re_BGC_tok_atom = nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok)
-		let b:txtfmt_re_BGC_stok_atom = nr2char(b:txtfmt_sqc_first_tok + 1).'-'.nr2char(b:txtfmt_sqc_last_tok)
-		let b:txtfmt_re_BGC_etok_atom = nr2char(b:txtfmt_sqc_first_tok)
+		let b:txtfmt_re_SQC_tok_atom = nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok)
+		let b:txtfmt_re_SQC_stok_atom = nr2char(b:txtfmt_sqc_first_tok + 1).'-'.nr2char(b:txtfmt_sqc_last_tok)
+		let b:txtfmt_re_SQC_etok_atom = nr2char(b:txtfmt_sqc_first_tok)
 	endif
 	" Combined regions
 	let b:txtfmt_re_any_tok_atom =
@@ -2566,7 +2587,7 @@ fu! s:Do_config_common()
 					" Set to default - all foreground colors active (for
 					" backward compatibility)
 					" TODO: Don't hardcode
-					let b:txtfmt_cfg_xxcolormask = '11111111'
+					let b:txtfmt_cfg_fgcolormask = '11111111'
 				else
 					" Set to default of red, green and blue if bg/sq colors
 					" are active; otherwise, disable all colors.

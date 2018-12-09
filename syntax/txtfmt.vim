@@ -531,16 +531,20 @@ endfu
 " Achieve clr->bgc->sqc->fmt order required for highlight command.
 " Assumption: a and b will always be different.
 fu! s:Sort_rgn_types(a, b)
-	if a == 'clr'
+	if a:a == 'clr'
 		return -1
-	elseif a == 'fmt'
+	elseif a:a == 'fmt'
 		return 1
-	elseif a == 'bgc'
-		return b == 'fmt' ? -1 : b == 'clr' ? 1 : -1
-	elseif a == 'sqc'
-		return b == 'fmt' ? -1 : b == 'clr' ? 1 : 1
+	elseif a:a == 'bgc'
+		return a:b == 'fmt' ? -1 : a:b == 'clr' ? 1 : -1
+	elseif a:a == 'sqc'
+		return a:b == 'fmt' ? -1 : a:b == 'clr' ? 1 : 1
+	endif
 endfu
 " States: 0=empty, 1=expr, 2=literal
+" FIXME_SQUIGGLE: Make_exe_builder is called inside loops: I have a feeling
+" VimL re-compiles the inner functions over and over. Change this!!!!! The
+" whole point of the exe builder was speed...
 fu! s:Make_exe_builder()
 	let o = {'st': 0, 'st_beg': 0, 's': ''}
 	" Add list of deferred exprs and const separator.
@@ -1036,6 +1040,7 @@ fu! s:Define_syntax()
 			while idx <= iord
 				let sidx = sidxs[idx]
 				call hi_xb.add(eq_{rgns[sidx]}, 1)
+				" FIXME_SQUIGGLE: Need to set fmt undercurl attribute.
 				call hi_xb.add('b:txtfmt_{rgns[' . sidx . ']}{offs[' . sidx . ']} ')
 				let idx += 1
 			endwhile
@@ -1057,6 +1062,17 @@ fu! s:Define_syntax()
 			let cls_all_estr = cls_all_xb.get_estr()
 			let rgn1_estr = rgn1_xb.get_estr()
 			let hi_estr = hi_xb.get_estr()
+			" FIXME_SQUIGGLE: This is a short-term hack!!!!!!!
+			if hi_estr =~ 'sp='
+				" Make sure there's a gui= containing undercurl
+				if hi_estr !~ '\v<(gui|cterm)='
+					let hi_estr .= " . ' gui=undercurl cterm=undercurl'"
+				else
+					let hi_estr = substitute(hi_estr,
+						\ '\v%(gui|cterm)\=', '&undercurl,', 'g')
+				endif
+			endif
+			" END SHORT-TERM HACK!!!!!
 			let rgn2_estr = rgn2_xb.get_estr()
 			"let profs['cmn'] += str2float(reltimestr(reltime(ts)))
 			"let ts = reltime()
