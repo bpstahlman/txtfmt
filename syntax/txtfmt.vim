@@ -1156,7 +1156,7 @@ fu! s:Define_syntax()
 			" FIXME_SQUIGGLE: This is a short-term hack!!!!!!!
 			if hi_estr =~ 'sp='
 				" Make sure there's a gui= containing undercurl
-				if hi_estr !~ '\v<(gui|cterm)='
+				if hi_estr !~ '\v<(gui|cterm)\='
 					let hi_estr .= " . ' gui=undercurl cterm=undercurl'"
 				else
 					let hi_estr = substitute(hi_estr,
