@@ -187,14 +187,14 @@ fu! s:Get_tokrange_size(bgcolor, sqcolor, longformats, undercurl)
 	" is enabled.
 	let longformats = a:longformats || a:bgcolor && !b:txtfmt_cfg_pack
 	if a:sqcolor
-		let sz = 9 + (longformats ? 64 : 8) + 9 + 9
+		return 9 + (longformats ? 64 : 8) + 9 + 9
 	elseif a:bgcolor
-		let sz = 9 + (longformats ? 64 : 8) + 9
+		return 9 + (longformats ? 64 : 8) + 9
 	elseif longformats
 		" Nothing past long
-		let sz = 9 + (a:undercurl ? 64 : 32)
+		return 9 + (a:undercurl ? 64 : 32)
 	else
-		let sz = 17
+		return 17
 	endif
 endfu
 
