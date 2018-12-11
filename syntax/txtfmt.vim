@@ -685,6 +685,7 @@ fu! s:Define_syntax()
 	" Note: Currently, this cluster (to which bgc-specific groups may be added
 	" later) is used only in 'noconceal' case: in 'conceal' case, it contains
 	" only Tf_tok, which is currently used in lieu of the cluster.
+	echo 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
 	exe 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
 	" Note: Omit 'contained', since Tf_tok is permitted at top level. But in
 	" the 'noconceal' case, use containedin=ALLBUT,<tok-cluster> to prevent a
@@ -733,6 +734,9 @@ fu! s:Define_syntax()
 			let i = b:txtfmt_cfg_bgcolor{pi}
 			exe 'syn match Tf'.cui.'_tok_'.i.' /['.b:txtfmt_re_any_tok_atom
 				\.']/ contained contains=Tf_li_tok'.conceal
+			" FIXME_SQUIGGLE: Are any changes required by addition of colored
+			" undercurl? The colored_undercurl branch didn't do anything for
+			" sqc, but need to analyze after fixing merge conflicts...
 			exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			" Note: Tf{cui}_tok name is fine since clusters/groups are in
 			" distinct namespaces.
@@ -851,6 +855,9 @@ fu! s:Define_syntax()
 	endif
 	let num_rgn_typs = len(rgn_info)
 	" >>>
+	" TEMP DEBUG ONLY
+	redir >~/tmp/syn.cmd
+	set nomore
 	" Loop over 'order' <<<
 	" Note: iord determines current 'order' (i.e., total # of rgn types involved
 	" in each region)
@@ -1189,13 +1196,19 @@ fu! s:Define_syntax()
 				"let profs['subst'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define regions.
+				echo eval(rgn1_estr)
 				exe eval(rgn1_estr)
 				if iord < num_rgn_typs - 1
+					echo eval(rgn2_estr)
 					exe eval(rgn2_estr)
 				endif
 				"let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define clusters.
+				" FIXME_UNDERCURL: Note: colored_undercurl branch didn't have
+				" cls_estrs[] array, so need to validate this loop after
+				" rebase conflict fix...
+				"exe eval(cls_estr)
 				for cls_estr in cls_estrs
 					exe eval(cls_estr)
 				endfor
@@ -1203,6 +1216,7 @@ fu! s:Define_syntax()
 				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define highlighting.
+				echo eval(hi_estr)
 				exe eval(hi_estr)
 				"let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 				"let profs['tpl-processing'] += str2float(reltimestr(reltime(ts1)))
@@ -1287,7 +1301,9 @@ fu! s:Define_syntax()
 		" even later, after surrounding regions have changed).
 		" Note: The outer esc pair must match only at top-level (or nested in
 		" non-txtfmt group): hence, unlike Tf_esc, it lacks 'contained' attr.
+		echo 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
 		exe 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
+		echo 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 		exe 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 		" Define highlighting for the outer and inner escape tokens
 		" Design Decision: In 'noconceal' case, these groups are needed to
@@ -1297,7 +1313,9 @@ fu! s:Define_syntax()
 		" that escapes be visible in that case; hence, I link the escape
 		" groups to Tf_conceal only in 'noconceal' case.
 		if !b:txtfmt_cfg_conceal
+			echo 'hi link Tf_outer_esc Tf_conceal'
 			hi link Tf_outer_esc Tf_conceal
+			echo 'hi link Tf_esc Tf_conceal'
 			hi link Tf_esc Tf_conceal
 		endif
 		" bgc-specific esc concealment groups are needed in both 'conceal' and
@@ -1311,18 +1329,25 @@ fu! s:Define_syntax()
 		" Note: To understand why we create regions for bgc but not (eg)
 		" underline, undercurl, etc., see rationale near creation of
 		" bgc-specific token concealment regions.
+		echo 'syn cluster Tf'.cui.'_esc add=Tf_esc'
 		exe 'syn cluster Tf'.cui.'_esc add=Tf_esc'
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
+			echo 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off
+				\ .' contained'.conceal
 			exe 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off
 				\ .' contained'.conceal
+			echo 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			exe 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
+			echo 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
 			exe 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
 			let pi = pi + 1
 		endwhile
 	endif
 	" >>>
+	" TEMP DEBUG ONLY
+	redir END
 endfu	" >>>
 " Function: s:Define_syntax_syncing() <<<
 fu! s:Define_syntax_syncing()
