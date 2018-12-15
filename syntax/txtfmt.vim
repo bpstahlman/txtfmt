@@ -611,6 +611,43 @@ fu! s:Make_exe_builder()
 	" Return object with encapsulated state.
 	return o
 endfu
+" Function: s:Get_rgn_combinations_r() <<<
+fu! s:Get_rgn_combinations_r(i, rem, rgns)
+	let i = a:i
+	" FIXME: Needs to be a list of list pairs
+	let ret = []
+	while i <= len(a:rgns) - a:rem
+		if a:rem == 1
+			" Base case
+			call add(ret, [[a:rgns[i]],
+				\ (i > a:i ? a:rgns[a:i : i - 1] : [])
+				\ + (i < len(a:rgns) - 1 ? a:rgns[i + 1 : ] : [])])
+		else
+			" Ooops! FIXME: Need to unzip this...
+			let children = Build_r(i + 1, a:rem - 1, a:rgns)
+			for child in children
+				call insert(child[0], a:rgns[i])
+				if i > a:i
+					call extend(child[1], a:rgns[a:i : i - 1])
+				endif
+				call add(ret, child)
+			endfor
+		endif
+		let i += 1
+	endwhile
+	return ret
+endfu
+" >>>
+" Function: s:Get_rgn_combinations() <<<
+" Takes a list of active rgns and a 1-based 'order' number, and builds a list
+" of order-preserving combinations (assuming input list is in fiducial order).
+" Note: Need to add ability to return both the pos and neg list: i.e., an
+" ordered list of the rgns involved in the combination, and a second list of
+" those that are *not* involved.
+fu! s:Get_rgn_combinations(rgns, order)
+	return Build_r(0, a:order, a:rgns)
+endfu
+" >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Cache some useful vars <<<
@@ -835,28 +872,26 @@ fu! s:Define_syntax()
 	" >>>
 	" Loop over 'order' <<<
 	" Note: iord determines current 'order' (i.e., total # of rgn types involved
-	" in each region); however, rotations within the nested loop below ensure
-	" that all permutations of rgn type will be processed for each order.
-	" Example: 
+	" in each region)
 	let iord = 0
 	let profs = {'all': 0, 'prelim': 0, 'ng-pre': 0, 'cmn': 0, 'subst': 0, 'tpl-processing': 0, 'jdx-update': 0, 'all-perms': 0, 'build-ng': 0, 'build-rgn-body': 0, 'syn-region': 0, 'build-highlight': 0, 'build-clusters': 0}
 	let ts_all = reltime()
 	while iord < num_rgn_typs
 		" Process current 'order'.
-		" TODO: Refactor this up higher if it's even still needed.
-		" Generate list of down-counting indices corresponding to each
-		" position past currently-used portion of rgn_info[]; used to
-		" determine when each rgn position should be rotated to end of rgns[].
-		let mods = range(num_rgn_typs, num_rgn_typs - iord, -1)
-		" Increment the multi-ary 'odometer'.
-		" Note: i will become < 0 only when carry occurs at index 0
-		let i = 0
-		while i >= 0
+		" Build all combinations...
+		" Note: Each element of rgn_combs is a list of dicts that exist in
+		" rgn_info[]. It should be considered a read-only view of only those
+		" regions implicated in a particular combination.
+		let rgn_combs = s:Get_rgn_combinations(rgn_info)
+
+		" FIXME: This while loop is being replaced with a loop over all
+		" combinations returned by s:Get_rgn_combinations()
+		for rgn_comb in rgn_combs
 			"let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
-			let rgns = map(rgn_info[0:iord], 'v:val.name')
-			let rest = map(rgn_info[iord + 1:], 'v:val.name')
-			" Sort indices into the order required by cterm=
+			let rgns = map(rgn_comb[0], 'v:val.name')
+			let rest = map(rgn_comb[1], 'v:val.name')
+			" Assumption: Indices already in fiducial order (required by cterm=).
 			" Note: cterm= MUST come *after* ctermfg= to ensure that bold
 			" attribute is handled correctly in a cterm.
 			"	:help cterm-colors
@@ -864,25 +899,6 @@ fu! s:Define_syntax()
 			" cterm=bold really means bold, and not bright color; note that
 			" bright colors can be achieved other ways (e.g., color # above 8)
 			" in terminals that support them.
-			" Note: dict attribute is used simply to allow us to pass data to
-			" the sort function (since VimL has no closures). Alternatively,
-			" could make a singleton object.
-			" TODO: Pull this out of this nested loop!!!
-			fu! Sort_rgn_types(a, b) dict
-				let ri = self.rgn_info
-				if ri[a:a].name == 'clr'
-					return -1
-				elseif ri[a:a].name == 'fmt'
-					return 1
-				elseif ri[a:a].name == 'bgc'
-					return ri[a:b].name == 'fmt' ? -1 : 1
-				endif
-			endfu
-			" Note: Must supply rgn_info within a dict.
-			" TODO: Consider refactoring so that the sort function is a true
-			" dict function (on actual dict).
-			let sidxs = sort(range(iord + 1),
-				\function('Sort_rgn_types'), {'rgn_info': rgn_info})
 
 			" Build templates for current 'order' <<<
 			" Description of lors, sors, hors
@@ -1169,7 +1185,7 @@ fu! s:Define_syntax()
 					break
 				endif
 			endwhile
-		endwhile
+		endfor
 		" Increase 'order'
 		let iord += 1
 	endwhile
