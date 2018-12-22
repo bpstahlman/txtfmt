@@ -539,6 +539,7 @@ fu! s:Sort_rgn_types(a, b)
 		return b == 'fmt' ? -1 : 1
 endfu
 " States: 0=empty, 1=expr, 2=literal
+" FIXME_COMBINATIONS: Add constructor initialization.
 fu! s:Make_exe_builder()
 	let o = {'st': 0, 'st_beg': 0, 's': ''}
 	" Add list of deferred exprs and const separator.
@@ -648,6 +649,20 @@ fu! s:Get_rgn_combinations(rgns, order)
 	return Build_r(0, a:order, a:rgns)
 endfu
 " >>>
+" >>>
+" Function: s:Build_higher_order_cluster() <<<
+" FIXME_COMBINATIONS: I've inlined this: remove...
+fu! Build_higher_order_cluster(xb, cui, rgns, ho_rgn)
+	let rgns = map(a:rgns[:], '{"name": v:val, "idx": "offs[" . v:key . "]"}')
+		\ + [{'name': a:ho_rgn, 'idx': "'all'"}]
+	let rgns = sort(rgns, function('Sort_rgn_types'))
+	let names = map(rgns[:], 'v:val.name')
+	let idxs = map(rgns[:], 'v:val.idx')
+
+	call a:xb.add("@Tf" . a:cui . "_" . join(names, "") . "_", 1)
+	call a:xb.add_list(idxs, "_")
+endfu
+" <<<
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Cache some useful vars <<<
@@ -883,9 +898,6 @@ fu! s:Define_syntax()
 		" rgn_info[]. It should be considered a read-only view of only those
 		" regions implicated in a particular combination.
 		let rgn_combs = s:Get_rgn_combinations(rgn_info)
-
-		" FIXME: This while loop is being replaced with a loop over all
-		" combinations returned by s:Get_rgn_combinations()
 		for rgn_comb in rgn_combs
 			"let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
@@ -919,48 +931,55 @@ fu! s:Define_syntax()
 			let ng_xb = s:Make_exe_builder()
 			call ng_xb.add(" nextgroup=", 1)
 			" Transitions to lower order regions <<<
-			let idx = 0
 			let need_comma = 0
-			let dbg = ''
-			while iord && idx <= iord
-				let lors = range(idx) + range(idx + 1, iord)
-				" Transitions to lower-order groups (used to be rtd group)
-				" TODO: Consider whether better way to do this now that no '_rtd' appended.
-				call ng_xb.add((need_comma ? "," : "") . "Tf".cui."_", 1)
-				call ng_xb.add(join(map(copy(lors), 'rgns[v:val]'), "") . "_", 1)
-				call ng_xb.add(join(map(copy(lors), '"offs[" . v:val . "]"'), " . '_' . "))
-				let idx += 1
-				let need_comma = 1
-			endwhile
+			if iord
+				for idx in range(iord + 1)
+					" Transitions to lower-order groups (used to be rtd group)
+					" TODO: Consider whether better way to do this now that no '_rtd' appended.
+					call ng_xb.add((need_comma ? "," : "")
+						\ . "Tf" . cui . "_"
+						\ . join(filter(rgns[:], 'v:key != l:idx'), "")
+						\ . "_", 1)
+					call ng_xb.add_list(map(range(idx) + range(idx + 1, iord),
+						\ '"offs[" . v:val . "]"'), "_")
+					" TODO_COMBINATIONS: Decide whether these builders are still
+					" warranted. Note that offs[] is not evaluated here.
+					let need_comma = 1
+				endfor
+			endif
 			" >>>
 			" Transitions to same order regions <<<
-			let idx = 0
-			while idx <= iord
-				let sors = range(0, idx - 1) + range(idx + 1, iord) + [idx]
-				call ng_xb.add((need_comma ? "," : "")
-					\. "@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), ""), 1)
-				if len(sors) > 1
-					call ng_xb.add("_", 1)
-					call ng_xb.add(join(map(copy(sors[0:-2]), '"offs[" . v:val . "]"'), " . '_' . "))
-				endif
-				call ng_xb.add("_all", 1)
-				let idx += 1
+			for idx in range(iord + 1)
+				call ng_xb.add((need_comma ? "," : "") . "@Tf" . cui . "_"
+					\ . join(rgns[:], "") . '_', 1)
+				" TODO: Check level of quoting here...
+				call ng_xb.add_list(map(range(iord + 1),
+					\ 'v:val == l:idx ? "all" : "offs[" . v:val . "]"'), "_")
 				let need_comma = 1
-			endwhile
+			endfor
 			" >>>
 			" Transitions to higher order regions <<<
-			let idx = iord + 1
-			while idx < num_rgn_typs
-				call ng_xb.add((need_comma ? "," : "")
-					\. "@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_", 1)
-				" TODO: The join could be factored out since it depends only on iord!!!!!
-				call ng_xb.add(join(map(range(iord + 1), '"offs[" . v:val . "]"'), " . '_' . "))
-				call ng_xb.add("_all", 1)
-				let idx += 1
+			" Loop over the other regions (in rest)
+			for orgn in rest
+				" TODO: Is this check even necessary for higher order? If so,
+				" perhaps pass to Build_higher_order_cluster.
+				if need_comma | call ng_xb.add(",", 1) | endif
+				" Pull in one of the rgn types unused at this order.
+				" helper function to ensure it's inserted at the proper spot.
+				" FIXME: Probably cache a list of rgn names just inside order
+				" loop.
+				"call s:Build_higher_order_cluster(ng_xb, cui,
+				"	\ map(rgns[:], 'v:val.name'), orgn.name)
+				let objs = sort(map(rgns[:],
+					\ '{"name": v:val, "idx": "offs[" . v:key . "]"}')
+					\ + [{'name': orgn.name, 'idx': "'all'"}],
+					\ function('Sort_rgn_types'))
+				call xb.add("@Tf" . cui . "_" . map(objs[:], 'v:val.name') . "_", 1)
+				call xb.add_list(map(objs[:], 'v:val.idx'), "_")
 				let need_comma = 1
 			endwhile
 			" >>>
-			" Make sure an end token ending an O1 region is concealed.
+			" Make sure an end token ending a first order region is concealed.
 			if iord == 0
 				" 1st order rgn
 				call ng_xb.add(",Tf_tok", 1)
@@ -996,25 +1015,40 @@ fu! s:Define_syntax()
 			let rgn_name_xb = s:Make_exe_builder()
 			call rgn_name_xb.add('Tf' . cui . '_' . join(rgns, "") . '_', 1)
 			" TODO: Consider loopifying this to avoid hybrid arg to add.
-			call rgn_name_xb.add(join(map(range(iord + 1), '"offs[" . v:val . "]"'), " . '_' . "))
-			let cls_xb = s:Make_exe_builder()
-			call cls_xb.add('syn cluster Tf'.cui.'_'.join(rgns, ""), 1)
-			if iord > 0
+			call rgn_name_xb.add_list(map(range(iord + 1), '"offs[" . v:val . "]"'), "_")
+
+			" Create builders for the combination-specific "all" clusters.
+			" Note: Eval loop will need to loop over all builders in cls_xbs.
+			let cls_xbs = []
+			for idx in range(iord + 1)
+				let cls_xb = s:Make_exe_builder()
+				call add(cls_xbs, cls_xb)
+				call cls_xb.add('syn cluster Tf' . cui . '_' . join(rgns, ""), 1)
 				call cls_xb.add('_', 1)
-				call cls_xb.add(join(map(range(iord), '"offs[" . v:val . "]"'), " . '_' . "))
-			endif
-			call cls_xb.add('_all add=', 1)
-			call cls_xb.add(rgn_name_xb)
+				call cls_xb.add_list(map(range(iord + 1),
+					\ 'v:val == l:idx ? "all" : "offs[" . v:val . "]"'), "_")
+				call cls_xb.add(' add=', 1)
+				call cls_xb.add(rgn_name_xb)
+			endfor
+
+			" Create builder used to augment the non-specific "all" cluster.
 			let cls_all_xb = s:Make_exe_builder()
 			call cls_all_xb.add('syn cluster Tf'.cui.'_all add=', 1)
 			call cls_all_xb.add(rgn_name_xb)
+
+			" Create builder for the common portion of syn region
 			let rgn_cmn_xb = s:Make_exe_builder()
 			call rgn_cmn_xb.add('syn region ', 1)
 			call rgn_cmn_xb.add(rgn_name_xb)
 			call rgn_cmn_xb.add(skip . ' end=/[', 1)
+			" FIXME_COMBINATIONS: With permutation-sensitive engine, any start
+			" tok ended a region; however, with combinations, we care only
+			" about start tokens not represented in current combination.
 			call rgn_cmn_xb.add(b:txtfmt_re_any_stok_atom, 1)
+			" Region is ended by end tok for any rgn type in current
+			" combination.
 			call rgn_cmn_xb.add(join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-				\. ']/me=e-'.tok_off.',he=e-'.tok_off
+				\. ']/me=e-' . tok_off . ',he=e-' . tok_off
 				\.' keepend contains=', 1)
 			" Add contains= for tok and (if necessary) esc groups.
 			call rgn_cmn_xb.add(tok_group_xb)
@@ -1028,6 +1062,8 @@ fu! s:Define_syntax()
 			" transition to same or higher order)
 			" rgn2 refers to a region begun by an end token (always
 			" transitions to lower order)
+			" FIXME_COMBINATIONS: Remove misleading "cmn" from these 2 var
+			" names. Actually, could just add directly in the builder add() call.
 			let rgn_cmn1 = 
 				\(iord == 0
 				\ ? containedin_def
@@ -1041,6 +1077,9 @@ fu! s:Define_syntax()
 			call rgn1_xb.add(rgn_cmn_xb)
 			call rgn1_xb.add(rgn_cmn1 . ' start=/', 1)
 			" TODO: Consider having a placeholder var for this...
+			" FIXME_COMBINATIONS: Region can start with the start tok of any
+			" of the regions in the current combination (not just the last as
+			" with permutations).
 			call rgn1_xb.add('nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1])')
 			call rgn1_xb.add('/', 1)
 			let hi_xb = s:Make_exe_builder()
@@ -1078,9 +1117,13 @@ fu! s:Define_syntax()
 			" Note: jdxs[] represents rgn indices for all positions involved
 			" in current 'order'.
 			let jdxs = repeat([1], iord + 1)
-			" Convert 0-based offset to token offset
-			let offs = map(range(iord + 1), 'rgn_info[v:val].name == "fmt"'
-				\.' ? 1 : rgn_info[v:val].offs[0]')
+			" Initialize offs[] with first used non-default index for each rgn
+			" type (1 for fmt, first used color number for color rgns).
+			" TODO_COMBINATIONS: Consider testing for offs member instead of
+			" checking name.
+			let offs = map(range(iord + 1), 'rgns[v:val].name == "fmt"'
+				\.' ? 1 : rgns[v:val].offs[0]')
+			" Count down
 			let i = iord
 			" Evaluate templates in loop over all permutations of indices for
 			" the current permutation of rgn types: e.g., fmt1-clr1,
@@ -1120,10 +1163,10 @@ fu! s:Define_syntax()
 				let i = iord
 				while i >= 0
 					let jdxs[i] += 1
-					if jdxs[i] > rgn_info[i].max
+					if jdxs[i] > rgn_comb[i].max
 						let jdxs[i] = 1
-						let offs[i] = rgn_info[i].name == "fmt"
-							\? 1 : rgn_info[i].offs[0]
+						let offs[i] = rgn_comb[i].name == "fmt"
+							\? 1 : rgn_comb[i].offs[0]
 						" Keep going leftward unless we're done
 						let i -= 1
 						if i < 0
@@ -1132,10 +1175,10 @@ fu! s:Define_syntax()
 						endif
 					else
 						" j hasn't rolled over
-						if rgn_info[i].name == "fmt"
+						if rgn_comb[i].name == "fmt"
 							let offs[i] += 1
 						else
-							let offs[i] = rgn_info[i].offs[jdxs[i] - 1]
+							let offs[i] = rgn_comb[i].offs[jdxs[i] - 1]
 						endif
 						break
 					endif
@@ -1146,45 +1189,6 @@ fu! s:Define_syntax()
 			"let profs['all-perms'] += str2float(reltimestr(reltime(ts)))
 			" >>>
 			" >>>
-
-			" Generate next permutation of rgn types for current 'order' <<<
-			" Note: We get here just after incrementing through all
-			" permutations of rgn indices for current permutation of rgn types
-			" at current 'order'. Next permutation of rgn types is generated
-			" by using mods[] as a down-counting ripple counter, in which each
-			" position triggers a leftward rotation of range rgn_info[i:] when
-			" the counter at position i reaches 0.
-			" Note: Because of the ripple effect, multiple rotations may occur
-			" between loop entry and exit, but conceptually, it's a single
-			" increment of the overall counter. (Think multiple bits in a
-			" binary counter changing value.)
-			let i = iord
-			while i >= 0
-				" Skip pointless rotation of single element
-				if i < num_rgn_typs - 1
-					" Rotate i to end
-					" Optimization Possibility: Don't really need to rotate
-					" when i == iord, since there are no affected positions
-					" rightward.
-					let r = remove(rgn_info, i)
-					call add(rgn_info, r)
-				endif
-				let mods[i] -= 1
-				if mods[i] <= 0
-					" Carry leftward (by avoiding break) and reset modulo down
-					" counter for this position.
-					let mods[i] = num_rgn_typs - i
-				else
-					" No need to go further left.
-					break
-				endif
-				" Keep going leftward unless we're done
-				let i -= 1
-				if i < 0
-					" Hit modulo in 1st position: we're done.
-					break
-				endif
-			endwhile
 		endfor
 		" Increase 'order'
 		let iord += 1
