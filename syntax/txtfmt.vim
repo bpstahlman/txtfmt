@@ -531,6 +531,9 @@ endfu
 " Achieve clr->bgc->fmt order required for highlight command.
 " Assumption: a and b will always be different.
 fu! s:Sort_rgn_types(a, b)
+	" Assumption: Elements to be sorted are either fmt/clr/bgc/... strings or
+	" dicts with 'name' key containing such strings.
+	let [a, b] = type(a:a) == 1 ? [a:a, a:b] : [a:a.name, a:b.name]
 	if a == 'clr'
 		return -1
 	elseif a == 'fmt'
@@ -545,8 +548,10 @@ fu! s:Make_exe_builder()
 	" Add list of deferred exprs and const separator.
 	" Note: The resulting construct is effectively an expr, since the
 	" separator will be interior if it is used at all.
+	" FIXME: Consider making sep optional.
 	fu! o.add_list(ls, sep)
-		call self.add(join(a:ls, " . '" . a:sep . "' . "))
+		" Special Case: If sep is null, prefer `blah . blah' over `blah . "" . blah'
+		call self.add(join(a:ls, a:sep ? " . '" . a:sep . "' . " : " . "))
 	endfu
 	" Prepare to append, taking current and next state into account.
 	fu! o.prep(st, ...)
@@ -615,7 +620,6 @@ endfu
 " Function: s:Get_rgn_combinations_r() <<<
 fu! s:Get_rgn_combinations_r(i, rem, rgns)
 	let i = a:i
-	" FIXME: Needs to be a list of list pairs
 	let ret = []
 	while i <= len(a:rgns) - a:rem
 		if a:rem == 1
@@ -624,8 +628,7 @@ fu! s:Get_rgn_combinations_r(i, rem, rgns)
 				\ (i > a:i ? a:rgns[a:i : i - 1] : [])
 				\ + (i < len(a:rgns) - 1 ? a:rgns[i + 1 : ] : [])])
 		else
-			" Ooops! FIXME: Need to unzip this...
-			let children = Build_r(i + 1, a:rem - 1, a:rgns)
+			let children = s:Get_rgn_combinations_r(i + 1, a:rem - 1, a:rgns)
 			for child in children
 				call insert(child[0], a:rgns[i])
 				if i > a:i
@@ -645,8 +648,10 @@ endfu
 " Note: Need to add ability to return both the pos and neg list: i.e., an
 " ordered list of the rgns involved in the combination, and a second list of
 " those that are *not* involved.
+" TODO_COMBINATIONS: Consider combining this with its recursive workhorse
+" somehow.
 fu! s:Get_rgn_combinations(rgns, order)
-	return Build_r(0, a:order, a:rgns)
+	return s:Get_rgn_combinations_r(0, a:order, a:rgns)
 endfu
 " >>>
 " >>>
@@ -897,12 +902,18 @@ fu! s:Define_syntax()
 		" Note: Each element of rgn_combs is a list of dicts that exist in
 		" rgn_info[]. It should be considered a read-only view of only those
 		" regions implicated in a particular combination.
-		let rgn_combs = s:Get_rgn_combinations(rgn_info)
+		let rgn_combs = s:Get_rgn_combinations(rgn_info, iord + 1)
 		for rgn_comb in rgn_combs
 			"let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
-			let rgns = map(rgn_comb[0], 'v:val.name')
-			let rest = map(rgn_comb[1], 'v:val.name')
+			" FIXME_COMBINATIONS: Consider caching some more forms: e.g.,
+			" rgn_comb[0/1] as named, not indexed vars. Also, consider more
+			" symmetric name than rest: e.g., rgns and rems or RGNS.
+			let [rgn_objs, rem_objs] = [rgn_comb[0], rgn_comb[1]]
+			" TODO_COMBINATIONS: Consider changing rest to rems for
+			" greater parallelism.
+			let rgns = map(rgn_objs[:], 'v:val.name')
+			let rest = map(rem_objs[:], 'v:val.name')
 			" Assumption: Indices already in fiducial order (required by cterm=).
 			" Note: cterm= MUST come *after* ctermfg= to ensure that bold
 			" attribute is handled correctly in a cterm.
@@ -917,10 +928,13 @@ fu! s:Define_syntax()
 			" These 3 arrays are a convenience. They are 2D arrays containing
 			" specific useful combinations of token type indices, as follows:
 			" lors: preceding (lower) order regions
-			"       regions to which an end token could return us
+			"       regions to which an end token for a rgn type represented
+			"       in current region could could return us
 			" sors: current (same) order regions
 			"       regions to which a start token for a rgn type
 			"       represented in current region could take us
+			"       FIXME_COMBINATIONS: Are sors even still a thing? I mean,
+			"       nothing's changing any more, right?
 			" hors: next (higher) order regions
 			"       regions to which a start token *not* represented in
 			"       current region could take us
@@ -949,12 +963,16 @@ fu! s:Define_syntax()
 			endif
 			" >>>
 			" Transitions to same order regions <<<
+			" FIXME_COMBINATIONS: I'm thinking it's possible that same order
+			" regions could go away...
+			" Rationale: Impossible for a single start token to change the
+			" combination without changing the order.
 			for idx in range(iord + 1)
 				call ng_xb.add((need_comma ? "," : "") . "@Tf" . cui . "_"
 					\ . join(rgns[:], "") . '_', 1)
 				" TODO: Check level of quoting here...
 				call ng_xb.add_list(map(range(iord + 1),
-					\ 'v:val == l:idx ? "all" : "offs[" . v:val . "]"'), "_")
+					\ 'v:val == l:idx ? "''all''" : "offs[" . v:val . "]"'), "_")
 				let need_comma = 1
 			endfor
 			" >>>
@@ -970,14 +988,18 @@ fu! s:Define_syntax()
 				" loop.
 				"call s:Build_higher_order_cluster(ng_xb, cui,
 				"	\ map(rgns[:], 'v:val.name'), orgn.name)
+				" FIXME_COMBINATIONS: Given that we're inserting element into
+				" already-sorted list, this approach may be overkill. Revisit
+				" if efficiency matters.
 				let objs = sort(map(rgns[:],
 					\ '{"name": v:val, "idx": "offs[" . v:key . "]"}')
-					\ + [{'name': orgn.name, 'idx': "'all'"}],
-					\ function('Sort_rgn_types'))
-				call xb.add("@Tf" . cui . "_" . map(objs[:], 'v:val.name') . "_", 1)
-				call xb.add_list(map(objs[:], 'v:val.idx'), "_")
+					\ + [{'name': orgn, 'idx': "'all'"}],
+					\ function('s:Sort_rgn_types'))
+				call ng_xb.add("@Tf" . cui . "_"
+					\ . join(map(objs[:], 'v:val.name'), "") . "_", 1)
+				call ng_xb.add_list(map(objs[:], 'v:val.idx'), "_")
 				let need_comma = 1
-			endwhile
+			endfor
 			" >>>
 			" Make sure an end token ending a first order region is concealed.
 			if iord == 0
@@ -1026,14 +1048,14 @@ fu! s:Define_syntax()
 				call cls_xb.add('syn cluster Tf' . cui . '_' . join(rgns, ""), 1)
 				call cls_xb.add('_', 1)
 				call cls_xb.add_list(map(range(iord + 1),
-					\ 'v:val == l:idx ? "all" : "offs[" . v:val . "]"'), "_")
+					\ 'v:val == l:idx ? "''all''" : "offs[" . v:val . "]"'), "_")
 				call cls_xb.add(' add=', 1)
 				call cls_xb.add(rgn_name_xb)
 			endfor
 
 			" Create builder used to augment the non-specific "all" cluster.
 			let cls_all_xb = s:Make_exe_builder()
-			call cls_all_xb.add('syn cluster Tf'.cui.'_all add=', 1)
+			call cls_all_xb.add('syn cluster Tf' . cui . '_all add=', 1)
 			call cls_all_xb.add(rgn_name_xb)
 
 			" Create builder for the common portion of syn region
@@ -1077,25 +1099,24 @@ fu! s:Define_syntax()
 			call rgn1_xb.add(rgn_cmn_xb)
 			call rgn1_xb.add(rgn_cmn1 . ' start=/', 1)
 			" TODO: Consider having a placeholder var for this...
-			" FIXME_COMBINATIONS: Region can start with the start tok of any
+			" FIXME_COMBINATIONS: Region can start with the start tok of *any*
 			" of the regions in the current combination (not just the last as
 			" with permutations).
-			call rgn1_xb.add('nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1])')
+			call rgn1_xb.add_list(map(range(iord + 1),
+				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
 			call rgn1_xb.add('/', 1)
 			let hi_xb = s:Make_exe_builder()
 			call hi_xb.add('hi ', 1)
 			call hi_xb.add(rgn_name_xb)
-			let idx = 0
-			while idx <= iord
-				let sidx = sidxs[idx]
-				call hi_xb.add(eq_{rgns[sidx]}, 1)
-				call hi_xb.add('b:txtfmt_{rgns[' . sidx . ']}{offs[' . sidx . ']} ')
-				let idx += 1
-			endwhile
+			for idx in range(iord + 1)
+				call hi_xb.add(eq_{rgns[idx]}, 1)
+				call hi_xb.add('b:txtfmt_{rgns[' . idx . ']}{offs[' . idx . ']} ')
+			endfor
 			let rgn2_xb = s:Make_exe_builder()
 			if iord < num_rgn_typs - 1
 				call rgn2_xb.add(rgn_cmn_xb)
-				" TODO: Perhaps move it down here...
+				" TODO: Definitely move the common stuff down here since it
+				" may not even be needed...
 				call rgn2_xb.add(rgn_cmn2, 1)
 			endif
 			" >>>
@@ -1106,7 +1127,9 @@ fu! s:Define_syntax()
 			" which are adjusted within the loop: rgns is adjusted by
 			" left-rotation within the mods[] update loop; offs[] are
 			" calculated explicitly when rgn indices (jdxs[]) are updated.
-			let cls_estr = cls_xb.get_estr()
+			" Note: Intentionally mapping destructively over cls_xbs, which
+			" won't be needed again before it's rebuilt for a new combination.
+			let cls_estrs = map(cls_xbs, 'v:val.get_estr()')
 			let cls_all_estr = cls_all_xb.get_estr()
 			let rgn1_estr = rgn1_xb.get_estr()
 			let hi_estr = hi_xb.get_estr()
@@ -1121,8 +1144,8 @@ fu! s:Define_syntax()
 			" type (1 for fmt, first used color number for color rgns).
 			" TODO_COMBINATIONS: Consider testing for offs member instead of
 			" checking name.
-			let offs = map(range(iord + 1), 'rgns[v:val].name == "fmt"'
-				\.' ? 1 : rgns[v:val].offs[0]')
+			let offs = map(range(iord + 1), 'rgn_objs[v:val]["name"] == "fmt"'
+				\.' ? 1 : rgn_objs[v:val].offs[0]')
 			" Count down
 			let i = iord
 			" Evaluate templates in loop over all permutations of indices for
@@ -1142,7 +1165,9 @@ fu! s:Define_syntax()
 				"let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define clusters.
-				exe eval(cls_estr)
+				for cls_estr in cls_estrs
+					exe eval(cls_estr)
+				endfor
 				exe eval(cls_all_estr)
 				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
@@ -1163,10 +1188,10 @@ fu! s:Define_syntax()
 				let i = iord
 				while i >= 0
 					let jdxs[i] += 1
-					if jdxs[i] > rgn_comb[i].max
+					if jdxs[i] > rgn_objs[i].max
 						let jdxs[i] = 1
-						let offs[i] = rgn_comb[i].name == "fmt"
-							\? 1 : rgn_comb[i].offs[0]
+						let offs[i] = rgn_objs[i].name == "fmt"
+							\? 1 : rgn_objs[i].offs[0]
 						" Keep going leftward unless we're done
 						let i -= 1
 						if i < 0
@@ -1175,10 +1200,10 @@ fu! s:Define_syntax()
 						endif
 					else
 						" j hasn't rolled over
-						if rgn_comb[i].name == "fmt"
+						if rgn_objs[i].name == "fmt"
 							let offs[i] += 1
 						else
-							let offs[i] = rgn_comb[i].offs[jdxs[i] - 1]
+							let offs[i] = rgn_objs[i].offs[jdxs[i] - 1]
 						endif
 						break
 					endif
