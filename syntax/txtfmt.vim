@@ -551,7 +551,7 @@ fu! s:Make_exe_builder()
 	" FIXME: Consider making sep optional.
 	fu! o.add_list(ls, sep)
 		" Special Case: If sep is null, prefer `blah . blah' over `blah . "" . blah'
-		call self.add(join(a:ls, a:sep ? " . '" . a:sep . "' . " : " . "))
+		call self.add(join(a:ls, !empty(a:sep) ? " . '" . a:sep . "' . " : " . "))
 	endfu
 	" Prepare to append, taking current and next state into account.
 	fu! o.prep(st, ...)
@@ -889,6 +889,9 @@ fu! s:Define_syntax()
 		endwhile
 	endfor
 	let num_rgn_typs = len(rgn_info)
+	" TODO_COMBINATIONS: Clean this up, but for now, need rgn_info in fiducial
+	" order.
+	call sort(rgn_info, function('s:Sort_rgn_types'))
 	" >>>
 	" Loop over 'order' <<<
 	" Note: iord determines current 'order' (i.e., total # of rgn types involved
@@ -1097,14 +1100,14 @@ fu! s:Define_syntax()
 				\.' contained'
 			let rgn1_xb = s:Make_exe_builder()
 			call rgn1_xb.add(rgn_cmn_xb)
-			call rgn1_xb.add(rgn_cmn1 . ' start=/', 1)
+			call rgn1_xb.add(rgn_cmn1 . ' start=/[', 1)
 			" TODO: Consider having a placeholder var for this...
 			" FIXME_COMBINATIONS: Region can start with the start tok of *any*
 			" of the regions in the current combination (not just the last as
 			" with permutations).
 			call rgn1_xb.add_list(map(range(iord + 1),
 				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
-			call rgn1_xb.add('/', 1)
+			call rgn1_xb.add(']/', 1)
 			let hi_xb = s:Make_exe_builder()
 			call hi_xb.add('hi ', 1)
 			call hi_xb.add(rgn_name_xb)
@@ -1144,7 +1147,7 @@ fu! s:Define_syntax()
 			" type (1 for fmt, first used color number for color rgns).
 			" TODO_COMBINATIONS: Consider testing for offs member instead of
 			" checking name.
-			let offs = map(range(iord + 1), 'rgn_objs[v:val]["name"] == "fmt"'
+			let offs = map(range(iord + 1), 'rgn_objs[v:val].name == "fmt"'
 				\.' ? 1 : rgn_objs[v:val].offs[0]')
 			" Count down
 			let i = iord
