@@ -654,20 +654,34 @@ fu! s:Get_rgn_combinations(rgns, order)
 	return s:Get_rgn_combinations_r(0, a:order, a:rgns)
 endfu
 " >>>
-" >>>
-" Function: s:Build_higher_order_cluster() <<<
-" FIXME_COMBINATIONS: I've inlined this: remove...
-fu! Build_higher_order_cluster(xb, cui, rgns, ho_rgn)
-	let rgns = map(a:rgns[:], '{"name": v:val, "idx": "offs[" . v:key . "]"}')
-		\ + [{'name': a:ho_rgn, 'idx': "'all'"}]
-	let rgns = sort(rgns, function('Sort_rgn_types'))
-	let names = map(rgns[:], 'v:val.name')
-	let idxs = map(rgns[:], 'v:val.idx')
-
-	call a:xb.add("@Tf" . a:cui . "_" . join(names, "") . "_", 1)
-	call a:xb.add_list(idxs, "_")
+" Function: s:Map_rgn_types() <<<
+" Implements a sort of list comprehension over used rgn types in their
+" fiducial order. The provided funcref or string expression is used to
+" generate the elements: a funcref receives a zero-based index, name and
+" abbrev corresponding to the rgn type; a string expression has access to
+" these values in l:idx, l:name and l:abbrev.
+" FIXME_COMBINATIONS: Probably move to an autoload file, as this could be
+" useful outside syntax file.
+fu! s:Map_rgn_types(fn_or_expr)
+	let ret = []
+	" Get list of used rgn types in fiducial order.
+	let rgns = (b:txtfmt_cfg_numfgcolors > 0 ? [['clr', 'fg']] : [])
+		\ + ((b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0) ? [['bgc', 'bg']] : [])
+		\ + [['fmt', '']]
+	for idx in range(len(rgns))
+		let [name, abbrev] = rgns[idx]
+		if type(a:fn_or_expr) == 2
+			let o = fn_or_expr(idx, name, abbrev)
+		else
+			" Note: Expression has access to l:idx, l:name and l:abbrev
+			let o = eval(a:fn_or_expr)
+		endif
+		" Accumulate
+		call add(ret, o)
+	endfor
+	return ret
 endfu
-" <<<
+" >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Cache some useful vars <<<
@@ -865,33 +879,39 @@ fu! s:Define_syntax()
 	endif
 	" >>>
 	" Build rgn_info list <<<
-	" The rgn_info list contains metadata pertaining to the 3 types of regions
-	" (fmt, clr, bgc), which is used in the loops below.
-	let rgn_info = [
-		\{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}
-	\]
-	if clr_enabled
-		call add(rgn_info,
-			\{'name': 'clr', 'abbrev': 'fg', 'max': b:txtfmt_cfg_numfgcolors, 'offs': []})
+	if 1
+		" The rgn_info list contains metadata pertaining to all types of regions
+		" (e.g., clr, bgc, fmt) used in the loops below.
+		let rgn_info =
+			\ (clr_enabled
+			\ ? [{'name': 'clr', 'abbrev': 'fg', 'max': b:txtfmt_cfg_numfgcolors, 'offs': []}]
+			\ : [])
+			\ + (bgc_enabled
+			\ ? [{'name': 'bgc', 'abbrev': 'bg', 'max': b:txtfmt_cfg_numbgcolors, 'offs': []}]
+			\ : [])
+			\ + [{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}]
+		" For color elements (all but final element of rgn_info), build a list
+		" mapping 0-based indices to actual color numbers (as used in txtfmtColor
+		" and txtfmtBgColor).
+		for ri in rgn_info[:-2]
+			let i = 1
+			while i <= b:txtfmt_cfg_num{ri.abbrev}colors
+				call add(ri.offs, b:txtfmt_cfg_{ri.abbrev}color{i})
+				let i += 1
+			endwhile
+		endfor
+	else
+		" FIXME_COMBINATIONS: Decide whether to use this list comprehension or the
+		" stuff in the if...
+		" Note: This would be less messy if I used lambdas, but I don't like
+		" requiring upgrad to Vim 8.
+		let rgn_info = s:Map_rgn_types(
+			\ 'name == "fmt"'
+			\ . ' ? {"name": "fmt", "max": b:txtfmt_num_formats - 1, "offs": []}'
+			\ . ' : {"name": name, "abbrev": abbrev, "max": b:txtfmt_cfg_num{abbrev}colors,'
+			\ . '    "offs": map(range(1, b:txtfmt_cfg_num{abbrev}colors), "b:txtfmt_cfg_{abbrev}color{v:val}")}')
 	endif
-	if bgc_enabled
-		call add(rgn_info,
-			\{'name': 'bgc', 'abbrev': 'bg', 'max': b:txtfmt_cfg_numbgcolors, 'offs': []})
-	endif
-	" For color elements (all but first element of rgn_info), build a list
-	" mapping 0-based indices to actual color numbers (as used in txtfmtColor
-	" and txtfmtBgColor).
-	for ri in rgn_info[1:]
-		let i = 1
-		while i <= b:txtfmt_cfg_num{ri.abbrev}colors
-			call add(ri.offs, b:txtfmt_cfg_{ri.abbrev}color{i})
-			let i += 1
-		endwhile
-	endfor
 	let num_rgn_typs = len(rgn_info)
-	" TODO_COMBINATIONS: Clean this up, but for now, need rgn_info in fiducial
-	" order.
-	call sort(rgn_info, function('s:Sort_rgn_types'))
 	" >>>
 	" Loop over 'order' <<<
 	" Note: iord determines current 'order' (i.e., total # of rgn types involved
@@ -966,14 +986,9 @@ fu! s:Define_syntax()
 			endif
 			" >>>
 			" Transitions to same order regions <<<
-			" FIXME_COMBINATIONS: I'm thinking it's possible that same order
-			" regions could go away...
-			" Rationale: Impossible for a single start token to change the
-			" combination without changing the order.
 			for idx in range(iord + 1)
 				call ng_xb.add((need_comma ? "," : "") . "@Tf" . cui . "_"
 					\ . join(rgns[:], "") . '_', 1)
-				" TODO: Check level of quoting here...
 				call ng_xb.add_list(map(range(iord + 1),
 					\ 'v:val == l:idx ? "''all''" : "offs[" . v:val . "]"'), "_")
 				let need_comma = 1
@@ -982,15 +997,11 @@ fu! s:Define_syntax()
 			" Transitions to higher order regions <<<
 			" Loop over the other regions (in rest)
 			for orgn in rest
-				" TODO: Is this check even necessary for higher order? If so,
-				" perhaps pass to Build_higher_order_cluster.
-				if need_comma | call ng_xb.add(",", 1) | endif
-				" Pull in one of the rgn types unused at this order.
-				" helper function to ensure it's inserted at the proper spot.
-				" FIXME: Probably cache a list of rgn names just inside order
-				" loop.
-				"call s:Build_higher_order_cluster(ng_xb, cui,
-				"	\ map(rgns[:], 'v:val.name'), orgn.name)
+				" Assumption: need_comma check unnecessary, since same order
+				" region ensures it will be needed.
+				call ng_xb.add(",", 1)
+				" Pull in one of the rgn types that's unused by current
+				" combination.
 				" FIXME_COMBINATIONS: Given that we're inserting element into
 				" already-sorted list, this approach may be overkill. Revisit
 				" if efficiency matters.
@@ -1001,7 +1012,6 @@ fu! s:Define_syntax()
 				call ng_xb.add("@Tf" . cui . "_"
 					\ . join(map(objs[:], 'v:val.name'), "") . "_", 1)
 				call ng_xb.add_list(map(objs[:], 'v:val.idx'), "_")
-				let need_comma = 1
 			endfor
 			" >>>
 			" Make sure an end token ending a first order region is concealed.
@@ -1019,13 +1029,14 @@ fu! s:Define_syntax()
 			let tok_group_xb = s:Make_exe_builder()
 			let esc_group_xb = s:Make_exe_builder()
 			" TODO: Handle this a different way...
+			" TODO_COMBINATIONS: Look at this now... Is there duplication???
 			call tok_group_xb.add('Tf_tok', 1)
 			call esc_group_xb.add('Tf_esc', 1)
 			if bgc_idx >= 0
 				" This region contains bg color; use appropriate tok/esc
 				" concealment regions.
 				if !b:txtfmt_cfg_conceal
-					call tok_group_xb.add(',Tf'.cui.'_tok_', 1)
+					call tok_group_xb.add(',Tf' . cui . '_tok_', 1)
 					call tok_group_xb.add("offs[" . bgc_idx . "]")
 				endif
 				if b:txtfmt_cfg_escape != 'none'
