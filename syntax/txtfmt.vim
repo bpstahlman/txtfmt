@@ -926,7 +926,35 @@ fu! s:Define_syntax()
 		" rgn_info[]. It should be considered a read-only view of only those
 		" regions implicated in a particular combination.
 		let rgn_combs = s:Get_rgn_combinations(rgn_info, iord + 1)
-		for rgn_comb in rgn_combs
+		" Note: Intentionally iterating regions from higher to lower order to
+		" ensure that for 1 regions, higher order regions have lower priority.
+		" Rationale: If higher-order regions had higher priority, an <fb> tok
+		" within an fb region would begin a spurious higher order region such
+		" as bgcfmt_5_2, which can begin with either a bgc or fmt start tok.
+		" The problem is that bgcfmt_5_2 is a nextgroup of both bgc_5 and
+		" fmt_2, and without breaking up the bgcfmt_5_2 group, there's no way
+		" to constrain a start tok to a specific previous group. We could
+		" split the groups such that each has only a single start tok (e.g.,
+		" BGCfmt_5_2 and bgcFMT_5_2), but Vim's syntax engine's speed is
+		" highly sensitive to total number of groups, so relying on order is
+		" better.
+		" Note: Order doesn't matter for type 2 regions (begun by end tok), as
+		" nextgroup is sufficient to resolve conflicts.
+		" Rationale: Type 2 regions are 'contained', so you can reach them
+		" only via 'nextgroup' after another region has ended. One might
+		" expect problems, given that a lower-order region such as fmt_2 has
+		" higher-order regions such as bgcfmt_5_2 in its 'nextgroup'. Since
+		" bgcfmt_5_2 can begin with a clr end tok, couldn't a clr end
+		" tok lead to a spurious transition from fmt_2 to bgcfmt_*_2? The
+		" answer is no, because a clr end tok cannot end a fmt_2 region.
+		" (In fact, it's ignored in a fmt_2 region). It is always the case
+		" that an end tok that could begin a type 2 region is represented
+		" *only* in higher-order region combinations, and thus, cannot end a
+		" lower-order region; thus, an end tok can never be used to transition
+		" from lower to higher order.
+		" FIXME_COMBINATIONS: Should probably just refactor
+		" Get_rgn_combinations() to accomplish the order reversal.
+		for rgn_comb in reverse(rgn_combs)
 			"let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
 			" FIXME_COMBINATIONS: Consider caching some more forms: e.g.,
@@ -1233,6 +1261,7 @@ fu! s:Define_syntax()
 		let iord += 1
 	endwhile
 	" >>>
+
 	"let profs['all'] += str2float(reltimestr(reltime(ts_all)))
 	"echo "Profile results: " . string(profs)
 	" Handle escape/escapee token pairs both inside and outside regions. <<<
