@@ -372,6 +372,32 @@ fu! TxtfmtCommon_Encoding_get_class(enc)
 endfu
 " >>>
 " >>>
+" token utilty functions (common) <<<
+" Token indices follow a binary progression: ubisrc
+let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
+" Function: TxtfmtCommon_Token_mask_by_attr() <<<
+" Purpose: Return a bitmask representing all the single-char format attributes
+" supplied as input: e.g., 'u', 'i', 'r' => 21 = %10101
+fu! TxtfmtCommon_Token_mask_by_attr(...)
+	let mask = 0
+	for attr in a:000
+		" Note: No need to valid attr, as this is called only internally.
+		let mask +=  s:ubisrc_mask[attr]
+	endfor
+	return mask
+endfu
+" >>>
+" Function: TxtfmtCommon_Token_affects_ws() <<<
+" Purpose: Return true iff fmt whose tok idx is input has a visible effect on
+" whitespace.
+fu! TxtfmtCommon_Token_affects_ws(tok_idx)
+	return and(a:tok_idx, s:ubisrc_mask['u']
+		\ + s:ubisrc_mask['s']
+		\ + s:ubisrc_mask['r']
+		\ + s:ubisrc_mask['c'])
+endfu
+" >>>
+" >>>
 " 'tokrange' utility functions <<<
 " Construct pattern that will capture char code in \1 and optional size
 " specification (sSlLxX) in \2.
@@ -510,6 +536,7 @@ let s:re_escape_optval = '^\%(none\|bslash\|self\)$'
 fu! s:Escape_is_valid(optval)
 	return a:optval =~ s:re_escape_optval
 endfu
+" >>>
 " >>>
 " 'leadingindent' utility functions <<<
 " Construct pattern that will validate the option value.
@@ -2546,6 +2573,7 @@ let b:ubisrc_fmt60 = 'crsi'
 let b:ubisrc_fmt61 = 'crsiu'
 let b:ubisrc_fmt62 = 'crsib'
 let b:ubisrc_fmt63 = 'crsibu'
+
 " >>>
 else " if exists('b:txtfmt_do_common_config')
 " Function: s:Txtfmt_refresh() <<<
@@ -2884,8 +2912,9 @@ fu! s:MakeTestPage(...)
 	" Before looping over bgc, fgc and fmt, determine the length of the list
 	" of format specs (i.e., the number of characters, including start fmt
 	" specs, from the hyphen to the end of the line).
-	" Assumption: Each format token will take up a single character width. (If
-	" conceal patch is in effect, it will be a literal space.)
+	" Assumption: The fmt attributes will be separated by something with the
+	" appearance and width of a single space: either a literal space ('conceal')
+	" or a transparent token ('noconceal').
 	" Note: We don't include either the 'no format' token at the end of the
 	" line or the following space (used for table framing) in the count, as
 	" these characters are beyond the edge of the table proper, and we want
@@ -2894,7 +2923,7 @@ fu! s:MakeTestPage(...)
 	let iFmt = 1 " start just after 'no format' token
 	while iFmt < b:txtfmt_num_formats
 		" Accumulate width of space and fmt spec
-		let post_hyphen_width = post_hyphen_width + 1 + strlen(b:ubisrc_fmt{iFmt})
+		let post_hyphen_width += 1 + strlen(b:ubisrc_fmt{iFmt})
 		let iFmt = iFmt + 1
 	endwhile
 	" Define width of lines up to the hyphen, *NOT* including potentially
@@ -2988,29 +3017,30 @@ fu! s:MakeTestPage(...)
 				if iFmt == 0
 					let s = s.'-'
 				else
-					" Conceal patch entails special handling to prevent the
-					" space between the specifiers from being underlined or
-					" undercurled.
-					" Case 1: 'conceal'
-					" <SPC> <fmt-tok> <fmt-spec> <no-fmt-tok>
-					" Case 2: 'noconceal'
-					" <fmt-tok> <fmt-spec>
-					" Note: For the 'noconceal' case *only*, a single
-					" <no-fmt-tok> goes outside loop.
+					" In 'noconceal' case, the start tok obviates need for
+					" space separating adjacent formats.
+					" In 'conceal' case, we need the separating space;
+					" moreover, we need to terminate the fmt with an end tok
+					" if and only if the fmt contains an attribute that would
+					" otherwise affect the subsequent separating whitespace.
+					" Note: Add the end tok unconditionally if this is the
+					" final fmt on the line.
+					" Note: Certain configurations have a *lot* of attributes
+					" per line, rendering test-page highlighting sluggish: the
+					" call to TxtfmtCommon_Token_affects_ws() is needed to
+					" ensure we're not processing any unnecessary end toks.
 					let s = s . cncl_ws
 						\. nr2char(b:txtfmt_fmt_first_tok + iFmt)
 						\. b:ubisrc_fmt{iFmt}
-						\. (b:txtfmt_cfg_conceal ? nr2char(b:txtfmt_fmt_first_tok) : '')
+						\. (iFmt == b:txtfmt_num_formats - 1
+							\ || (b:txtfmt_cfg_conceal && TxtfmtCommon_Token_affects_ws(iFmt))
+							\ ? nr2char(b:txtfmt_fmt_first_tok) : '')
 				endif
 				let iFmt = iFmt + 1
 			endwhile
-			" If necessary, add default fmt token to prevent formatting from
-			" spilling onto next line, and add space(s) for margin
-			" Case 1: 'conceal'
-			" <SPC> <SPC>
-			" Case 2: 'noconceal'
-			" <no-fmt-tok> <SPC>
-			let s = s . (b:txtfmt_cfg_conceal ? ' ' : nr2char(b:txtfmt_fmt_first_tok)) . ' '
+			" Append the border (1 or 2 spaces, depending on whether the final
+			" end tok has nonzero width).
+			let s .= cncl_ws . ' '
 			call append(line('$'), s)
 			let piClr = piClr + 1
 		endwhile

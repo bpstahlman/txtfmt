@@ -491,6 +491,8 @@ fu! s:Hide_leading_indent_maybe()
 	" still like to know why Tf_li_ws was allowed to take precedence over
 	" Tf_li_tok on the second of back-to-back tokens, even though Tf_li_tok
 	" is defined later, and hence, should take priority.
+	" ISSUE!!!!!: This is HUGELY EXPENSIVE on lines with lots of whitespace:
+	" Is there a better way????
 	let re_li_ws = '\s\+\%(' . re_li . '\)\@<='
 	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*'
 	" Caveat: Append leading indent lookbehind constraint separately,
