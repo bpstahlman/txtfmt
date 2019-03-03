@@ -395,137 +395,35 @@ fu! s:Hide_leading_indent_maybe()
 		" 'ts' settings.
 		let re_li = s:Get_smart_leading_indent_patt()
 	elseif b:txtfmt_cfg_leadingindent == 'width'
+		" FIXME: Probably get rid of this option, as support was never added.
 
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	let re_tok = b:txtfmt_re_any_tok
-	" Cache regex for a single (possibly escape/escapee) token
-	let re_tok_atom = '[' . b:txtfmt_re_any_tok_atom . ']'
-	" Modify the templates, taking 'conceal' into account.
-	if b:txtfmt_cfg_conceal
-		" Accept any number (including 0) of tokens before any whitespace that
-		" would have been matched by the pattern.
-		" Note: Intentionally deferring check for escaped tokens.
-		" Rationale: Embedding in re_li could exceed capture limit; defer to a
-		" look-behind assertion.
-		" Design Decision Needed: Consider highlighting useless end tokens
-		" within regions specially: (e.g., end clr in a fmt only region).
-		" Design Consideration: They're harmless, and are cleaned up
-		" automatically by auto-map operations, so we shouldn't mess up the
-		" leading indent width simply to call attention to them. However, if
-		" users's 'cocu' setting causes tokens to be visible, it might make
-		" sense to show them somehow.
-		" Hmm... Actually, they'll already be visible in that case; would we
-		" want to highlight them red or something? Doing so might give the
-		" mistaken impression that they're red fg/bg tokens.
-		" Problem: Useless end tokens are not recognized as tokens: as it is
-		" now, therefore, they already mess up the indent width. To change
-		" this, I could either have 2 distinct leading indent groups (one for
-		" tokens one for true whitespace), or I could keep a single leading
-		" indent group, but have a low-priority end token group that is
-		" contained by leading indent.
-		" Explanation: An end token that ends a region (i.e., isn't useless)
-		" is of type Tf_tok or Tf{cui}_tok_{bg_idx}. If the new tok group
-		" (say, Tf_invalid or somesuch) is lower priority than, and cannot be
-		" contained by, these groups, the definitions should be trivial. The
-		" question is, how would we want these highlighted? I would say that
-		" in the 'conceal' case, we'd want them concealed unless 'cocu'
-		" prevents it, in which case, they'd be shown normally. Hmm... This is
-		" the way it is for normal (useful) tokens. In the 'noconceal' case,
-		" we probably just want the useless tokens to be visible, but what
-		" about the indent width?
-		let re_li = substitute(re_li, '\%( \|\\[st]\)',
-			\ '\\%(' . re_tok_atom . '*&\\)', 'g')
-	else " noconceal
-		" Assumption: We've already returned in li='none' case.
-		if b:txtfmt_cfg_leadingindent =~ 'white\|space'
-			" Match token wherever a SPC would match.
-			let re_li = substitute(re_li, '\( \|\\s\)',
-				\ '\\%(' . re_tok_atom . '\\|\1\\)', 'g')
-		else " tab|smart
-			if b:txtfmt_cfg_leadingindent == 'smart'
-				" Match token anywhere a SPC would match.
-				" Note: Shouldn't be any literal spaces in li=tab pattern, so
-				" the containing guard isn't strictly necessary.
-				let re_li = substitute(re_li, ' ',
-					\'\\%(' . re_tok_atom . '\\| \\)', 'g')
-			endif
-			" Allow any amount of a tabstop (up to and including full width)
-			" to be tokens.
-			" Regex: (TOK){,<ts-1>}TAB|(TOK){<ts>}
-			let re_li = substitute(re_li, '\\t',
-				\ '\\%(' . re_tok_atom . '\\{,' . (&ts - 1) . '}\\t'
-				\.'\\|' . re_tok_atom . '\\{' . &ts . '}\\)', 'g')
-		endif
-	endif
-	" Also match blank lines (whitespace and tokens only)
-	" Note: escape-escapee test done elsewhere
-	let re_li = '^\%(\%(\s\|' . re_tok_atom . '\)\+$\)\|^' . re_li
-	if b:txtfmt_cfg_escape == 'self'
-		" Append look-behind assertion to ensure none of the tokens matched in
-		" leading indent were escape-escapee pairs. (Note that if they were,
-		" backtracking could still permit shorter leading indent match.)
-		" Note: We can ignore esc=bslash case because backslashes can't be
-		" matched by the existing re_li pattern.
-		" At this point, re_li contains backrefs, so we'll need to adjust the
-		" capture numbers in the zero-width assertion we're about to append.
-		" Optimization Note: The shift amount should always be 1, so we could
-		" probably just hardcode \2 in lieu of \1, but using
-		" Adjust_capture_numbers is a bit more future-proof.
-		let re_li .= s:Adjust_capture_numbers(
-			\ '\%(^\%(\%(\(' . re_tok_atom . '\)\1\)\@!.\)*\)\@<=',
-			\ re_li)
-	endif
-	" Now create some patterns that recognize tokens/whitespace *within*
-	" leading indent.
-	" Note: escape-escapee test done elsewhere
-	let re_tok_or_ws = '\s\|' . re_tok_atom
-	" Now the tricky part: need to be able to match *any* portion of the
-	" leading indent independently of the rest of it.
-	" Rationale: Tokens can break leading indent into multiple segments.
-	" Note: In the 'smart' and 'width' leading indent cases, we have to look
-	" past the matched region to determine whether or not we're inside leading
-	" indent; although we could avoid this for other li regimes, it's probably
-	" not worth optimizing...
-	" TODO: Although this is the way I want it (ws and tok orthogonal), would
-	" still like to know why Tf_li_ws was allowed to take precedence over
-	" Tf_li_tok on the second of back-to-back tokens, even though Tf_li_tok
-	" is defined later, and hence, should take priority.
-	let re_li_ws = '\s\+\%(' . re_li . '\)\@<='
-	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*'
-	" Caveat: Append leading indent lookbehind constraint separately,
-	" adjusting its backreferences to account for captures in re_tok.
-	let re_li_tok .= s:Adjust_capture_numbers('\%(' . re_li . '\)\@<=', re_li_tok)
+	" Cache lookbehind anchor to BOL, possibly followed by unescaped tokens.
+	let re_bol = '\%(^\%(' . re_tok . '\)*\)\@<='
+	" Also match blank lines (^ TOK* WS+ TOK* $).
+	" TODO: Consider whether the blank lines need to be a special case: we're
+	" no longer supporting 'noconceal' case, and in the 'conceal' case, it's
+	" possible a blank line would be used for a highlighted border of some
+	" sort. Keep in mind that if the desire were to have no highlighting on
+	" the line, this would be simple enough: just remove the useless
+	" whitespace. Yes, I'm thinking maybe get rid of this.
+	" TODO: Consider whether syntax group priority could obviate the need for
+	" lookaround assertions in tok patterns when escape != none.
+	" Note: Place the BOL anchor before the alternatives to short-circuit a
+	" lot of useless matching.
+	let re_li = re_bol . '\%(\%(\s\+\)\%(' . re_tok . '\)*$\|' . re_li .'\)'
+
 	" Persist re_li on the buffer so that it's available to lineshift
 	" functions.
 	let b:txtfmt_re_leading_indent = re_li
-	" Cache vars globally for debug only.
-	" TODO: Remove debug assignments...
-	let [g:re_li_ws, g:re_li_tok, g:re_li, g:re_tok_or_ws] =
-		\ [re_li_ws, re_li_tok, re_li, re_tok_or_ws]
 
 	" Create the non-token syntax group whose purpose is to hide all
 	" highlighting in whatever is considered to be leading indent.
-	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
+	exe 'syn match Tf_li /' . re_li . '/ contained'
 		\ . ' containedin=@Tf'.cui.'_all'
-	" Note: Ideally, Tf_li_tok would simply be containedin Tf_tok, but in the
-	" 'conceal' case, Tf_tok is transparent, and transparent groups can't
-	" contain other groups directly. Thus, in the 'conceal' case, Tf_li_tok is
-	" contained in the region itself, whereas in the 'noconceal' case, it can
-	" be contained directly by (non-transparent) Tf_tok.
-	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
-		\ . (b:txtfmt_cfg_conceal ? ' conceal' : '')
-		\ . ' containedin=@Tf'.cui
-		\ . (b:txtfmt_cfg_conceal ? '_all' : '_tok')
-	if b:txtfmt_cfg_conceal
-		" Make sure Tf_li_tok isn't linked to Tf_conceal. (Note that this
-		" could happen if user changes 'conceal' in a modeline and re-:edits
-		" the file, without restarting Vim or clearing syntax.)
-		hi link Tf_li_tok NONE
-	else
-		" Hide tokens' foreground in leading indent since we can't conceal.
-		hi link Tf_li_tok Tf_conceal
-	endif
+	" REMOVED Tf_li_tok
 endfu
 " >>>
 " Achieve clr->bgc->fmt order required for highlight command.
