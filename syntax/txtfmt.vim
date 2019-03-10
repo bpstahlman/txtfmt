@@ -394,9 +394,6 @@ fu! s:Hide_leading_indent_maybe()
 		" Note: Generate complex pattern that depends upon effective 'sw' and
 		" 'ts' settings.
 		let re_li = s:Get_smart_leading_indent_patt()
-	elseif b:txtfmt_cfg_leadingindent == 'width'
-		" FIXME: Probably get rid of this option, as support was never added.
-
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	let re_tok = b:txtfmt_re_any_tok
@@ -408,7 +405,10 @@ fu! s:Hide_leading_indent_maybe()
 	" possible a blank line would be used for a highlighted border of some
 	" sort. Keep in mind that if the desire were to have no highlighting on
 	" the line, this would be simple enough: just remove the useless
-	" whitespace. Yes, I'm thinking maybe get rid of this.
+	" whitespace. In fact, I'm thinking it might actually be better for stray
+	" whitespace on an empty line to be highlighted, as it would increase the
+	" probability of it being found and removed. Yes, I'm thinking maybe get
+	" rid of this.
 	" TODO: Consider whether syntax group priority could obviate the need for
 	" lookaround assertions in tok patterns when escape != none.
 	" Note: Place the BOL anchor before the alternatives to short-circuit a
@@ -663,7 +663,10 @@ fu! s:Define_syntax()
 	" Note: Omit 'contained', since Tf_tok is permitted at top level. But in
 	" the 'noconceal' case, use containedin=ALLBUT,<tok-cluster> to prevent a
 	" pointless match of Tf_tok within one of the bgc-specific tok groups.
-	exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/'
+	" FIXME: Is it possible to avoid use of lookaround assertions in
+	" b:txtfmt_re_any_tok, given that the esc pair groups have priority over
+	" the tok groups? If so, would be efficiency gain...
+	exe 'syn match Tf_tok /['.b:txtfmt_re_any_tok_atom.']/'
 		\ . (b:txtfmt_cfg_conceal ? '' : ' containedin=ALLBUT,@Tf'.cui.'_tok')
 		\ . conceal.transparent
 	" Note: When 'conceal' is set, transparent and conceal attributes obviate
@@ -695,7 +698,7 @@ fu! s:Define_syntax()
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
-			exe 'syn match Tf'.cui.'_tok_'.i.' /'.b:txtfmt_re_any_tok.'/ contained'.conceal
+			exe 'syn match Tf'.cui.'_tok_'.i.' /['.b:txtfmt_re_any_tok_atom.']/ contained'.conceal
 			exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			" Note: Tf{cui}_tok name is fine since clusters/groups are in
 			" distinct namespaces.
@@ -1002,10 +1005,33 @@ fu! s:Define_syntax()
 			let rgn_cmn_xb = s:Make_exe_builder()
 			call rgn_cmn_xb.add('syn region ', 1)
 			call rgn_cmn_xb.add(rgn_name_xb)
-			call rgn_cmn_xb.add(skip . ' end=/[', 1)
-			" FIXME_COMBINATIONS: With permutation-sensitive engine, any start
-			" tok ended a region; however, with combinations, we care only
-			" about start tokens not represented in current combination.
+			" Note: The pattern for start toks involved in the current
+			" combination is needed in both end and start patterns, so go
+			" ahead and cache xb for it now.
+			let rgn_stoks_atom_xb = s:Make_exe_builder()
+			call rgn_stoks_atom_xb.add_list(map(range(iord + 1),
+				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
+			" Add the end pattern.
+			" Note: At start of end pattern, we need a negative character
+			" class preventing match of start tokens represented in current
+			" region combination. (Either that, or we need to exclude those
+			" start toks from the pattern some other way.)
+			" Rationale: If one of the region's own start toks is permitted to
+			" end the region, a spurious region may be allowed to start: e.g.,
+			" if <f2> is allowed to end a fmt_2 region, it might then begin
+			" the highest priority fmtclr region (fmtclr_2_8 - since it has a
+			" start pattern matching <f2> and is mentioned in fmt_2's
+			" nextgroup.)
+			" There are 2 possible solutions: 1) don't allow a start tok to
+			" end its own region; 2) break up the nextgroup regions such that
+			" each can begin with only 1 start tok. I've chosen option 1,
+			" which is the simplest and most efficient.
+			call rgn_cmn_xb.add(skip . ' end=/[^', 1)
+			call rgn_cmn_xb.add(rgn_stoks_atom_xb)
+			" Finish the branch that excludes start toks in current
+			" combination, and begin branch that includes start toks which are
+			" *not* in current combination, and end toks which are.
+			call rgn_cmn_xb.add(']\&[', 1)
 			call rgn_cmn_xb.add(b:txtfmt_re_any_stok_atom, 1)
 			" Region is ended by end tok for any rgn type in current
 			" combination.
@@ -1038,12 +1064,9 @@ fu! s:Define_syntax()
 			let rgn1_xb = s:Make_exe_builder()
 			call rgn1_xb.add(rgn_cmn_xb)
 			call rgn1_xb.add(rgn_cmn1 . ' start=/[', 1)
-			" TODO: Consider having a placeholder var for this...
-			" FIXME_COMBINATIONS: Region can start with the start tok of *any*
-			" of the regions in the current combination (not just the last as
-			" with permutations).
-			call rgn1_xb.add_list(map(range(iord + 1),
-				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
+			" Region can start with the start tok of *any* of the regions in
+			" the current combination. (Re-use cached xb.)
+			call rgn1_xb.add(rgn_stoks_atom_xb)
 			call rgn1_xb.add(']/', 1)
 			let hi_xb = s:Make_exe_builder()
 			call hi_xb.add('hi ', 1)
