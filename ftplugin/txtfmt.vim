@@ -743,15 +743,8 @@ endfu
 " >>>
 " Shift functions <<<
 " Remove tokens within leading indent in each line in input range.
-" Special Case: In 'noconceal' case, temporarily remove tokens just past leading
-" indent (for li regimes in which such tokens would not be part of leading
-" indent).
-" Rationale: Before existence of 'leadingindent', 'noconceal' users may have
-" placed tokens just past leading indent to avoid spurious highlighting; in such
-" cases, it's best to perform the shift/indent without the tokens, then add them
-" back.
-" Note: As long as 'li' is forced to be 'white' or 'none' (as is currently the
-" case), the special logic will never be used.
+" Special Case: In 'noconceal' case, all leading whitespace is leading indent.
+" Rationale: 'noconceal' supports only li=none|white.
 " Return: list indicating what was removed:
 " [
 "   {'lnum': lnum, 'toks': [{tokstr}...]}]
@@ -773,19 +766,6 @@ fu! s:Remove_toks_in_li(l1, l2)
 			let li_strlen = len(li_str)
 		else
 			let li_end = 0
-		endif
-		" Note: See comment in header describing this special 'noconceal' logic.
-		if !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent =~ '^\(smart\|tab\)'
-			" Check for tokens in whitespace past end of leading indent.
-			let end = matchend(line_str,
-				\ '^\%(' . b:txtfmt_re_any_tok . '\|\s\)\+', li_end)
-			if end >= 0
-				" Allow subsequent distinction between leading indent and any
-				" tokens immediately following it.
-				let skip_bytes = end - li_end
-				let li_str .= line_str[li_end:end-1]
-				let li_strlen += skip_bytes
-			endif
 		endif
 		" Don't add list element if no leading indent (or toks just past).
 		if !li_strlen
@@ -811,12 +791,6 @@ fu! s:Remove_toks_in_li(l1, l2)
 				endif
 				" Accumulate up to tok.
 				let s .= strpart(li_str, i, m[1] - i)
-				" Note: Replacement considered only for toks in true leading
-				" indent.
-				if !b:txtfmt_cfg_conceal && m[2] < li_end
-					" Replace tok with space for alignment.
-					let s .= ' '
-				endif
 				" Skip over the token
 				let i = m[2]
 			else
@@ -841,6 +815,7 @@ fu! s:Restore_toks_after_shift(toks)
 	if b:txtfmt_cfg_leadingindent == 'none'
 		return
 	endif
+	" Iterate over lines to be processed.
 	for t in a:toks
 		" Find extents of leading indent
 		let line_str = getline(t['lnum'])
@@ -850,37 +825,57 @@ fu! s:Restore_toks_after_shift(toks)
 			let toks = t['toks']
 			let pre = strpart(line_str, 0, li_end < 0 ? 0 : li_end)
 		else " noconceal
-			" Design Decision: In noconceal case, "hide" tokens whenever we can,
-			" even at the cost of replacing spaces that aren't technically
-			" considered leading indent.
+			" Design Decision: In noconceal case, "hide" tokens whenever we can
+			" within leading whitespace (all of which is considered "leading
+			" indent" under 'noconceal').
+			" Rationale: 'noconceal' supports only li=none|white
+			" Find end of leading whitespace.
 			let li_end = max([matchend(line_str, '^\s*'), 0])
+			" Grab toks that go at head of this line.
 			let toks = t['toks'][:]
-			" Figure out how far back to start replacing tokens.
-			let [N, n, i] = [len(toks), 0, li_end - 1]
-			while i >= 0 && n < N
-				let n += line_str[i] == ' ' ? 1 : &ts
-				let i -= 1
-			endwhile
-			let n = min([n, N])
-			" Set i to index of first char to be overwritten (if any).
-			let i += 1
-			" Get leading portion of line that won't be modified.
-			let pre = strpart(line_str, 0, i)
-			" Overwrite whitespace with tokens, working from left to right.
-			while i < li_end && !empty(toks)
-				if line_str[i] == ' '
-					let pre .= remove(toks, 0)
-				else
-					" How many tokens can we fit in this tab?
-					let repl = min([len(toks), &ts])
-					let pre .= join(remove(toks, 0, repl - 1), '')
-						\ . (repl < &ts ? "\t" : '')
+			" Determine byte index of the first whitespace char we need to keep.
+			" Logic: Keep run of whitespace chars that could be completely
+			" contained horizontally within the space occupied by the toks.
+			" Design Decision: When there is no sequence of leading whitespace
+			" whose screen width exactly matches that of tok sequence, err on
+			" the side of keeping too much indentation.
+			" Approach: Accumulate screen widths of all the tokens to be prepended,
+			" then do the same for leading whitespace chars, stopping when
+			" screen width of whitespace chars meets or exceeds that of toks. 
+			" Note: Both toks and whitespaces can have screen widths > 1.
+			let tokw = 0
+			for t in toks
+				let tokw += strdisplaywidth(t, tokw + 1)
+			endfor
+			let wsw = 0
+			let [col, ecol, n] = [0, 0, len(line_str)]
+			while col < n
+				" Make ecol point just *past* current ws char.
+				" Note: If all whitespace is space or tab, the following loop is
+				" unnecessary, but it's used to handle exotic mb whitespace.
+				let ecol = col + 1
+				while ecol < n
+					if strchars(line_str[col:ecol]) > 1
+						" ecol is into next char
+						break
+					endif
+					let ecol += 1
+				endwhile
+				" Update screen width
+				let wsw += strdisplaywidth(line_str[col:ecol-1], wsw + 1)
+				if wsw > tokw
+					" Design Decision: Keep ws char pointed to by col
+					break
+				elseif wsw == tokw
+					" Strip ws char pointed to by col
+					let col = ecol
+					break
 				endif
-				" Advance to next tab or char.
-				let i += 1
+				" Advance to next ws char.
+				let col = ecol
 			endwhile
 		endif
-		call setline(t['lnum'], pre . join(toks, '') . line_str[li_end : ])
+		call setline(t['lnum'], join(toks, '') . line_str[col : ])
 	endfor
 endfu
 
