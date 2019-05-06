@@ -413,6 +413,7 @@ fu! s:Hide_leading_indent_maybe()
 	" lookaround assertions in tok patterns when escape != none.
 	" Note: Place the BOL anchor before the alternatives to short-circuit a
 	" lot of useless matching.
+	" FIXME: The alternative shouldn't be needed here...
 	let re_li = re_bol . '\%(\%(\s\+\)\%(' . re_tok . '\)*$\|' . re_li .'\)'
 
 	" Persist re_li on the buffer so that it's available to lineshift
@@ -423,7 +424,18 @@ fu! s:Hide_leading_indent_maybe()
 	" highlighting in whatever is considered to be leading indent.
 	exe 'syn match Tf_li /' . re_li . '/ contained'
 		\ . ' containedin=@Tf'.cui.'_all'
-	" REMOVED Tf_li_tok
+
+	" Create group that matches inside a token preceded by nothing but
+	" unescaped tokens to BOL.
+	" Rationale: Used to prevent display of toks in leading indent.
+	" Note: The simplistic `.' pattern is sufficient because of contains= in
+	" Tf*_tok groups.
+	" Idiosyncrasy: A containedin= won't work because Tf*_tok is
+	" 'transparent', and transparent groups that have no contains= aren't even
+	" considered by containedin= logic. Note that it doesn't actually matter
+	" which groups are in the contains= list: a contains=foobar in Tf_tok
+	" would make a containedin=Tf_tok in Tf_li_tok work.
+	exe 'syn match Tf_li_tok /' . re_bol . './ contained'
 endfu
 " >>>
 " Achieve clr->bgc->fmt order required for highlight command.
@@ -669,10 +681,12 @@ fu! s:Define_syntax()
 	exe 'syn match Tf_tok /['.b:txtfmt_re_any_tok_atom.']/'
 		\ . (b:txtfmt_cfg_conceal ? '' : ' containedin=ALLBUT,@Tf'.cui.'_tok')
 		\ . conceal.transparent
+		\ . ' contains=Tf_li_tok'
 	" Note: When 'conceal' is set, transparent and conceal attributes obviate
 	" need to define highlighting for Tf_tok groups.
 	if !b:txtfmt_cfg_conceal
 		hi link Tf_tok Tf_conceal
+		hi link Tf_li_tok Tf_conceal
 		" Create bgc-specific tok concealment groups and associated
 		" highlighting, adding the groups to the special Tf{cui}_tok
 		" cluster used in containedin's ALLBUT clause.
@@ -698,7 +712,8 @@ fu! s:Define_syntax()
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
-			exe 'syn match Tf'.cui.'_tok_'.i.' /['.b:txtfmt_re_any_tok_atom.']/ contained'.conceal
+			exe 'syn match Tf'.cui.'_tok_'.i.' /['.b:txtfmt_re_any_tok_atom
+				\.']/ contained contains=Tf_li_tok'.conceal
 			exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			" Note: Tf{cui}_tok name is fine since clusters/groups are in
 			" distinct namespaces.
@@ -773,7 +788,7 @@ fu! s:Define_syntax()
 		" Note: In the 'noconceal' case, cluster will be populated later.
 		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.cui.'_tok'
 		if b:txtfmt_cfg_leadingindent != 'none'
-			let containedin_def .= ',Tf_li_ws,Tf_li_tok,Tf_li_tok'
+			let containedin_def .= ',Tf_li_tok'
 		endif
 	else
 		let containedin_def = ''
