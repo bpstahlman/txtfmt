@@ -397,45 +397,36 @@ fu! s:Hide_leading_indent_maybe()
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	let re_tok = b:txtfmt_re_any_tok
-	" Cache lookbehind anchor to BOL, possibly followed by unescaped tokens.
-	let re_bol = '\%(^\%(' . re_tok . '\)*\)\@<='
-	" Also match blank lines (^ TOK* WS+ TOK* $).
-	" TODO: Consider whether the blank lines need to be a special case: we're
-	" no longer supporting 'noconceal' case, and in the 'conceal' case, it's
-	" possible a blank line would be used for a highlighted border of some
-	" sort. Keep in mind that if the desire were to have no highlighting on
-	" the line, this would be simple enough: just remove the useless
-	" whitespace. In fact, I'm thinking it might actually be better for stray
-	" whitespace on an empty line to be highlighted, as it would increase the
-	" probability of it being found and removed. Yes, I'm thinking maybe get
-	" rid of this.
 	" TODO: Consider whether syntax group priority could obviate the need for
 	" lookaround assertions in tok patterns when escape != none.
-	" Note: Place the BOL anchor before the alternatives to short-circuit a
-	" lot of useless matching.
-	" FIXME: The alternative shouldn't be needed here...
-	let re_li = re_bol . '\%(\%(\s\+\)\%(' . re_tok . '\)*$\|' . re_li .'\)'
 
-	" Persist re_li on the buffer so that it's available to lineshift
-	" functions.
-	let b:txtfmt_re_leading_indent = re_li
+	" Persist anchored leadingindent pattern on the buffer so that it's
+	" available to lineshift functions.
+	let b:txtfmt_re_leading_indent =
+		\ '\%(^\%(' . re_tok . '\)*\)\@<=\%(' . re_li .'\)'
 
-	" Create the non-token syntax group whose purpose is to hide all
-	" highlighting in whatever is considered to be leading indent.
-	exe 'syn match Tf_li /' . re_li . '/ contained'
+	" Create the non-token syntax group whose purpose is to hide *all*
+	" highlighting of whitespace in whatever is considered leading indent.
+	exe 'syn match Tf_li /' . b:txtfmt_re_leading_indent . '/ contained'
 		\ . ' containedin=@Tf'.cui.'_all'
 
 	" Create group that matches inside a token preceded by nothing but
-	" unescaped tokens to BOL.
-	" Rationale: Used to prevent display of toks in leading indent.
-	" Note: The simplistic `.' pattern is sufficient because of contains= in
-	" Tf*_tok groups.
-	" Idiosyncrasy: A containedin= won't work because Tf*_tok is
-	" 'transparent', and transparent groups that have no contains= aren't even
-	" considered by containedin= logic. Note that it doesn't actually matter
-	" which groups are in the contains= list: a contains=foobar in Tf_tok
-	" would make a containedin=Tf_tok in Tf_li_tok work.
-	exe 'syn match Tf_li_tok /' . re_bol . './ contained'
+	" whitespace that qualifies as "leading indent", optionally preceded
+	" and/or followed by unescaped tokens
+	" (Note: Tokens are not permitted to break up the whitespace.)
+	" Rationale: Without this group, tokens in leading indent would show
+	" background color and certain formats whenever the tokens were
+	" non-zero-width (either because of 'noconceal' or 'cocu' setting).
+	" Note: The simplistic `.' pattern (after the lookbehind) is sufficient
+	" because of a `contains=' in Tf*_tok groups.
+	" Idiosyncrasy: A `containedin=' on this group won't work because Tf*_tok
+	" is 'transparent', and transparent groups that have no contains= aren't
+	" even considered by containedin= logic. Note that it doesn't actually
+	" matter which groups are in the contains= list: a contains=foobar in
+	" Tf_tok would make a containedin=Tf_tok in Tf_li_tok work.
+	exe 'syn match Tf_li_tok /\%(^\%(' . re_tok . '\)*'
+		\ . '\%(' . re_li .'\)\?\)\@<=./ contained'
+
 endfu
 " >>>
 " Achieve clr->bgc->fmt order required for highlight command.
@@ -683,10 +674,13 @@ fu! s:Define_syntax()
 		\ . conceal.transparent
 		\ . ' contains=Tf_li_tok'
 	" Note: When 'conceal' is set, transparent and conceal attributes obviate
-	" need to define highlighting for Tf_tok groups.
+	" need to define highlighting for Tf_tok group, but NOT for Tf_li_tok.
+	" Rationale: The purpose of Tf_li_tok is to *hide* highlighting of
+	" containing group (e.g., group with bg color, underline, etc.), not allow
+	" it to shine through.
+	hi link Tf_li_tok Tf_conceal
 	if !b:txtfmt_cfg_conceal
 		hi link Tf_tok Tf_conceal
-		hi link Tf_li_tok Tf_conceal
 		" Create bgc-specific tok concealment groups and associated
 		" highlighting, adding the groups to the special Tf{cui}_tok
 		" cluster used in containedin's ALLBUT clause.
