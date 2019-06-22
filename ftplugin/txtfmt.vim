@@ -757,21 +757,14 @@ fu! s:Remove_toks_in_li(l1, l2)
 	endif
 	for lnum in range(a:l1, a:l2)
 		" Find extents of leading indent
-		" TODO: Accept toks in the middle of leading indent for this, even
-		" though the syntax can't...
-		" Rationale: Breaking up leadingindent with tokens is not much of a use
-		" case...
-		" if conceal
-		" 		let re_li = substitute(re_li, '\%( \|\\[st]\)',
-		" 					\ '\\%(' . re_tok_atom . '*&\\)', 'g')
-		" else
-		"	" Match token wherever a SPC would match.
-		"	let re_li = substitute(re_li, '\( \|\\s\)',
-		"		\ '\\%(' . re_tok_atom . '\\|\1\\)', 'g')
-		" endif
+		" Design Decision: Slurp in any toks after leadingindent.
+		" Rationale: 1) Allows them to be repositioned to BOL, and 2) more
+		" importantly, allows any whitespace following the tok, which isn't
+		" included in leadingindent, to take part in shift.
+		let re_li = b:txtfmt_re_leading_indent . '\%(' . b:txtfmt_re_any_tok . '\)*'
 		let line_str = getline(lnum)
 		let [li_str, li_strlen, skip_bytes] = ['', 0, 0]
-		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
+		let li_end = matchend(line_str, re_li)
 		if li_end >= 0
 			" Grab the leading indent.
 			let li_str = strpart(line_str, 0, li_end)

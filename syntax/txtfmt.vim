@@ -397,13 +397,23 @@ fu! s:Hide_leading_indent_maybe()
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	let re_tok = b:txtfmt_re_any_tok
-	" TODO: Consider whether syntax group priority could obviate the need for
-	" lookaround assertions in tok patterns when escape != none.
 
 	" Persist anchored leadingindent pattern on the buffer so that it's
 	" available to lineshift functions.
-	let b:txtfmt_re_leading_indent =
-		\ '\%(^\%(' . re_tok . '\)*\)\@<=\%(' . re_li .'\)'
+	" Design Decision: Don't include any trailing tokens.
+	if b:txtfmt_cfg_leadingindent == 'smart'
+		" Caveat: For efficiency reasons, li=smart disallows tokens *within*
+		" the leadingindent, though it can appear before and after.
+		" Rationale: Unlike the other li regimes, the nature of li=smart
+		" precludes matching li segments in isolation; it's necessary to use
+		" lookahead in conjunction with lookbehind, in a manner that leads to
+		" *lots* of expensive backtracking in long runs of whitespace.
+		let b:txtfmt_re_leading_indent =
+			\ '\%(^\%(' . re_tok . '\)*\)\@<=\%(' . re_li .'\)'
+	else
+		let b:txtfmt_re_leading_indent =
+			\ '\%(^\%(' . re_tok . '\|' . re_li . '\)*\)\@<=\%(' . re_li .'\)'
+	endif
 
 	" Create the non-token syntax group whose purpose is to hide *all*
 	" highlighting of whitespace in whatever is considered leading indent.
