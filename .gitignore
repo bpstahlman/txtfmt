@@ -1,0 +1,7 @@
+*.out
+.*.*
+detailed_description-*.txt
+*.tar.gz
+*.swo
+*.swp
+*.ods

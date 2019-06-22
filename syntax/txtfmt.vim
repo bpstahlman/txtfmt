@@ -381,19 +381,15 @@ fu! s:Hide_leading_indent_maybe()
 	" TODO: Disable (set to 'none') in 'noconceal' case.
 	" Initialize the leading indent regex to an option-specific template that
 	" may be adjusted later.
-	if b:txtfmt_cfg_leadingindent == 'none'
+	if !b:txtfmt_cfg_leadingindent == 'none'
 		" Don't create any regions for leading indent.
 		return
 	elseif b:txtfmt_cfg_leadingindent == 'space'
-		let re_li = ' \+'
+		let re_li_char = ' '
 	elseif b:txtfmt_cfg_leadingindent == 'tab'
-		let re_li = '\t\+'
+		let re_li_char = '\t'
 	elseif b:txtfmt_cfg_leadingindent == 'white'
-		let re_li = '\s\+'
-	elseif b:txtfmt_cfg_leadingindent == 'smart'
-		" Note: Generate complex pattern that depends upon effective 'sw' and
-		" 'ts' settings.
-		let re_li = s:Get_smart_leading_indent_patt()
+		let re_li_char = '\s'
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	let re_tok = b:txtfmt_re_any_tok
@@ -402,8 +398,15 @@ fu! s:Hide_leading_indent_maybe()
 
 	" Persist anchored leadingindent pattern on the buffer so that it's
 	" available to lineshift functions.
+	" Note: The \@> prevents pathological slowness on long runs of whitespace
+	" in line interior.
 	let b:txtfmt_re_leading_indent =
-		\ '\%(^\%(' . re_tok . '\)*\)\@<=\%(' . re_li .'\)'
+		\ '\%(^\%(' . re_tok . '\|' . re_li_char. '\)*\)\@<='
+		\ . '\%(\%(' . re_li .'\)\+\)\&>'
+	" Pattern that matches all leadingindent from BOL, not just piecewise
+	" segments. (Needed by lineshift functions.)
+	let b:txtfmt_re_leading_indent_all =
+		\ '\%(^\%(' . re_tok . '\|' . re_li_char. '\)\+\)'
 
 	" Create the non-token syntax group whose purpose is to hide *all*
 	" highlighting of whitespace in whatever is considered leading indent.
@@ -411,8 +414,8 @@ fu! s:Hide_leading_indent_maybe()
 		\ . ' containedin=@Tf'.cui.'_all'
 
 	" Create group that matches inside a token preceded by nothing but
-	" whitespace that qualifies as "leading indent", optionally preceded
-	" and/or followed by unescaped tokens
+	" whitespace that qualifies as "leading indent", optionally interspersed
+	" with unescaped tokens
 	" (Note: Tokens are not permitted to break up the whitespace.)
 	" Rationale: Without this group, tokens in leading indent would show
 	" background color and certain formats whenever the tokens were
@@ -666,9 +669,6 @@ fu! s:Define_syntax()
 	" Note: Omit 'contained', since Tf_tok is permitted at top level. But in
 	" the 'noconceal' case, use containedin=ALLBUT,<tok-cluster> to prevent a
 	" pointless match of Tf_tok within one of the bgc-specific tok groups.
-	" FIXME: Is it possible to avoid use of lookaround assertions in
-	" b:txtfmt_re_any_tok, given that the esc pair groups have priority over
-	" the tok groups? If so, would be efficiency gain...
 	exe 'syn match Tf_tok /['.b:txtfmt_re_any_tok_atom.']/'
 		\ . (b:txtfmt_cfg_conceal ? '' : ' containedin=ALLBUT,@Tf'.cui.'_tok')
 		\ . conceal.transparent
