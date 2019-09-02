@@ -403,11 +403,15 @@ fu! s:Hide_leading_indent_maybe()
 	" Design Decision: Don't include any trailing tokens.
 	if b:txtfmt_cfg_leadingindent == 'smart'
 		" Caveat: For efficiency reasons, li=smart disallows tokens *within*
-		" the leadingindent, though it can appear before and after.
-		" Rationale: Unlike the other li regimes, the nature of li=smart
-		" precludes matching li segments in isolation; it's necessary to use
-		" lookahead in conjunction with lookbehind, in a manner that leads to
-		" *lots* of expensive backtracking in long runs of whitespace.
+		" the leadingindent, though they can appear before and after.
+		" Rationale: The nature of li=smart complicates the matching of
+		" discontiguous segments in isolation: correct matching entails a
+		" lookahead/lookbehind combination, in which the lookbehind occurs at
+		" the end of a greedy lookahead, which can lead to *lots* of
+		" expensive backtracking in long runs of non-li whitespace! In fact,
+		" the pathological slowness engendered by long runs of SPACE chars in
+		" a tab-based li=smart ultimately led to a significant rewrite of
+		" syntax engine.
 		let b:txtfmt_re_leading_indent =
 			\ '\%(^\%(' . re_tok . '\)*\)\@<=\%(' . re_li .'\)'
 	else

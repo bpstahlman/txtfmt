@@ -957,8 +957,7 @@ fu! s:Lineshift(mode, dedent)
 		echoerr "Invalid mode for Txtfmt lineshift: " . a:mode
 	endif
 
-	" Put back uniquified, ordered list of removed tokens just past leading
-	" indent.
+	" Prepend uniquified, ordered sequences of removed tokens to lines.
 	call s:Restore_toks_after_shift(toks)
 	" Note: Vim leaves cursor on first non-whitespace char (possibly token).
 	" In some cases (e.g., 'noconceal' and li=white), this would leave cursor
@@ -974,6 +973,17 @@ endfu
 fu! s:Shift_right_operator(mode)
 	call s:Lineshift('o', 0)
 endfu
+
+" Txtfmt "smart" (Txtfmt-aware) :retab command
+fu! s:Retab(l1, l2, bang, ts)
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(a:l1, a:l2)
+	" Perform the requested :retab.
+	exe a:l1 . ',' . a:l2 . 'retab' . a:bang . ' ' . a:ts
+	" Prepend uniquified, ordered sequences of removed tokens to lines.
+	call s:Restore_toks_after_shift(toks)
+endfu
+
 " >>>
 " >>>
 " TODO: Perhaps move elsewhere...
@@ -6619,6 +6629,7 @@ endfu
 com! -buffer ShowTokenMap call <SID>ShowTokenMap()
 com! -buffer -nargs=? MoveStartTok call <SID>MoveStartTok(<f-args>)
 com! -buffer -nargs=* GetTokInfo echo <SID>GetTokInfo(<f-args>)
+com! -buffer -bang -nargs=1 -range=% Retab call <SID>Retab(<line1>, <line2>, '<bang>', <f-args>)
 " >>>
 " MAPS: LEVEL 1 & 2 (reconfig): normal/insert mode --> <Plug>... mappings <<<
 " Note: <C-R> used (rather than <C-O>) to prevent side-effect when insert-mode
