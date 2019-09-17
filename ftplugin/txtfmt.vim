@@ -761,7 +761,9 @@ fu! s:Remove_toks_in_li(l1, l2)
 		" Rationale: 1) Allows them to be repositioned to BOL, and 2) more
 		" importantly, allows any whitespace following the tok, which isn't
 		" included in leadingindent, to take part in shift.
-		let re_li = b:txtfmt_re_leading_indent . '\%(' . b:txtfmt_re_any_tok . '\)*'
+		" Special Case: Leading indent matches whitespace only, so we make its
+		" regex optional to ensure that toks at BOL are removed.
+		let re_li = '^\%(' . b:txtfmt_re_leading_indent . '\)\?\%(' . b:txtfmt_re_any_tok . '\)*'
 		let line_str = getline(lnum)
 		let [li_str, li_strlen, skip_bytes] = ['', 0, 0]
 		let li_end = matchend(line_str, re_li)
