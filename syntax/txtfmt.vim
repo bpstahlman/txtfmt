@@ -200,7 +200,6 @@ fu! s:Get_smart_leading_indent_patt()
 	" Cache a few pertinent options for convenience.
 	let sw = shiftwidth()
 	let ts = &ts
-	let conceal = b:txtfmt_cfg_conceal
 	if !&expandtab
 		if sw == ts
 			" 1-to-1 correspondence between tabstop and indent

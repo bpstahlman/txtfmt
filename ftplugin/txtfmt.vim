@@ -747,8 +747,7 @@ endfu
 " [
 "   {'lnum': lnum, 'toks': [{tokstr}...]}]
 " Note: Only lines with tokens removed are represented in list.
-" Precondition: In 'noconceal' case, the only permissible 'li' settings are
-" 'none' and 'white'.
+" Precondition: Can't get here in 'noconceal' case.
 fu! s:Remove_toks_in_li(l1, l2)
 	let ret = []
 	" Short-circuit on li=none (in case caller doesn't check).
@@ -800,6 +799,9 @@ fu! s:Remove_toks_in_li(l1, l2)
 				let s .= strpart(li_str, i, m[1] - i)
 				" Note: Replacement considered only for toks in true leading
 				" indent.
+				" TODO: Eventually, remove this if since it will never be
+				" entered now that 'li' is forced to 'none' for 'noconceal'
+				" case.
 				if !b:txtfmt_cfg_conceal && m[2] < li_end
 					" Replace tok with space for alignment.
 					" Design Decision Needed: Should we use strdisplaywidth() to
@@ -842,6 +844,8 @@ fu! s:Restore_toks_after_shift(toks)
 			" whitespace.
 			let li = 0
 		else " noconceal
+			" TODO: Eventually, remove this else since it will never be entered
+			" now that 'li' is forced to 'none' for 'noconceal' case.
 			" Toks are not zero-width: "Hide" them in existing whitespace if
 			" possible.
 			" Assumption: Getting here implies li=white
@@ -6631,7 +6635,10 @@ endfu
 com! -buffer ShowTokenMap call <SID>ShowTokenMap()
 com! -buffer -nargs=? MoveStartTok call <SID>MoveStartTok(<f-args>)
 com! -buffer -nargs=* GetTokInfo echo <SID>GetTokInfo(<f-args>)
+" Note: No special retab logic if leading indent is highlighted like text.
+if b:txtfmt_cfg_leadingindent != 'none'
 com! -buffer -bang -nargs=1 -range=% Retab call <SID>Retab(<line1>, <line2>, '<bang>', <f-args>)
+endif
 " >>>
 " MAPS: LEVEL 1 & 2 (reconfig): normal/insert mode --> <Plug>... mappings <<<
 " Note: <C-R> used (rather than <C-O>) to prevent side-effect when insert-mode
@@ -6893,9 +6900,8 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " >>>
 " >>>
 " shift/indent maps <<<
-" TODO: For certain combinations of 'leadingindent' with 'noconceal', we could
-" probably skip creating shift/indent overrides (although doing so is harmless,
-" as the override functions work for those cases as well).
+" Note: No special shift logic if leading indent is highlighted like text.
+if b:txtfmt_cfg_leadingindent != 'none'
 " normal mode shift mappings <<<
 call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)"
@@ -6955,6 +6961,7 @@ if s:have_repeat
 	call s:Def_map('n', '', '<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 0)
 endif
 " >>>
+endif
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
