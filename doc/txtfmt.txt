@@ -798,11 +798,12 @@ txtfmtLeadingindent	string (Default depends on |txtfmt-conceal| setting
 		
 	Important Note: Although Txtfmt treats tokens specially, Vim itself
 	treats them like any other non-whitespace characters, which means
-	builtin commands for indenting/dedenting text (e.g. CTRL-T, CTRL-D,
-	`>>`, `<<`) will generally fail to yield expected results when tokens
-	are hidden amongst the leading indent. Accordingly, Txtfmt overrides
-	the builtin commands with "token-aware" versions. For details on these
-	commands, see |txtfmt-indent|.
+	builtin commands for indenting/dedenting/retabbing text (e.g. CTRL-T,
+	CTRL-D, `>>`, `<<`, :retab) will generally fail to yield expected
+	results when tokens are hidden amongst the leading indent.
+	Accordingly, Txtfmt overrides the builtin commands with "token-aware"
+	versions. For details on these commands, see |txtfmt-indent| and
+	|txtfmt-retab|.
 
 	*txtfmt-leadingindent-backwards-compatibility*
 	*txtfmt-leadingindent-history*
@@ -2102,7 +2103,8 @@ CHANGING LINE INDENT				*txtfmt-indent* *txtfmt-dedent*
 						*txtfmt-shift-line*
 
 The following indent/dedent commands work just like the corresponding Vim
-builtins, but handle Txtfmt tokens in leading whitespace intelligently.
+builtins, but handle Txtfmt tokens in leading whitespace intelligently, taking
+the buffer's |'leadingindent'| option into account.
 Commands are grouped by mode.
 
 Normal mode
@@ -2116,6 +2118,16 @@ Visual and normal mode (used as operator in normal mode)
 Insert mode
 CTRL-T     <Plug>TxtfmtIndent			*CTRL-T* *txtfmt-indent*
 CTRL-D     <Plug>TxtfmtDedent			*CTRL-D* *txtfmt-dedent*
+
+
+RETABBING					*txtfmt-:Retab*
+
+The following command works just like the corresponding Vim builtin, but
+handles Txtfmt tokens in leading whitespace intelligently, taking the buffer's
+|'leadingindent'| option into account.
+
+:[range]Retab[!] [new_tabstop]
+
 
 JUMPING TO TOKENS				*txtfmt-jump-to-tok*
 

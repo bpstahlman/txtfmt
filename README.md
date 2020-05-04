@@ -177,7 +177,10 @@ smart | Complex logic uses 'tabstop' and 'shiftwidth' to determine whether a seq
 `:help txtfmt-'leadingindent'`
 
 ## "Smart" Shift/Indent Overrides
-Because highlighting tokens are invisible, yet appear as normal text to Vim, their presence in leading indent would lead to unexpected shift/indent behavior if Txtfmt did not override the builtin shift/indent commands `<<`, `>>`, `CTRL-T` and `CTRL-D`. Txtfmt's overrides understand the special role of tokens in a Txtfmt buffer (as well as the implications of the various `'leadingindent'` option settings), and will go to great lengths to ensure that various shift/indent commands "do the right thing".
+Because highlighting tokens are invisible, yet appear as normal text to Vim, their presence in leading indent could lead to unexpected shift/indent behavior if Txtfmt did not override the builtin shift/indent commands `<<`, `>>`, `CTRL-T` and `CTRL-D`. Txtfmt's overrides understand the special role of tokens in a Txtfmt buffer (as well as the implications of the various `'leadingindent'` option settings), and will go to great lengths to ensure that various shift/indent commands "do the right thing".
+
+## "Smart" :Retab Command
+For reasons described in the preceding section, the presence of highlighting tokens in leading indent tends to break the behavior of Vim's builtin `:retab` command. Accordingly, Txtfmt provides a token-aware `:Retab`, invoked just like the builtin :retab, which attempts to make retabbing work sensibly when leading indent contains Txtfmt tokens, taking into account the buffer's `'leadingindent'` option.
 
 # Manual Maps
 Manual maps are used to insert specific highlighting tokens at specific locations in the buffer. Each token determines either the text color, background color, or format attributes in effect up until the subsequent token of the same type (possibly the end token `'-'`). With auto maps, you simply specify the desired highlighting changes, and Txtfmt _automagically_ performs the required token insertions and removals. This task is actually far more complex than it sounds. To see why, suppose that after selecting some text, you use an auto map with highlighting spec `fb,cr,kg` (add bold, text red, background green). You might assume that Txtfmt would insert 6 tokens as follows:
