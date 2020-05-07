@@ -1,5 +1,6 @@
 Version 4.1 Alpha release:
+** !!! Much Faster Syntax !!!: Eliminated redundant group permutations to
+achieve a signficant reduction in the number of syntax groups required for
+highlighting.
 ** New Feature(s): "Smart" versions of indent/dedent/retab maps/commands,
 which take Txtfmt 'leadingindent' option into account
-** Performance Enhancement: Significantly reduced number of syntax groups
-required for highlighting by eliminating redundant group permutations.
