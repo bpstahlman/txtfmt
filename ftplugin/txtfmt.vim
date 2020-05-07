@@ -743,19 +743,11 @@ endfu
 " >>>
 " Shift functions <<<
 " Remove tokens within leading indent in each line in input range.
-" Special Case: In 'noconceal' case, temporarily remove tokens just past leading
-" indent (for li regimes in which such tokens would not be part of leading
-" indent).
-" Rationale: Before existence of 'leadingindent', 'noconceal' users may have
-" placed tokens just past leading indent to avoid spurious highlighting; in such
-" cases, it's best to perform the shift/indent without the tokens, then add them
-" back.
-" Note: As long as 'li' is forced to be 'white' or 'none' (as is currently the
-" case), the special logic will never be used.
 " Return: list indicating what was removed:
 " [
 "   {'lnum': lnum, 'toks': [{tokstr}...]}]
 " Note: Only lines with tokens removed are represented in list.
+" Precondition: Can't get here in 'noconceal' case.
 fu! s:Remove_toks_in_li(l1, l2)
 	let ret = []
 	" Short-circuit on li=none (in case caller doesn't check).
@@ -764,31 +756,24 @@ fu! s:Remove_toks_in_li(l1, l2)
 	endif
 	for lnum in range(a:l1, a:l2)
 		" Find extents of leading indent
+		" Design Decision: Slurp in any toks after leadingindent.
+		" Rationale: 1) Allows them to be repositioned to BOL, and 2) more
+		" importantly, allows any whitespace following the tok, which isn't
+		" included in leadingindent, to take part in shift.
+		" Special Case: Leading indent matches whitespace only, so we make its
+		" regex optional to ensure that toks at BOL are removed.
+		let re_li = '^\%(' . b:txtfmt_re_leading_indent . '\)\?\%(' . b:txtfmt_re_any_tok . '\)*'
 		let line_str = getline(lnum)
 		let [li_str, li_strlen, skip_bytes] = ['', 0, 0]
-		let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
+		let li_end = matchend(line_str, re_li)
 		if li_end >= 0
 			" Grab the leading indent.
 			let li_str = strpart(line_str, 0, li_end)
-			let li_strlen = len(li_str)
 		else
 			let li_end = 0
 		endif
-		" Note: See comment in header describing this special 'noconceal' logic.
-		if !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent =~ '^\(smart\|tab\)'
-			" Check for tokens in whitespace past end of leading indent.
-			let end = matchend(line_str,
-				\ '^\%(' . b:txtfmt_re_any_tok . '\|\s\)\+', li_end)
-			if end >= 0
-				" Allow subsequent distinction between leading indent and any
-				" tokens immediately following it.
-				let skip_bytes = end - li_end
-				let li_str .= line_str[li_end:end-1]
-				let li_strlen += skip_bytes
-			endif
-		endif
 		" Don't add list element if no leading indent (or toks just past).
-		if !li_strlen
+		if !li_end
 			continue
 		endif
 		" Process all toks in the leading indent, rebuilding the line without
@@ -796,8 +781,9 @@ fu! s:Remove_toks_in_li(l1, l2)
 		let [toks, uniq] = [[], {}]
 		let [i, s] = [0, '']
 		let m = ['', -1, 0]
-		" Note: We're guaranteed to enter this while at least once.
-		while m[2] >= 0 && m[2] < li_strlen
+		" Note: If this point is reached, we're guaranteed to enter the while at
+		" least once.
+		while m[2] >= 0 && m[2] < li_end
 			let m = matchstrpos(li_str, b:txtfmt_re_any_tok, m[2])
 			if m[1] >= 0
 				" Found a token.
@@ -813,8 +799,14 @@ fu! s:Remove_toks_in_li(l1, l2)
 				let s .= strpart(li_str, i, m[1] - i)
 				" Note: Replacement considered only for toks in true leading
 				" indent.
+				" TODO: Eventually, remove this if since it will never be
+				" entered now that 'li' is forced to 'none' for 'noconceal'
+				" case.
 				if !b:txtfmt_cfg_conceal && m[2] < li_end
 					" Replace tok with space for alignment.
+					" Design Decision Needed: Should we use strdisplaywidth() to
+					" determine screen width of token, or simply assume all toks
+					" are 1 screen char wide?
 					let s .= ' '
 				endif
 				" Skip over the token
@@ -842,45 +834,54 @@ fu! s:Restore_toks_after_shift(toks)
 		return
 	endif
 	for t in a:toks
-		" Find extents of leading indent
+		" Cache line string and tok list.
 		let line_str = getline(t['lnum'])
+		let toks = t['toks']
+		" Set li to 0-based index of first char we're keeping of original line:
+		" i.e., first char not replaced by token(s).
 		if b:txtfmt_cfg_conceal
-			" Note: Regex will match at offset <= 0 when no leading indent.
-			let li_end = matchend(line_str, b:txtfmt_re_leading_indent)
-			let toks = t['toks']
-			let pre = strpart(line_str, 0, li_end < 0 ? 0 : li_end)
+			" Since toks are zero-width, there's no reason to replace any
+			" whitespace.
+			let li = 0
 		else " noconceal
-			" Design Decision: In noconceal case, "hide" tokens whenever we can,
-			" even at the cost of replacing spaces that aren't technically
-			" considered leading indent.
+			" TODO: Eventually, remove this else since it will never be entered
+			" now that 'li' is forced to 'none' for 'noconceal' case.
+			" Toks are not zero-width: "Hide" them in existing whitespace if
+			" possible.
+			" Assumption: Getting here implies li=white
+			" Find the end of the run of whitespace that can be replaced with
+			" tokens.
+			" Note: When the replacement is performed, it must use *all* tokens,
+			" even if it means widening the leading indent because the leading
+			" whitespace isn't sufficient to absorb all the tokens.
 			let li_end = max([matchend(line_str, '^\s*'), 0])
-			let toks = t['toks'][:]
-			" Figure out how far back to start replacing tokens.
-			let [N, n, i] = [len(toks), 0, li_end - 1]
-			while i >= 0 && n < N
-				let n += line_str[i] == ' ' ? 1 : &ts
-				let i -= 1
-			endwhile
-			let n = min([n, N])
-			" Set i to index of first char to be overwritten (if any).
-			let i += 1
-			" Get leading portion of line that won't be modified.
-			let pre = strpart(line_str, 0, i)
-			" Overwrite whitespace with tokens, working from left to right.
-			while i < li_end && !empty(toks)
-				if line_str[i] == ' '
-					let pre .= remove(toks, 0)
+			let ti_end = len(toks)
+			let [li, ti] = [0, 0]
+			" Loop until we reach end of either whitespace or tokens.
+			while li < li_end && ti < ti_end
+				if line_str[li] == ' '
+					let ti += 1
 				else
-					" How many tokens can we fit in this tab?
-					let repl = min([len(toks), &ts])
-					let pre .= join(remove(toks, 0, repl - 1), '')
-						\ . (repl < &ts ? "\t" : '')
+					" How many tokens can we fit in this TAB?
+					" Design Decision Needed: Should we use strdisplaywidth() on
+					" individual toks rather than assuming single screen char
+					" width? Would need to be done in the tok removal function
+					" too.
+					" Note: In theory, ti should be incremented by
+					" min(ti_end-ti, &ts), but it's safe to increment past
+					" ti_end, so don't bother with min().
+					" Note: Since we've just performed some sort of shift, tabs
+					" are stacked at head of line, which means we don't really
+					" need to use strdisplaywidth() to get tab's screen width.
+					let ti += &ts
 				endif
 				" Advance to next tab or char.
-				let i += 1
+				let li += 1
 			endwhile
 		endif
-		call setline(t['lnum'], pre . join(toks, '') . line_str[li_end : ])
+		" Prepend *all* tokens to the original line, minus any leading
+		" whitespace marked for replacement.
+		call setline(t['lnum'], join(toks, '') . line_str[li : ])
 	endfor
 endfu
 
@@ -962,8 +963,7 @@ fu! s:Lineshift(mode, dedent)
 		echoerr "Invalid mode for Txtfmt lineshift: " . a:mode
 	endif
 
-	" Put back uniquified, ordered list of removed tokens just past leading
-	" indent.
+	" Prepend uniquified, ordered sequences of removed tokens to lines.
 	call s:Restore_toks_after_shift(toks)
 	" Note: Vim leaves cursor on first non-whitespace char (possibly token).
 	" In some cases (e.g., 'noconceal' and li=white), this would leave cursor
@@ -979,6 +979,17 @@ endfu
 fu! s:Shift_right_operator(mode)
 	call s:Lineshift('o', 0)
 endfu
+
+" Txtfmt "smart" (Txtfmt-aware) :retab command
+fu! s:Retab(l1, l2, bang, ts)
+	" Remove toks from leading indent.
+	let toks = s:Remove_toks_in_li(a:l1, a:l2)
+	" Perform the requested :retab.
+	exe a:l1 . ',' . a:l2 . 'retab' . a:bang . ' ' . a:ts
+	" Prepend uniquified, ordered sequences of removed tokens to lines.
+	call s:Restore_toks_after_shift(toks)
+endfu
+
 " >>>
 " >>>
 " TODO: Perhaps move elsewhere...
@@ -6624,6 +6635,10 @@ endfu
 com! -buffer ShowTokenMap call <SID>ShowTokenMap()
 com! -buffer -nargs=? MoveStartTok call <SID>MoveStartTok(<f-args>)
 com! -buffer -nargs=* GetTokInfo echo <SID>GetTokInfo(<f-args>)
+" Note: No special retab logic if leading indent is highlighted like text.
+if b:txtfmt_cfg_leadingindent != 'none'
+com! -buffer -bang -nargs=1 -range=% Retab call <SID>Retab(<line1>, <line2>, '<bang>', <f-args>)
+endif
 " >>>
 " MAPS: LEVEL 1 & 2 (reconfig): normal/insert mode --> <Plug>... mappings <<<
 " Note: <C-R> used (rather than <C-O>) to prevent side-effect when insert-mode
@@ -6885,9 +6900,8 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " >>>
 " >>>
 " shift/indent maps <<<
-" TODO: For certain combinations of 'leadingindent' with 'noconceal', we could
-" probably skip creating shift/indent overrides (although doing so is harmless,
-" as the override functions work for those cases as well).
+" Note: No special shift logic if leading indent is highlighted like text.
+if b:txtfmt_cfg_leadingindent != 'none'
 " normal mode shift mappings <<<
 call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)"
@@ -6947,6 +6961,7 @@ if s:have_repeat
 	call s:Def_map('n', '', '<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 0)
 endif
 " >>>
+endif
 " >>>
 " normal mode get token info mapping <<<
 call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',

@@ -1,3 +1,6 @@
-Version 4.0 Alpha release:
-** New Feature: 'leadingindent' option permits suppression of highlighting in whitespace at start of line.
-** Syntax Engine Refactor: All syntax now generated dynamically. (Prior to this, certain sections of vimscript were generated offline by an embedded perl script.)
+Version 4.1 Alpha release:
+** !!! Much Faster Syntax !!!: Eliminated redundant group permutations to
+achieve a signficant reduction in the number of syntax groups required for
+highlighting.
+** New Feature(s): "Smart" versions of indent/dedent/retab maps/commands,
+which take Txtfmt 'leadingindent' option into account

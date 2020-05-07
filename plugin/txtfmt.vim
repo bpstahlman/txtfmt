@@ -2449,20 +2449,14 @@ fu! s:Do_config_common()
 		endif
 		if !exists('b:txtfmt_cfg_leadingindent') || strlen(b:txtfmt_cfg_leadingindent) == 0
 			" Set to default
-			let b:txtfmt_cfg_leadingindent = 'smart'
+			let b:txtfmt_cfg_leadingindent = b:txtfmt_cfg_conceal ? 'white' : 'none'
 		endif
 	endif
-	" Handle default, overriding any values not supported by configuration.
-	" TODO: Decide on whether to permit all li values in 'noconceal' case.
-	if !exists('b:txtfmt_cfg_leadingindent') || empty(b:txtfmt_cfg_leadingindent)
-		let b:txtfmt_cfg_leadingindent = b:txtfmt_cfg_conceal ? 'white' : 'none'
-	elseif !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent !~ 'none\|white'
+	if !b:txtfmt_cfg_conceal && b:txtfmt_cfg_leadingindent != 'none'
 		echomsg "Warning: leadingindent=" . b:txtfmt_cfg_leadingindent
 			\." supported only when 'conceal' is set (:help txtfmt-'conceal')."
-			\." Defaulting to leadingindent=white"
-		" Rationale: Since user wanted something other than li=none, give him
-		" the next best thing under 'noconceal'.
-		let b:txtfmt_cfg_leadingindent = 'white'
+			\." Defaulting to leadingindent=none"
+		let b:txtfmt_cfg_leadingindent = 'none'
 	endif
 	" >>>
 

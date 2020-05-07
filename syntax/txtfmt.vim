@@ -200,7 +200,6 @@ fu! s:Get_smart_leading_indent_patt()
 	" Cache a few pertinent options for convenience.
 	let sw = shiftwidth()
 	let ts = &ts
-	let conceal = b:txtfmt_cfg_conceal
 	if !&expandtab
 		if sw == ts
 			" 1-to-1 correspondence between tabstop and indent
@@ -394,143 +393,61 @@ fu! s:Hide_leading_indent_maybe()
 		" Note: Generate complex pattern that depends upon effective 'sw' and
 		" 'ts' settings.
 		let re_li = s:Get_smart_leading_indent_patt()
-	elseif b:txtfmt_cfg_leadingindent == 'width'
-
 	endif
 	" Cache regex for a single, unescaped token of any type.
 	let re_tok = b:txtfmt_re_any_tok
-	" Cache regex for a single (possibly escape/escapee) token
-	let re_tok_atom = '[' . b:txtfmt_re_any_tok_atom . ']'
-	" Modify the templates, taking 'conceal' into account.
-	if b:txtfmt_cfg_conceal
-		" Accept any number (including 0) of tokens before any whitespace that
-		" would have been matched by the pattern.
-		" Note: Intentionally deferring check for escaped tokens.
-		" Rationale: Embedding in re_li could exceed capture limit; defer to a
-		" look-behind assertion.
-		" Design Decision Needed: Consider highlighting useless end tokens
-		" within regions specially: (e.g., end clr in a fmt only region).
-		" Design Consideration: They're harmless, and are cleaned up
-		" automatically by auto-map operations, so we shouldn't mess up the
-		" leading indent width simply to call attention to them. However, if
-		" users's 'cocu' setting causes tokens to be visible, it might make
-		" sense to show them somehow.
-		" Hmm... Actually, they'll already be visible in that case; would we
-		" want to highlight them red or something? Doing so might give the
-		" mistaken impression that they're red fg/bg tokens.
-		" Problem: Useless end tokens are not recognized as tokens: as it is
-		" now, therefore, they already mess up the indent width. To change
-		" this, I could either have 2 distinct leading indent groups (one for
-		" tokens one for true whitespace), or I could keep a single leading
-		" indent group, but have a low-priority end token group that is
-		" contained by leading indent.
-		" Explanation: An end token that ends a region (i.e., isn't useless)
-		" is of type Tf_tok or Tf{cui}_tok_{bg_idx}. If the new tok group
-		" (say, Tf_invalid or somesuch) is lower priority than, and cannot be
-		" contained by, these groups, the definitions should be trivial. The
-		" question is, how would we want these highlighted? I would say that
-		" in the 'conceal' case, we'd want them concealed unless 'cocu'
-		" prevents it, in which case, they'd be shown normally. Hmm... This is
-		" the way it is for normal (useful) tokens. In the 'noconceal' case,
-		" we probably just want the useless tokens to be visible, but what
-		" about the indent width?
-		let re_li = substitute(re_li, '\%( \|\\[st]\)',
-			\ '\\%(' . re_tok_atom . '*&\\)', 'g')
-	else " noconceal
-		" Assumption: We've already returned in li='none' case.
-		if b:txtfmt_cfg_leadingindent =~ 'white\|space'
-			" Match token wherever a SPC would match.
-			let re_li = substitute(re_li, '\( \|\\s\)',
-				\ '\\%(' . re_tok_atom . '\\|\1\\)', 'g')
-		else " tab|smart
-			if b:txtfmt_cfg_leadingindent == 'smart'
-				" Match token anywhere a SPC would match.
-				" Note: Shouldn't be any literal spaces in li=tab pattern, so
-				" the containing guard isn't strictly necessary.
-				let re_li = substitute(re_li, ' ',
-					\'\\%(' . re_tok_atom . '\\| \\)', 'g')
-			endif
-			" Allow any amount of a tabstop (up to and including full width)
-			" to be tokens.
-			" Regex: (TOK){,<ts-1>}TAB|(TOK){<ts>}
-			let re_li = substitute(re_li, '\\t',
-				\ '\\%(' . re_tok_atom . '\\{,' . (&ts - 1) . '}\\t'
-				\.'\\|' . re_tok_atom . '\\{' . &ts . '}\\)', 'g')
-		endif
-	endif
-	" Also match blank lines (whitespace and tokens only)
-	" Note: escape-escapee test done elsewhere
-	let re_li = '^\%(\%(\s\|' . re_tok_atom . '\)\+$\)\|^' . re_li
-	if b:txtfmt_cfg_escape == 'self'
-		" Append look-behind assertion to ensure none of the tokens matched in
-		" leading indent were escape-escapee pairs. (Note that if they were,
-		" backtracking could still permit shorter leading indent match.)
-		" Note: We can ignore esc=bslash case because backslashes can't be
-		" matched by the existing re_li pattern.
-		" At this point, re_li contains backrefs, so we'll need to adjust the
-		" capture numbers in the zero-width assertion we're about to append.
-		" Optimization Note: The shift amount should always be 1, so we could
-		" probably just hardcode \2 in lieu of \1, but using
-		" Adjust_capture_numbers is a bit more future-proof.
-		let re_li .= s:Adjust_capture_numbers(
-			\ '\%(^\%(\%(\(' . re_tok_atom . '\)\1\)\@!.\)*\)\@<=',
-			\ re_li)
-	endif
-	" Now create some patterns that recognize tokens/whitespace *within*
-	" leading indent.
-	" Note: escape-escapee test done elsewhere
-	let re_tok_or_ws = '\s\|' . re_tok_atom
-	" Now the tricky part: need to be able to match *any* portion of the
-	" leading indent independently of the rest of it.
-	" Rationale: Tokens can break leading indent into multiple segments.
-	" Note: In the 'smart' and 'width' leading indent cases, we have to look
-	" past the matched region to determine whether or not we're inside leading
-	" indent; although we could avoid this for other li regimes, it's probably
-	" not worth optimizing...
-	" TODO: Although this is the way I want it (ws and tok orthogonal), would
-	" still like to know why Tf_li_ws was allowed to take precedence over
-	" Tf_li_tok on the second of back-to-back tokens, even though Tf_li_tok
-	" is defined later, and hence, should take priority.
-	let re_li_ws = '\s\+\%(' . re_li . '\)\@<='
-	let re_li_tok = re_tok . '\ze\%(' . re_tok_or_ws . '\)*'
-	" Caveat: Append leading indent lookbehind constraint separately,
-	" adjusting its backreferences to account for captures in re_tok.
-	let re_li_tok .= s:Adjust_capture_numbers('\%(' . re_li . '\)\@<=', re_li_tok)
-	" Persist re_li on the buffer so that it's available to lineshift
-	" functions.
-	let b:txtfmt_re_leading_indent = re_li
-	" Cache vars globally for debug only.
-	" TODO: Remove debug assignments...
-	let [g:re_li_ws, g:re_li_tok, g:re_li, g:re_tok_or_ws] =
-		\ [re_li_ws, re_li_tok, re_li, re_tok_or_ws]
 
-	" Create the non-token syntax group whose purpose is to hide all
-	" highlighting in whatever is considered to be leading indent.
-	exe 'syn match Tf_li_ws /' . re_li_ws . '/ contained'
-		\ . ' containedin=@Tf'.cui.'_all'
-	" Note: Ideally, Tf_li_tok would simply be containedin Tf_tok, but in the
-	" 'conceal' case, Tf_tok is transparent, and transparent groups can't
-	" contain other groups directly. Thus, in the 'conceal' case, Tf_li_tok is
-	" contained in the region itself, whereas in the 'noconceal' case, it can
-	" be contained directly by (non-transparent) Tf_tok.
-	exe 'syn match Tf_li_tok /' . re_li_tok . '/ contained'
-		\ . (b:txtfmt_cfg_conceal ? ' conceal' : '')
-		\ . ' containedin=@Tf'.cui
-		\ . (b:txtfmt_cfg_conceal ? '_all' : '_tok')
-	if b:txtfmt_cfg_conceal
-		" Make sure Tf_li_tok isn't linked to Tf_conceal. (Note that this
-		" could happen if user changes 'conceal' in a modeline and re-:edits
-		" the file, without restarting Vim or clearing syntax.)
-		hi link Tf_li_tok NONE
+	" Persist anchored leadingindent pattern on the buffer so that it's
+	" available to lineshift functions.
+	" Design Decision: Don't include any trailing tokens.
+	if b:txtfmt_cfg_leadingindent == 'smart'
+		" Caveat: For efficiency reasons, li=smart disallows tokens *within*
+		" the leadingindent, though they can appear before and after.
+		" Rationale: The nature of li=smart complicates the matching of
+		" discontiguous segments in isolation: correct matching entails a
+		" lookahead/lookbehind combination, in which the lookbehind occurs at
+		" the end of a greedy lookahead, which can lead to *lots* of
+		" expensive backtracking in long runs of non-li whitespace! In fact,
+		" the pathological slowness engendered by long runs of SPACE chars in
+		" a tab-based li=smart ultimately led to a significant rewrite of
+		" syntax engine.
+		let b:txtfmt_re_leading_indent =
+			\ '\%(^\%(' . re_tok . '\)*\)\@<=\%(' . re_li .'\)'
 	else
-		" Hide tokens' foreground in leading indent since we can't conceal.
-		hi link Tf_li_tok Tf_conceal
+		let b:txtfmt_re_leading_indent =
+			\ '\%(^\%(' . re_tok . '\|' . re_li . '\)*\)\@<=\%(' . re_li .'\)'
 	endif
+
+	" Create the non-token syntax group whose purpose is to hide *all*
+	" highlighting of whitespace in whatever is considered leading indent.
+	exe 'syn match Tf_li /' . b:txtfmt_re_leading_indent . '/ contained'
+		\ . ' containedin=@Tf'.cui.'_all'
+
+	" Create group that matches inside a token preceded by nothing but
+	" whitespace that qualifies as "leading indent", optionally preceded
+	" and/or followed by unescaped tokens
+	" (Note: Tokens are not permitted to break up the whitespace.)
+	" Rationale: Without this group, tokens in leading indent would show
+	" background color and certain formats whenever the tokens were
+	" non-zero-width (either because of 'noconceal' or 'cocu' setting).
+	" Note: The simplistic `.' pattern (after the lookbehind) is sufficient
+	" because of a `contains=' in Tf*_tok groups.
+	" Idiosyncrasy: A `containedin=' on this group won't work because Tf*_tok
+	" is 'transparent', and transparent groups that have no contains= aren't
+	" even considered by containedin= logic. Note that it doesn't actually
+	" matter which groups are in the contains= list: a contains=foobar in
+	" Tf_tok would make a containedin=Tf_tok in Tf_li_tok work.
+	exe 'syn match Tf_li_tok /\%(^\%(' . re_tok . '\)*'
+		\ . '\%(' . re_li .'\)\?\)\@<=./ contained'
+
 endfu
 " >>>
 " Achieve clr->bgc->fmt order required for highlight command.
 " Assumption: a and b will always be different.
 fu! s:Sort_rgn_types(a, b)
+	" Assumption: Elements to be sorted are either fmt/clr/bgc/... strings or
+	" dicts with 'name' key containing such strings.
+	let [a, b] = type(a:a) == 1 ? [a:a, a:b] : [a:a.name, a:b.name]
 	if a == 'clr'
 		return -1
 	elseif a == 'fmt'
@@ -539,13 +456,16 @@ fu! s:Sort_rgn_types(a, b)
 		return b == 'fmt' ? -1 : 1
 endfu
 " States: 0=empty, 1=expr, 2=literal
+" FIXME_COMBINATIONS: Add constructor initialization.
 fu! s:Make_exe_builder()
 	let o = {'st': 0, 'st_beg': 0, 's': ''}
 	" Add list of deferred exprs and const separator.
 	" Note: The resulting construct is effectively an expr, since the
 	" separator will be interior if it is used at all.
+	" FIXME: Consider making sep optional.
 	fu! o.add_list(ls, sep)
-		call self.add(join(a:ls, " . '" . a:sep . "' . "))
+		" Special Case: If sep is null, prefer `blah . blah' over `blah . "" . blah'
+		call self.add(join(a:ls, !empty(a:sep) ? " . '" . a:sep . "' . " : " . "))
 	endfu
 	" Prepare to append, taking current and next state into account.
 	fu! o.prep(st, ...)
@@ -611,6 +531,71 @@ fu! s:Make_exe_builder()
 	" Return object with encapsulated state.
 	return o
 endfu
+" Function: s:Get_rgn_combinations_r() <<<
+fu! s:Get_rgn_combinations_r(i, rem, rgns)
+	let i = a:i
+	let ret = []
+	while i <= len(a:rgns) - a:rem
+		if a:rem == 1
+			" Base case
+			call add(ret, [[a:rgns[i]],
+				\ (i > a:i ? a:rgns[a:i : i - 1] : [])
+				\ + (i < len(a:rgns) - 1 ? a:rgns[i + 1 : ] : [])])
+		else
+			let children = s:Get_rgn_combinations_r(i + 1, a:rem - 1, a:rgns)
+			for child in children
+				call insert(child[0], a:rgns[i])
+				if i > a:i
+					call extend(child[1], a:rgns[a:i : i - 1])
+				endif
+				call add(ret, child)
+			endfor
+		endif
+		let i += 1
+	endwhile
+	return ret
+endfu
+" >>>
+" Function: s:Get_rgn_combinations() <<<
+" Takes a list of active rgns and a 1-based 'order' number, and builds a list
+" of order-preserving combinations (assuming input list is in fiducial order).
+" Note: Need to add ability to return both the pos and neg list: i.e., an
+" ordered list of the rgns involved in the combination, and a second list of
+" those that are *not* involved.
+" TODO_COMBINATIONS: Consider combining this with its recursive workhorse
+" somehow.
+fu! s:Get_rgn_combinations(rgns, order)
+	return s:Get_rgn_combinations_r(0, a:order, a:rgns)
+endfu
+" >>>
+" Function: s:Map_rgn_types() <<<
+" Implements a sort of list comprehension over used rgn types in their
+" fiducial order. The provided funcref or string expression is used to
+" generate the elements: a funcref receives a zero-based index, name and
+" abbrev corresponding to the rgn type; a string expression has access to
+" these values in l:idx, l:name and l:abbrev.
+" FIXME_COMBINATIONS: Probably move to an autoload file, as this could be
+" useful outside syntax file.
+fu! s:Map_rgn_types(fn_or_expr)
+	let ret = []
+	" Get list of used rgn types in fiducial order.
+	let rgns = (b:txtfmt_cfg_numfgcolors > 0 ? [['clr', 'fg']] : [])
+		\ + ((b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0) ? [['bgc', 'bg']] : [])
+		\ + [['fmt', '']]
+	for idx in range(len(rgns))
+		let [name, abbrev] = rgns[idx]
+		if type(a:fn_or_expr) == 2
+			let o = fn_or_expr(idx, name, abbrev)
+		else
+			" Note: Expression has access to l:idx, l:name and l:abbrev
+			let o = eval(a:fn_or_expr)
+		endif
+		" Accumulate
+		call add(ret, o)
+	endfor
+	return ret
+endfu
+" >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Cache some useful vars <<<
@@ -694,11 +679,19 @@ fu! s:Define_syntax()
 	" Note: Omit 'contained', since Tf_tok is permitted at top level. But in
 	" the 'noconceal' case, use containedin=ALLBUT,<tok-cluster> to prevent a
 	" pointless match of Tf_tok within one of the bgc-specific tok groups.
-	exe 'syn match Tf_tok /'.b:txtfmt_re_any_tok.'/'
+	" FIXME: Is it possible to avoid use of lookaround assertions in
+	" b:txtfmt_re_any_tok, given that the esc pair groups have priority over
+	" the tok groups? If so, would be efficiency gain...
+	exe 'syn match Tf_tok /['.b:txtfmt_re_any_tok_atom.']/'
 		\ . (b:txtfmt_cfg_conceal ? '' : ' containedin=ALLBUT,@Tf'.cui.'_tok')
 		\ . conceal.transparent
+		\ . ' contains=Tf_li_tok'
 	" Note: When 'conceal' is set, transparent and conceal attributes obviate
-	" need to define highlighting for Tf_tok groups.
+	" need to define highlighting for Tf_tok group, but NOT for Tf_li_tok.
+	" Rationale: The purpose of Tf_li_tok is to *hide* highlighting of
+	" containing group (e.g., group with bg color, underline, etc.), not allow
+	" it to shine through.
+	hi link Tf_li_tok Tf_conceal
 	if !b:txtfmt_cfg_conceal
 		hi link Tf_tok Tf_conceal
 		" Create bgc-specific tok concealment groups and associated
@@ -726,7 +719,8 @@ fu! s:Define_syntax()
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
-			exe 'syn match Tf'.cui.'_tok_'.i.' /'.b:txtfmt_re_any_tok.'/ contained'.conceal
+			exe 'syn match Tf'.cui.'_tok_'.i.' /['.b:txtfmt_re_any_tok_atom
+				\.']/ contained contains=Tf_li_tok'.conceal
 			exe 'hi Tf'.cui.'_tok_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			" Note: Tf{cui}_tok name is fine since clusters/groups are in
 			" distinct namespaces.
@@ -801,62 +795,100 @@ fu! s:Define_syntax()
 		" Note: In the 'noconceal' case, cluster will be populated later.
 		let containedin_def .= b:txtfmt_cfg_conceal ? ',Tf_tok' : ',@Tf'.cui.'_tok'
 		if b:txtfmt_cfg_leadingindent != 'none'
-			let containedin_def .= ',Tf_li_ws,Tf_li_tok,Tf_li_tok'
+			let containedin_def .= ',Tf_li_tok'
 		endif
 	else
 		let containedin_def = ''
 	endif
 	" >>>
 	" Build rgn_info list <<<
-	" The rgn_info list contains metadata pertaining to the 3 types of regions
-	" (fmt, clr, bgc), which is used in the loops below.
-	let rgn_info = [
-		\{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}
-	\]
-	if clr_enabled
-		call add(rgn_info,
-			\{'name': 'clr', 'abbrev': 'fg', 'max': b:txtfmt_cfg_numfgcolors, 'offs': []})
+	if 1
+		" The rgn_info list contains metadata pertaining to all types of regions
+		" (e.g., clr, bgc, fmt) used in the loops below.
+		let rgn_info =
+			\ (clr_enabled
+			\ ? [{'name': 'clr', 'abbrev': 'fg', 'max': b:txtfmt_cfg_numfgcolors, 'offs': []}]
+			\ : [])
+			\ + (bgc_enabled
+			\ ? [{'name': 'bgc', 'abbrev': 'bg', 'max': b:txtfmt_cfg_numbgcolors, 'offs': []}]
+			\ : [])
+			\ + [{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}]
+		" For color elements (all but final element of rgn_info), build a list
+		" mapping 0-based indices to actual color numbers (as used in txtfmtColor
+		" and txtfmtBgColor).
+		for ri in rgn_info[:-2]
+			let i = 1
+			while i <= b:txtfmt_cfg_num{ri.abbrev}colors
+				call add(ri.offs, b:txtfmt_cfg_{ri.abbrev}color{i})
+				let i += 1
+			endwhile
+		endfor
+	else
+		" FIXME_COMBINATIONS: Decide whether to use this list comprehension or the
+		" stuff in the if...
+		" Note: This would be less messy if I used lambdas, but I don't like
+		" requiring upgrad to Vim 8.
+		let rgn_info = s:Map_rgn_types(
+			\ 'name == "fmt"'
+			\ . ' ? {"name": "fmt", "max": b:txtfmt_num_formats - 1, "offs": []}'
+			\ . ' : {"name": name, "abbrev": abbrev, "max": b:txtfmt_cfg_num{abbrev}colors,'
+			\ . '    "offs": map(range(1, b:txtfmt_cfg_num{abbrev}colors), "b:txtfmt_cfg_{abbrev}color{v:val}")}')
 	endif
-	if bgc_enabled
-		call add(rgn_info,
-			\{'name': 'bgc', 'abbrev': 'bg', 'max': b:txtfmt_cfg_numbgcolors, 'offs': []})
-	endif
-	" For color elements (all but first element of rgn_info), build a list
-	" mapping 0-based indices to actual color numbers (as used in txtfmtColor
-	" and txtfmtBgColor).
-	for ri in rgn_info[1:]
-		let i = 1
-		while i <= b:txtfmt_cfg_num{ri.abbrev}colors
-			call add(ri.offs, b:txtfmt_cfg_{ri.abbrev}color{i})
-			let i += 1
-		endwhile
-	endfor
 	let num_rgn_typs = len(rgn_info)
 	" >>>
 	" Loop over 'order' <<<
 	" Note: iord determines current 'order' (i.e., total # of rgn types involved
-	" in each region); however, rotations within the nested loop below ensure
-	" that all permutations of rgn type will be processed for each order.
-	" Example: 
+	" in each region)
 	let iord = 0
 	let profs = {'all': 0, 'prelim': 0, 'ng-pre': 0, 'cmn': 0, 'subst': 0, 'tpl-processing': 0, 'jdx-update': 0, 'all-perms': 0, 'build-ng': 0, 'build-rgn-body': 0, 'syn-region': 0, 'build-highlight': 0, 'build-clusters': 0}
 	let ts_all = reltime()
 	while iord < num_rgn_typs
 		" Process current 'order'.
-		" TODO: Refactor this up higher if it's even still needed.
-		" Generate list of down-counting indices corresponding to each
-		" position past currently-used portion of rgn_info[]; used to
-		" determine when each rgn position should be rotated to end of rgns[].
-		let mods = range(num_rgn_typs, num_rgn_typs - iord, -1)
-		" Increment the multi-ary 'odometer'.
-		" Note: i will become < 0 only when carry occurs at index 0
-		let i = 0
-		while i >= 0
+		" Build all combinations...
+		" Note: Each element of rgn_combs is a list of dicts that exist in
+		" rgn_info[]. It should be considered a read-only view of only those
+		" regions implicated in a particular combination.
+		let rgn_combs = s:Get_rgn_combinations(rgn_info, iord + 1)
+		" Note: Intentionally iterating regions from higher to lower order to
+		" ensure that for 1 regions, higher order regions have lower priority.
+		" Rationale: If higher-order regions had higher priority, an <fb> tok
+		" within an fb region would begin a spurious higher order region such
+		" as bgcfmt_5_2, which can begin with either a bgc or fmt start tok.
+		" The problem is that bgcfmt_5_2 is a nextgroup of both bgc_5 and
+		" fmt_2, and without breaking up the bgcfmt_5_2 group, there's no way
+		" to constrain a start tok to a specific previous group. We could
+		" split the groups such that each has only a single start tok (e.g.,
+		" BGCfmt_5_2 and bgcFMT_5_2), but Vim's syntax engine's speed is
+		" highly sensitive to total number of groups, so relying on order is
+		" better.
+		" Note: Order doesn't matter for type 2 regions (begun by end tok), as
+		" nextgroup is sufficient to resolve conflicts.
+		" Rationale: Type 2 regions are 'contained', so you can reach them
+		" only via 'nextgroup' after another region has ended. One might
+		" expect problems, given that a lower-order region such as fmt_2 has
+		" higher-order regions such as bgcfmt_5_2 in its 'nextgroup'. Since
+		" bgcfmt_5_2 can begin with a clr end tok, couldn't a clr end
+		" tok lead to a spurious transition from fmt_2 to bgcfmt_*_2? The
+		" answer is no, because a clr end tok cannot end a fmt_2 region.
+		" (In fact, it's ignored in a fmt_2 region). It is always the case
+		" that an end tok that could begin a type 2 region is represented
+		" *only* in higher-order region combinations, and thus, cannot end a
+		" lower-order region; thus, an end tok can never be used to transition
+		" from lower to higher order.
+		" FIXME_COMBINATIONS: Should probably just refactor
+		" Get_rgn_combinations() to accomplish the order reversal.
+		for rgn_comb in reverse(rgn_combs)
 			"let ts = reltime()
 			" TODO: Split up name/max for efficiency reasons.
-			let rgns = map(rgn_info[0:iord], 'v:val.name')
-			let rest = map(rgn_info[iord + 1:], 'v:val.name')
-			" Sort indices into the order required by cterm=
+			" FIXME_COMBINATIONS: Consider caching some more forms: e.g.,
+			" rgn_comb[0/1] as named, not indexed vars. Also, consider more
+			" symmetric name than rest: e.g., rgns and rems or RGNS.
+			let [rgn_objs, rem_objs] = [rgn_comb[0], rgn_comb[1]]
+			" TODO_COMBINATIONS: Consider changing rest to rems for
+			" greater parallelism.
+			let rgns = map(rgn_objs[:], 'v:val.name')
+			let rest = map(rem_objs[:], 'v:val.name')
+			" Assumption: Indices already in fiducial order (required by cterm=).
 			" Note: cterm= MUST come *after* ctermfg= to ensure that bold
 			" attribute is handled correctly in a cterm.
 			"	:help cterm-colors
@@ -864,35 +896,19 @@ fu! s:Define_syntax()
 			" cterm=bold really means bold, and not bright color; note that
 			" bright colors can be achieved other ways (e.g., color # above 8)
 			" in terminals that support them.
-			" Note: dict attribute is used simply to allow us to pass data to
-			" the sort function (since VimL has no closures). Alternatively,
-			" could make a singleton object.
-			" TODO: Pull this out of this nested loop!!!
-			fu! Sort_rgn_types(a, b) dict
-				let ri = self.rgn_info
-				if ri[a:a].name == 'clr'
-					return -1
-				elseif ri[a:a].name == 'fmt'
-					return 1
-				elseif ri[a:a].name == 'bgc'
-					return ri[a:b].name == 'fmt' ? -1 : 1
-				endif
-			endfu
-			" Note: Must supply rgn_info within a dict.
-			" TODO: Consider refactoring so that the sort function is a true
-			" dict function (on actual dict).
-			let sidxs = sort(range(iord + 1),
-				\function('Sort_rgn_types'), {'rgn_info': rgn_info})
 
 			" Build templates for current 'order' <<<
 			" Description of lors, sors, hors
 			" These 3 arrays are a convenience. They are 2D arrays containing
 			" specific useful combinations of token type indices, as follows:
 			" lors: preceding (lower) order regions
-			"       regions to which an end token could return us
+			"       regions to which an end token for a rgn type represented
+			"       in current region could could return us
 			" sors: current (same) order regions
 			"       regions to which a start token for a rgn type
 			"       represented in current region could take us
+			"       FIXME_COMBINATIONS: Are sors even still a thing? I mean,
+			"       nothing's changing any more, right?
 			" hors: next (higher) order regions
 			"       regions to which a start token *not* represented in
 			"       current region could take us
@@ -903,48 +919,53 @@ fu! s:Define_syntax()
 			let ng_xb = s:Make_exe_builder()
 			call ng_xb.add(" nextgroup=", 1)
 			" Transitions to lower order regions <<<
-			let idx = 0
 			let need_comma = 0
-			let dbg = ''
-			while iord && idx <= iord
-				let lors = range(idx) + range(idx + 1, iord)
-				" Transitions to lower-order groups (used to be rtd group)
-				" TODO: Consider whether better way to do this now that no '_rtd' appended.
-				call ng_xb.add((need_comma ? "," : "") . "Tf".cui."_", 1)
-				call ng_xb.add(join(map(copy(lors), 'rgns[v:val]'), "") . "_", 1)
-				call ng_xb.add(join(map(copy(lors), '"offs[" . v:val . "]"'), " . '_' . "))
-				let idx += 1
-				let need_comma = 1
-			endwhile
+			if iord
+				for idx in range(iord + 1)
+					" Transitions to lower-order groups (used to be rtd group)
+					" TODO: Consider whether better way to do this now that no '_rtd' appended.
+					call ng_xb.add((need_comma ? "," : "")
+						\ . "Tf" . cui . "_"
+						\ . join(filter(rgns[:], 'v:key != l:idx'), "")
+						\ . "_", 1)
+					call ng_xb.add_list(map(range(idx) + range(idx + 1, iord),
+						\ '"offs[" . v:val . "]"'), "_")
+					" TODO_COMBINATIONS: Decide whether these builders are still
+					" warranted. Note that offs[] is not evaluated here.
+					let need_comma = 1
+				endfor
+			endif
 			" >>>
 			" Transitions to same order regions <<<
-			let idx = 0
-			while idx <= iord
-				let sors = range(0, idx - 1) + range(idx + 1, iord) + [idx]
-				call ng_xb.add((need_comma ? "," : "")
-					\. "@Tf".cui."_" . join(map(copy(sors), 'rgns[v:val]'), ""), 1)
-				if len(sors) > 1
-					call ng_xb.add("_", 1)
-					call ng_xb.add(join(map(copy(sors[0:-2]), '"offs[" . v:val . "]"'), " . '_' . "))
-				endif
-				call ng_xb.add("_all", 1)
-				let idx += 1
+			for idx in range(iord + 1)
+				call ng_xb.add((need_comma ? "," : "") . "@Tf" . cui . "_"
+					\ . join(rgns[:], "") . '_', 1)
+				call ng_xb.add_list(map(range(iord + 1),
+					\ 'v:val == l:idx ? "''all''" : "offs[" . v:val . "]"'), "_")
 				let need_comma = 1
-			endwhile
+			endfor
 			" >>>
 			" Transitions to higher order regions <<<
-			let idx = iord + 1
-			while idx < num_rgn_typs
-				call ng_xb.add((need_comma ? "," : "")
-					\. "@Tf".cui."_" . join(rgns + [rgn_info[idx].name], "") . "_", 1)
-				" TODO: The join could be factored out since it depends only on iord!!!!!
-				call ng_xb.add(join(map(range(iord + 1), '"offs[" . v:val . "]"'), " . '_' . "))
-				call ng_xb.add("_all", 1)
-				let idx += 1
-				let need_comma = 1
-			endwhile
+			" Loop over the other regions (in rest)
+			for orgn in rest
+				" Assumption: need_comma check unnecessary, since same order
+				" region ensures it will be needed.
+				call ng_xb.add(",", 1)
+				" Pull in one of the rgn types that's unused by current
+				" combination.
+				" FIXME_COMBINATIONS: Given that we're inserting element into
+				" already-sorted list, this approach may be overkill. Revisit
+				" if efficiency matters.
+				let objs = sort(map(rgns[:],
+					\ '{"name": v:val, "idx": "offs[" . v:key . "]"}')
+					\ + [{'name': orgn, 'idx': "'all'"}],
+					\ function('s:Sort_rgn_types'))
+				call ng_xb.add("@Tf" . cui . "_"
+					\ . join(map(objs[:], 'v:val.name'), "") . "_", 1)
+				call ng_xb.add_list(map(objs[:], 'v:val.idx'), "_")
+			endfor
 			" >>>
-			" Make sure an end token ending an O1 region is concealed.
+			" Make sure an end token ending a first order region is concealed.
 			if iord == 0
 				" 1st order rgn
 				call ng_xb.add(",Tf_tok", 1)
@@ -959,13 +980,14 @@ fu! s:Define_syntax()
 			let tok_group_xb = s:Make_exe_builder()
 			let esc_group_xb = s:Make_exe_builder()
 			" TODO: Handle this a different way...
+			" TODO_COMBINATIONS: Look at this now... Is there duplication???
 			call tok_group_xb.add('Tf_tok', 1)
 			call esc_group_xb.add('Tf_esc', 1)
 			if bgc_idx >= 0
 				" This region contains bg color; use appropriate tok/esc
 				" concealment regions.
 				if !b:txtfmt_cfg_conceal
-					call tok_group_xb.add(',Tf'.cui.'_tok_', 1)
+					call tok_group_xb.add(',Tf' . cui . '_tok_', 1)
 					call tok_group_xb.add("offs[" . bgc_idx . "]")
 				endif
 				if b:txtfmt_cfg_escape != 'none'
@@ -980,25 +1002,63 @@ fu! s:Define_syntax()
 			let rgn_name_xb = s:Make_exe_builder()
 			call rgn_name_xb.add('Tf' . cui . '_' . join(rgns, "") . '_', 1)
 			" TODO: Consider loopifying this to avoid hybrid arg to add.
-			call rgn_name_xb.add(join(map(range(iord + 1), '"offs[" . v:val . "]"'), " . '_' . "))
-			let cls_xb = s:Make_exe_builder()
-			call cls_xb.add('syn cluster Tf'.cui.'_'.join(rgns, ""), 1)
-			if iord > 0
+			call rgn_name_xb.add_list(map(range(iord + 1), '"offs[" . v:val . "]"'), "_")
+
+			" Create builders for the combination-specific "all" clusters.
+			" Note: Eval loop will need to loop over all builders in cls_xbs.
+			let cls_xbs = []
+			for idx in range(iord + 1)
+				let cls_xb = s:Make_exe_builder()
+				call add(cls_xbs, cls_xb)
+				call cls_xb.add('syn cluster Tf' . cui . '_' . join(rgns, ""), 1)
 				call cls_xb.add('_', 1)
-				call cls_xb.add(join(map(range(iord), '"offs[" . v:val . "]"'), " . '_' . "))
-			endif
-			call cls_xb.add('_all add=', 1)
-			call cls_xb.add(rgn_name_xb)
+				call cls_xb.add_list(map(range(iord + 1),
+					\ 'v:val == l:idx ? "''all''" : "offs[" . v:val . "]"'), "_")
+				call cls_xb.add(' add=', 1)
+				call cls_xb.add(rgn_name_xb)
+			endfor
+
+			" Create builder used to augment the non-specific "all" cluster.
 			let cls_all_xb = s:Make_exe_builder()
-			call cls_all_xb.add('syn cluster Tf'.cui.'_all add=', 1)
+			call cls_all_xb.add('syn cluster Tf' . cui . '_all add=', 1)
 			call cls_all_xb.add(rgn_name_xb)
+
+			" Create builder for the common portion of syn region
 			let rgn_cmn_xb = s:Make_exe_builder()
 			call rgn_cmn_xb.add('syn region ', 1)
 			call rgn_cmn_xb.add(rgn_name_xb)
-			call rgn_cmn_xb.add(skip . ' end=/[', 1)
+			" Note: The pattern for start toks involved in the current
+			" combination is needed in both end and start patterns, so go
+			" ahead and cache xb for it now.
+			let rgn_stoks_atom_xb = s:Make_exe_builder()
+			call rgn_stoks_atom_xb.add_list(map(range(iord + 1),
+				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
+			" Add the end pattern.
+			" Note: At start of end pattern, we need a negative character
+			" class preventing match of start tokens represented in current
+			" region combination. (Either that, or we need to exclude those
+			" start toks from the pattern some other way.)
+			" Rationale: If one of the region's own start toks is permitted to
+			" end the region, a spurious region may be allowed to start: e.g.,
+			" if <f2> is allowed to end a fmt_2 region, it might then begin
+			" the highest priority fmtclr region (fmtclr_2_8 - since it has a
+			" start pattern matching <f2> and is mentioned in fmt_2's
+			" nextgroup.)
+			" There are 2 possible solutions: 1) don't allow a start tok to
+			" end its own region; 2) break up the nextgroup regions such that
+			" each can begin with only 1 start tok. I've chosen option 1,
+			" which is the simplest and most efficient.
+			call rgn_cmn_xb.add(skip . ' end=/[^', 1)
+			call rgn_cmn_xb.add(rgn_stoks_atom_xb)
+			" Finish the branch that excludes start toks in current
+			" combination, and begin branch that includes start toks which are
+			" *not* in current combination, and end toks which are.
+			call rgn_cmn_xb.add(']\&[', 1)
 			call rgn_cmn_xb.add(b:txtfmt_re_any_stok_atom, 1)
+			" Region is ended by end tok for any rgn type in current
+			" combination.
 			call rgn_cmn_xb.add(join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-				\. ']/me=e-'.tok_off.',he=e-'.tok_off
+				\. ']/me=e-' . tok_off . ',he=e-' . tok_off
 				\.' keepend contains=', 1)
 			" Add contains= for tok and (if necessary) esc groups.
 			call rgn_cmn_xb.add(tok_group_xb)
@@ -1012,6 +1072,8 @@ fu! s:Define_syntax()
 			" transition to same or higher order)
 			" rgn2 refers to a region begun by an end token (always
 			" transitions to lower order)
+			" FIXME_COMBINATIONS: Remove misleading "cmn" from these 2 var
+			" names. Actually, could just add directly in the builder add() call.
 			let rgn_cmn1 = 
 				\(iord == 0
 				\ ? containedin_def
@@ -1023,24 +1085,23 @@ fu! s:Define_syntax()
 				\.' contained'
 			let rgn1_xb = s:Make_exe_builder()
 			call rgn1_xb.add(rgn_cmn_xb)
-			call rgn1_xb.add(rgn_cmn1 . ' start=/', 1)
-			" TODO: Consider having a placeholder var for this...
-			call rgn1_xb.add('nr2char(b:txtfmt_{rgns[-1]}_first_tok + offs[-1])')
-			call rgn1_xb.add('/', 1)
+			call rgn1_xb.add(rgn_cmn1 . ' start=/[', 1)
+			" Region can start with the start tok of *any* of the regions in
+			" the current combination. (Re-use cached xb.)
+			call rgn1_xb.add(rgn_stoks_atom_xb)
+			call rgn1_xb.add(']/', 1)
 			let hi_xb = s:Make_exe_builder()
 			call hi_xb.add('hi ', 1)
 			call hi_xb.add(rgn_name_xb)
-			let idx = 0
-			while idx <= iord
-				let sidx = sidxs[idx]
-				call hi_xb.add(eq_{rgns[sidx]}, 1)
-				call hi_xb.add('b:txtfmt_{rgns[' . sidx . ']}{offs[' . sidx . ']} ')
-				let idx += 1
-			endwhile
+			for idx in range(iord + 1)
+				call hi_xb.add(eq_{rgns[idx]}, 1)
+				call hi_xb.add('b:txtfmt_{rgns[' . idx . ']}{offs[' . idx . ']} ')
+			endfor
 			let rgn2_xb = s:Make_exe_builder()
 			if iord < num_rgn_typs - 1
 				call rgn2_xb.add(rgn_cmn_xb)
-				" TODO: Perhaps move it down here...
+				" TODO: Definitely move the common stuff down here since it
+				" may not even be needed...
 				call rgn2_xb.add(rgn_cmn2, 1)
 			endif
 			" >>>
@@ -1051,7 +1112,9 @@ fu! s:Define_syntax()
 			" which are adjusted within the loop: rgns is adjusted by
 			" left-rotation within the mods[] update loop; offs[] are
 			" calculated explicitly when rgn indices (jdxs[]) are updated.
-			let cls_estr = cls_xb.get_estr()
+			" Note: Intentionally mapping destructively over cls_xbs, which
+			" won't be needed again before it's rebuilt for a new combination.
+			let cls_estrs = map(cls_xbs, 'v:val.get_estr()')
 			let cls_all_estr = cls_all_xb.get_estr()
 			let rgn1_estr = rgn1_xb.get_estr()
 			let hi_estr = hi_xb.get_estr()
@@ -1062,9 +1125,13 @@ fu! s:Define_syntax()
 			" Note: jdxs[] represents rgn indices for all positions involved
 			" in current 'order'.
 			let jdxs = repeat([1], iord + 1)
-			" Convert 0-based offset to token offset
-			let offs = map(range(iord + 1), 'rgn_info[v:val].name == "fmt"'
-				\.' ? 1 : rgn_info[v:val].offs[0]')
+			" Initialize offs[] with first used non-default index for each rgn
+			" type (1 for fmt, first used color number for color rgns).
+			" TODO_COMBINATIONS: Consider testing for offs member instead of
+			" checking name.
+			let offs = map(range(iord + 1), 'rgn_objs[v:val].name == "fmt"'
+				\.' ? 1 : rgn_objs[v:val].offs[0]')
+			" Count down
 			let i = iord
 			" Evaluate templates in loop over all permutations of indices for
 			" the current permutation of rgn types: e.g., fmt1-clr1,
@@ -1083,7 +1150,9 @@ fu! s:Define_syntax()
 				"let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define clusters.
-				exe eval(cls_estr)
+				for cls_estr in cls_estrs
+					exe eval(cls_estr)
+				endfor
 				exe eval(cls_all_estr)
 				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
@@ -1104,10 +1173,10 @@ fu! s:Define_syntax()
 				let i = iord
 				while i >= 0
 					let jdxs[i] += 1
-					if jdxs[i] > rgn_info[i].max
+					if jdxs[i] > rgn_objs[i].max
 						let jdxs[i] = 1
-						let offs[i] = rgn_info[i].name == "fmt"
-							\? 1 : rgn_info[i].offs[0]
+						let offs[i] = rgn_objs[i].name == "fmt"
+							\? 1 : rgn_objs[i].offs[0]
 						" Keep going leftward unless we're done
 						let i -= 1
 						if i < 0
@@ -1116,10 +1185,10 @@ fu! s:Define_syntax()
 						endif
 					else
 						" j hasn't rolled over
-						if rgn_info[i].name == "fmt"
+						if rgn_objs[i].name == "fmt"
 							let offs[i] += 1
 						else
-							let offs[i] = rgn_info[i].offs[jdxs[i] - 1]
+							let offs[i] = rgn_objs[i].offs[jdxs[i] - 1]
 						endif
 						break
 					endif
@@ -1130,50 +1199,12 @@ fu! s:Define_syntax()
 			"let profs['all-perms'] += str2float(reltimestr(reltime(ts)))
 			" >>>
 			" >>>
-
-			" Generate next permutation of rgn types for current 'order' <<<
-			" Note: We get here just after incrementing through all
-			" permutations of rgn indices for current permutation of rgn types
-			" at current 'order'. Next permutation of rgn types is generated
-			" by using mods[] as a down-counting ripple counter, in which each
-			" position triggers a leftward rotation of range rgn_info[i:] when
-			" the counter at position i reaches 0.
-			" Note: Because of the ripple effect, multiple rotations may occur
-			" between loop entry and exit, but conceptually, it's a single
-			" increment of the overall counter. (Think multiple bits in a
-			" binary counter changing value.)
-			let i = iord
-			while i >= 0
-				" Skip pointless rotation of single element
-				if i < num_rgn_typs - 1
-					" Rotate i to end
-					" Optimization Possibility: Don't really need to rotate
-					" when i == iord, since there are no affected positions
-					" rightward.
-					let r = remove(rgn_info, i)
-					call add(rgn_info, r)
-				endif
-				let mods[i] -= 1
-				if mods[i] <= 0
-					" Carry leftward (by avoiding break) and reset modulo down
-					" counter for this position.
-					let mods[i] = num_rgn_typs - i
-				else
-					" No need to go further left.
-					break
-				endif
-				" Keep going leftward unless we're done
-				let i -= 1
-				if i < 0
-					" Hit modulo in 1st position: we're done.
-					break
-				endif
-			endwhile
-		endwhile
+		endfor
 		" Increase 'order'
 		let iord += 1
 	endwhile
 	" >>>
+
 	"let profs['all'] += str2float(reltimestr(reltime(ts_all)))
 	"echo "Profile results: " . string(profs)
 	" Handle escape/escapee token pairs both inside and outside regions. <<<
