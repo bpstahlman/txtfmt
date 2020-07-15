@@ -41,14 +41,14 @@ Before diving into the details of auto maps, I'll present a few examples that sh
 <br>**Note:** You could also have typed `fbi,cb` (without the `=`) or even `f+bi,cb`, either of which would have _added_ bold-italic on top of any existing format attributes.
 
 ## Operator Auto Maps
-**Ojective (part 1):** Make the word under the cursor bold red.
+**Objective (part 1):** Make the word under the cursor bold red.
 1. In Normal mode, position cursor on word to be highlighted
 1. Type `\h` (enters "operator-pending" mode)
 1. Type `iw` (specifies "inner word" text object)
 1. At the prompt, type `cr,f=b`
 1. Hit Enter to apply highlighting
 
-**Ojective (part 2):** Italicize and underline the current and subsequent 2 lines, highlighting the background green (without losing the highlighting applied to the word in part 1).
+**Objective (part 2):** Italicize and underline the current and subsequent 2 lines, highlighting the background green (without losing the highlighting applied to the word in part 1).
 1. In Normal mode, with cursor still in the line from the preceding example...<br>
    Type `\h` (enters "operator-pending" mode)
 1. Hit `2j` (includes current and next 2 lines in range)
