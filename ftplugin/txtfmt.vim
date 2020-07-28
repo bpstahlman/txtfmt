@@ -3,14 +3,31 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2018 Nov 23
+" Last Change: 2023 Jan 08
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
-"echoerr "Sourcing ftplugin..."
-
+" Script-level constants <<<
 " Let the common code know whether this is syntax file or ftplugin
+" TODO: This doesn't appear to be used any longer. Consider removal.
 let s:script_name = 'ftplugin'
+
+" Binary progression: ubisrc
+let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
+let s:cfg_color_name_compat = 0
+
+" Number of bytes backwards to look when attempting sync for vmap operation.
+let s:SYNC_DIST_BYTES = 2500
+
+" Prior to v3.0, a color name was permitted to contain whitespace; disallowing
+" it permits us to use whitespace, rather than comma, to separate terms in
+" fmt/clr spec list. It's unlikely anyone is relying upon this, but provide an
+" option just in case.
+" TODO: Need to go back and make Translate_fmt_clr_list handle this.
+" TODO: Is this the best place for this?
+let s:cfg_color_name_compat = 0
+
+" >>>
 " Function: s:Add_undo() <<<
 " Purpose: Add the input string to the b:undo_ftplugin variable. (e.g., unmap
 " commands, etc...)
@@ -515,7 +532,7 @@ fu! s:Delete_cur_char()
 	return strlen(@z)
 endfu
 " >>>
-" Function: s:Delete_region_text() <<<
+" Function: s:Delete_region_text_old() <<<
 " Purpose: Delete all text in specified region.
 " Inputs:
 " pos_beg: <[ln, col] of pos at beg of region to delete>
@@ -531,7 +548,9 @@ endfu
 " approach doesn't require this either, but it's certainly the easiest way, and
 " if we're going to calculate the length of deleted text more analytically, the
 " delete operator provides no real advantage over the analytic approach...
-fu! s:Delete_region_text(pos_beg, pos_end, inc)
+" TODO: If the length of deleted text isn't required (and it no longer appears
+" to be), simplify this function!!!!!
+fu! s:Delete_region_text_old(pos_beg, pos_end, inc)
 	let inc = type(a:inc) == 3 ? a:inc : [a:inc, a:inc]
 	let [line_beg, col_beg, line_end, col_end] =
 		\[a:pos_beg[0], a:pos_beg[1], a:pos_end[0], a:pos_end[1]]
@@ -573,7 +592,7 @@ fu! s:Delete_region_text(pos_beg, pos_end, inc)
 	call setline(line_beg, keeptext_beg . keeptext_end)
 	if line_end - line_beg
 		" Remove lines to bit bucket.
-		exe (line_beg + 1) . "," . line_end . "d _"
+		silent exe (line_beg + 1) . "," . line_end . "d _"
 	endif
 
 	" Return number of bytes removed
@@ -610,7 +629,6 @@ fu! s:Restore_visual_mode(pos_beg, pos_end, deactivate)
 	endif
 endfu
 " >>>
-" TODO: Header comments and convert to static
 " Function: s:Is_esc_tok_obsolete() <<<
 " Purpose: Determine whether the char under the cursor is a Txtfmt escape
 " token.
@@ -622,7 +640,7 @@ endfu
 " TODO: Remove this after 
 fu! s:Is_esc_tok_obsolete()
 	" Take care of the obvious cases first...
-	if !Is_cursor_on_char()
+	if !s:Is_cursor_on_char()
 		return 0
 	endif
 	if b:txtfmt_cfg_escape == 'none'
@@ -992,8 +1010,9 @@ endfu
 
 " >>>
 " >>>
+" Function: s:Is_cursor_on_char() <<<
 " TODO: Perhaps move elsewhere...
-fu! Is_cursor_on_char()
+fu! s:Is_cursor_on_char()
 	" Note: The following test for something under the cursor works well even
 	" when 'virtualedit' is active.
 	if col('.') == col('$')
@@ -1003,8 +1022,10 @@ fu! Is_cursor_on_char()
 		return 1
 	endif
 endfu
+" >>>
+" Function: s:Is_active_color_index() <<<
 " TODO: Perhaps move elsewhere...
-fu! Is_active_color_index(typ, idx)
+fu! s:Is_active_color_index(typ, idx)
 	" TODO: Possibly refactor this test into a function that could
 	" be called from other places as well?
 	let fg_or_bg = a:typ == 'clr' ? 'fg' : 'bg'
@@ -1025,7 +1046,8 @@ fu! Is_active_color_index(typ, idx)
 	" If we get here, the color isn't active
 	return 0
 endfu
-" Function: Search_in_range
+" >>>
+" Function: Search_in_range <<<
 " Purpose: Efficiently wraps builtin search() routine, searching only within
 " input range, regardless of cursor position
 " Return: Value returned by Vim's search() routine. If match occurs, cursor
@@ -1103,7 +1125,7 @@ fu! Search_in_range(re, l1, c1, l2, c2)
 	" Return the value returned by search()
 	return ret_val
 endfu
-
+" >>>
 " Function: s:Get_cur_tok_for_rgn() <<<
 " Purpose: If cursor is within the body of a Txtfmt highlighting region (i.e.,
 " not on an escape, start or end token) return the applicable token;
@@ -1136,7 +1158,7 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 	let rgn_idx_max_clr = b:txtfmt_num_colors - 1
 	let rgn_idx_max_bgc = b:txtfmt_num_colors - 1
 
-	if !Is_cursor_on_char()
+	if !s:Is_cursor_on_char()
 		" Nothing under cursor - we can't determine anything about current
 		" region type
 		return ''
@@ -1209,7 +1231,7 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 			endif
 			" Additional tests for color regions
 			if rgns{num_idx} == 'clr' || rgns{num_idx} == 'bgc'
-				if !Is_active_color_index(rgns{num_idx}, num)
+				if !s:Is_active_color_index(rgns{num_idx}, num)
 					" Ooops! num corresponds to inactive color
 					return ''
 				endif
@@ -1246,321 +1268,6 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 		" Not a valid Txtfmt group
 		return ''
 	endif
-endfu
-" >>>
-" Function: s:Cleanup_tokens_working() <<<
-" TODO: Make static after testing
-" TODO !!! UNUSED !!! REMOVE !!!
-fu! Cleanup_tokens_working(startline, stopline)
-	" Save original position
-	let orig_line = line('.')
-	let orig_col = col('.')
-	" Create array to facilitate looping over region types:
-	" Note: Ignore inactive tokens completely.
-	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
-	"  for building other var names
-	let rgn_arrlen = 0
-	if b:txtfmt_cfg_numfgcolors > 0
-		let rgn{rgn_arrlen} = 'clr'
-		let rgn_arrlen = rgn_arrlen + 1
-	endif
-	let rgn{rgn_arrlen} = 'fmt'
-	let rgn_arrlen = rgn_arrlen + 1
-	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-		let rgn{rgn_arrlen} = 'bgc'
-		let rgn_arrlen = rgn_arrlen + 1
-	endif
-	" Loop over region types
-	let rgn_idx = 0
-	while rgn_idx < rgn_arrlen
-		" Set some convenience vars for current region type
-		" --re_hlable--
-		" Define regex that matches any char that is hlable for current region
-		" type: i.e., for bgc regions, anything that's not a token, and for
-		" non-bgc regions, anything that's neither token nor whitespace
-		let re_hlable = b:txtfmt_re_any_ntok
-		if rgn{rgn_idx} != 'bgc'
-			" Whitespace is hlable only for bgc regions
-			let re_hlable = re_hlable . '\&\S'
-		endif
-		" --rgn_typ--
-		" 3 char rgn name (clr|fmt|bgc)
-		let rgn_typ = rgn{rgn_idx}
-		" --re_tok--
-		" Define regex that matches any token (start or end) for current
-		" region type
-		let re_tok = b:txtfmt_re_{rgn_typ}_tok
-		let re_stok = b:txtfmt_re_{rgn_typ}_stok
-		let re_etok = b:txtfmt_re_{rgn_typ}_etok
-
-		" Ensure that certain vars are undefined upon loop entry
-		" Note: pptok (prev prev tok) is used to save the token that's about
-		" to be overwritten in ptok, but only when something hlable separates
-		" ptok from the tok under consideration (tok).
-		" Rationale: Each time through the loop, we consider 2 tokens: tok and
-		" ptok. If nothing hlable separates them, at least one of them will be
-		" deleted; in some cases, both tok and ptok will be deleted. As long
-		" as something is being deleted, ptok should be sufficient to hold
-		" whatever token needs saving. When neither token is being deleted,
-		" we need to ensure that whatever is in ptok is not lost, since it's
-		" always possible that the token about to be assigned to ptok will
-		" eventually be deleted, in which case, we'll need to know what region
-		" was active before it was encountered. (Note that we don't need
-		" pptok_line and pptok_col, since a token followed by hlable chars
-		" won't be deleted.)
-		unlet! ptok ptok_line ptok_col
-		unlet! pptok
-
-		" Move to requested starting position
-		call cursor(a:startline, 1)
-		let tok_line = line('.')
-		let tok_col = col('.')
-		let tok = s:Get_char()
-		if tok =~ re_tok
-			" Process this token first time through loop
-			" Don't search for hlable, which won't be used this time through
-			" anyway
-			let hlable = 0 " value doesn't matter
-			let hlable_override = 1
-			let tok_override = 1
-		elseif tok =~ re_hlable
-			" Skip the hlable test first time through
-			let hlable = 1 " value doesn't matter
-			let hlable_override = 1
-			let tok_override = 0
-		else
-			" Nothing special about this char; we can do first search from it
-			let hlable_override = 0
-			let tok_override = 0
-		endif
-		" Loop until all tokens within region have been processed
-		while 1
-			" Perform hlable test if necessary
-			if !hlable_override
-				" Init hlable to 0. May be set later, depending upon search
-				" results
-				let hlable = 0
-				" Search for next hlable char within region
-				let hl_line = search(re_hlable, 'W', a:stopline)
-				if hl_line
-					let hl_col = col('.')
-					" Return to current pos
-					call cursor(tok_line, tok_col)
-				endif
-			endif
-			" Search for next tok within region if we don't already have it
-			if !tok_override
-				let tok_line = search(re_tok, 'W', a:stopline)
-				if tok_line
-					let tok_col = col('.')
-					let tok = s:Get_char()
-				endif
-			endif
-
-			" Is there anything to delete from preceding iteration?
-			if exists('l:del_line')
-				" Move to char to be deleted
-				call cursor(del_line, del_col)
-				let len = s:Delete_cur_char()
-				" Adjust column positions and return to saved pos (but only if
-				" we're coming back through loop)
-				if tok_line
-					" Assumption: tok_line/tok_col is beyond the deleted char
-					if tok_line == del_line
-						let tok_col = tok_col - len
-					endif
-					" Assumption: ptok_line/ptok_col could be before or after
-					" deleted token (but cannot be the deleted token)
-					if exists('l:ptok_line') && ptok_line == del_line
-						if ptok_col > del_col
-							let ptok_col = ptok_col - len
-						endif
-					endif
-					" Assumption: Search for hlable is always past any char
-					" deleted on preceding iteration
-					if !hlable_override && hl_line == del_line
-						let hl_col = hl_col - len
-					endif
-					" Return to saved pos
-					call cursor(tok_line, tok_col)
-				endif
-				" Make sure we don't try to delete again
-				unlet del_line del_col
-			endif
-
-			" Are we done with this region type?
-			if !tok_line
-				break
-			endif
-				
-			" Account for only remaining way that hlable could become set
-			if !hlable_override && hl_line && (hl_line < tok_line || hl_line == tok_line && hl_col < tok_col)
-				let hlable = 1
-			endif
-
-			" Clear any active overrides
-			let tok_override = 0
-			let hlable_override = 0
-
-			if !exists('l:ptok')
-				" No knowledge of previous token means we can't possibly
-				" delete anything this time through...
-				let ptok = tok
-				let ptok_line = tok_line
-				let ptok_col = tok_col
-			else
-				" Consider current and previous token...
-				if tok =~ re_stok && ptok =~ re_stok
-					" Start tok preceded by start tok
-					if !hlable && ptok != tok
-						" Start toks are different and not separated by
-						" hlable. Delete useless ptok
-						call cursor(ptok_line, ptok_col)
-						let len = s:Delete_cur_char()
-						" Adjust column positions
-						if tok_line == ptok_line
-							let tok_col = tok_col - len
-						endif
-						" Return to current position
-						call cursor(tok_line, tok_col)
-						" Is new tok redundant with the one we just deleted?
-						if exists('l:pptok') && tok == pptok
-							" Mark redundant tok for deletion
-							let del_line = tok_line | let del_col = tok_col
-							" Restore pptok
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else pptok would have
-							" been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" Advance to new tok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					else
-						" Either stoks are the same or they're separated by
-						" hlable (or both)
-						if ptok == tok
-							" Mark redundant (second) tok for deletion
-							" Note: We're not overwriting ptok so save to
-							" pptok is not necessary, even if hlable is set
-							let del_line = tok_line | let del_col = tok_col
-							if hlable
-								" No need to search for hlable next iteration,
-								" since this hlable is after ptok
-								let hlable_override = 1
-							endif
-						else
-							" hlable separates different stoks
-							" Advance without deleting any tokens
-							" Note: Must save ptok before overwriting since
-							" tok could eventually be deleted.
-							let pptok = ptok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					endif
-				elseif tok =~ re_etok && ptok =~ re_stok
-					" End tok preceded by start tok
-					if hlable
-						" Start token (ptok) will never be deleted now, but
-						" end token (tok) still could be, so save ptok
-						let pptok = ptok
-						" Advance ptok
-						let ptok = tok
-						let ptok_line = tok_line
-						let ptok_col = tok_col
-					else
-						" Delete empty region
-						" First delete ptok, which we're no longer sitting on...
-						call cursor(ptok_line, ptok_col)
-						let len = s:Delete_cur_char()
-						" Adjust column positions
-						if tok_line == ptok_line
-							let tok_col = tok_col - len
-						endif
-						" Return to current position
-						call cursor(tok_line, tok_col)
-						" Mark end token for deletion
-						let del_line = tok_line | let del_col = tok_col
-						" Restore pptok if possible
-						if exists('l:pptok')
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else one of them would
-							" have been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" We'll have to sync up again
-							unlet! ptok ptok_line ptok_col
-						endif
-					endif
-				elseif tok =~ re_etok && ptok =~ re_etok
-					" End tok preceded by end tok. The second one is unnecessary.
-					" Delete it.
-					let del_line = tok_line | let del_col = tok_col
-					if hlable
-						" The first etok can never be deleted now
-						" Note: No need to save ptok to pptok since we're not
-						" overwriting ptok; however, we need to make sure we
-						" skip the search for hlable next time through loop.
-						let hlable_override = 1
-					endif
-				elseif tok =~ re_stok && ptok =~ re_etok
-					" Start tok preceded by end tok
-					if hlable
-						" End tok can never be deleted now but start tok
-						" eventually could be, so save end tok
-						let pptok = ptok
-						" Advance ptok
-						let ptok = tok
-						let ptok_line = tok_line
-						let ptok_col = tok_col
-					else
-						" Delete the useless etok
-						call cursor(ptok_line, ptok_col)
-						let len = s:Delete_cur_char()
-						" Adjust column positions
-						if tok_line == ptok_line
-							let tok_col = tok_col - len
-						endif
-						" Move back to current position
-						call cursor(tok_line, tok_col)
-						" Is start tok redundant with the tok prior to the end
-						" tok we just deleted?
-						if exists('l:pptok') && tok == pptok
-							" Mark redundant stok for deletion
-							let del_line = tok_line | let del_col = tok_col
-							" Restore pptok
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else one of them would
-							" have been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" Advance to new tok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					endif
-				endif
-			endif
-		endwhile
-		" Next region type
-		let rgn_idx = rgn_idx + 1
-	endwhile
-	" Restore starting position
-	call cursor(orig_line, orig_col)
 endfu
 " >>>
 " Function: s:Cleanup_tokens() <<<
@@ -2248,14 +1955,6 @@ fu! s:Translate_fmt_clr_list(s)
 	return offset . ',' . tokstr
 endfu
 " >>>
-" VMAPS TODO - Move elsewhere... <<<
-
-" Binary progression: ubisrc
-let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
-let s:cfg_color_name_compat = 0
-
-" Function: s:????() <<<
-" >>>
 " Function: s:Get_cur_rgn_info() <<<
 " Purpose: Parse the synstack to determine active fmt/clr/bgc regions at
 " cursor, returning a struct that contains either a mask (fmt) or color number
@@ -2278,7 +1977,7 @@ fu! s:Get_cur_rgn_info()
 
 	let info = {'fmt': 0, 'clr': 0, 'bgc': 0}
 	" TODO: Make this static everywhere it's used.
-	if !Is_cursor_on_char()
+	if !s:Is_cursor_on_char()
 		" Nothing under cursor - we can't determine anything about current
 		" region type
 		return info
@@ -2632,16 +2331,9 @@ fu! s:Parse(specs)
 	return s:Parse_fmt_clr_transformer(a:specs)
 endfu
 " >>>
-fu! s:Test(spec)
-	unlet! s:err_str
-	echo string(s:Parse_fmt_clr_transformer(a:spec))
-	if (exists('s:err_str'))
-		echoerr s:err_str
-	endif
-endfu
+" Function: s:Convert_string_to_binary_mask <<<
 " Convert input string consisting of 1's and 0's to corresponding binary mask.
 " TODO: Not really using this now...
-" Function: s:Convert_string_to_binary_mask <<<
 fu! s:Convert_string_to_binary_mask(str)
 	let mask = 0
 	let bit = 1
@@ -2887,8 +2579,80 @@ fu! s:Get_char_unused(...)
 	return line[0 : byteidx(line, 1) - 1]
 endfu
 " >>>
+" Function: s:Delete_range(beg, end) <<<
+" TODO: Decide whether to hard-code `[,`]
+" TODO: Also decide whether the save/restore of pos is needed.
+fu! s:Delete_range(beg, end)
+	"let save_pos = getpos('.')[1:2]
+	"call cursor(a:beg)
+	let save_vis = {'<': getpos("'<"), '>': getpos("'>")}
+	call setpos("'<", [0, a:beg[0], a:beg[1], 0])
+	call setpos("'>", [0, a:end[0], a:end[1], 0])
+	normal! gvd
+	" Restore the visual marks
+	call setpos("'<", save_vis['<'])
+	call setpos("'>", save_vis['>'])
+	"call cursor(save_pos)
+	"let save_mark = getpos("']")[1:2]
+	"call setpos("']", end)
+	"exe 'normal! "_dv`]'
+endfu
+" >>>
+" Function: s:Delete_range_vi() <<<
+fu! s:Delete_range_vi(beg, end)
+	call cursor(a:beg)
+	normal! v
+	call cursor(a:end)
+	normal! d
+endfu
+" >>>
+" Function: s:Delete_range_op() <<<
+fu! s:Delete_range_op(beg, end)
+	call setpos("']", [0, a:end[0], a:end[1], 0])
+	call cursor(a:beg)
+	normal! dv`]
+endfu
+" >>>
+" Function: s:Move_pos_rightward_maybe() <<<
+" Adjust the input position by moving it rightward (without moving to next line
+" or past end of current) to the position of the nearest character that isn't
+" concealed, else the final character on the line.
+fu! s:Move_pos_rightward_maybe(pos)
+	let save_pos = getpos('.')[1:2]
+	call cursor(a:pos)
+	let eol = col('$')
+
+	" Find first char that isn't concealed, else final char on line (not
+	" including eol in virtualedit mode).
+	let next_col = a:pos[1]
+	let col = -1
+	while next_col > col && next_col < eol
+		" Char under cursor is now accepted.
+		let col = next_col
+		let concealed = synconcealed(a:pos[0], col)
+		if concealed[0]
+			" Try to move to next char rightward...
+			normal! l
+			let next_col = col('.')
+		else
+			" We found an unconcealed char!
+			break
+		endif
+	endwhile
+
+	" Restore saved pos.
+	call cursor(save_pos)
+
+	if col > a:pos[1]
+		" Position has changed.
+		let a:pos[1] = col
+		return 1
+	endif
+	return 0
+endfu
+" >>>
 " Function: s:Get_char() <<<
-" Purpose: Get and return the character under the cursor
+" Purpose: Get and return the character at provided position (default under the cursor).
 " Return: Character under the cursor or empty string if ga would display NUL
 " Assumption: Caller saves and restores @z, which is used by this function
 fu! s:Get_char(...)
@@ -2909,6 +2673,7 @@ fu! s:Get_char(...)
 	return ret
 endfu
 " >>>
+" Function: s:Backward_char() <<<
 " Move back 1 char and return pos list representing old position (empty list
 " if we're already at beginning of buffer).
 fu! s:Backward_char()
@@ -2928,6 +2693,8 @@ fu! s:Backward_char()
 	endif
 	return save_pos
 endfu
+" >>>
+" Function: s:Forward_char() <<<
 fu! s:Forward_char()
 	let save_pos = getpos('.')
 	" Attempt to move forward 1 char
@@ -2943,7 +2710,8 @@ fu! s:Forward_char()
 	endif
 	return save_pos
 endfu
-
+" >>>
+" Function: s:Delete_char() <<<
 " Delete the specified char from buffer (default char under cursor) and return
 " it.
 " TODO: Cleaner than s:Delete_cur_char (doesn't require caller to save/restore
@@ -2994,13 +2762,14 @@ fu! s:Adjust_sel_to_protect_escapes(opt)
 	endif
 endfu
 " >>>
-
+" Function: s:Idx_to_tok() <<<
 " TODO: Figure out where to put this, or whether it's even needed.
 " TODO: Consider combining rgn and idx into a simple datatype.
 fu! s:Idx_to_tok(rgn, idx)
 	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
 endfu
-
+" >>>
+" Function: s:Is_empty() <<<
 " Vim's empty() considers integer 0 as empty. This one doesn't.
 fu! s:Is_empty(v)
 	let t = type(a:v)
@@ -3011,29 +2780,34 @@ fu! s:Is_empty(v)
 		return empty(a:v)
 	endif
 endfu
-" TODO: !!! UNUSED - REMOVE !!!
-fu! s:At_buf_end()
-	return !!search('\%#.\?\%$', 'ncW')
-endfu
-
+" >>>
+" Function: s:Is_pos_in_rng() <<<
 " TODO: A couple of these may now be unnecessary.
 fu! s:Is_pos_in_rng(p, pos_beg, pos_end)
 	return a:p[0] >= pos[0] && a:p[0] <= pos[0]
 		\&& (a:p[0] > pos[0] || a:p[1] >= pos[1])
 		\&& (a:p[0] < pos[0] || a:p[1] <= pos[1])
 endfu
+" >>>
+" Function: s:Is_pos_before_pos() <<<
 fu! s:Is_pos_before_pos(p, pos)
 	return a:p[0] < a:pos[0] || (a:p[0] == a:pos[0] && a:p[1] < a:pos[1])
 endfu
+" >>>
+" Function: s:Is_pos_after_pos() <<<
 fu! s:Is_pos_after_pos(p, pos)
 	return a:p[0] > a:pos[0] || (a:p[0] == a:pos[0] && a:p[1] > a:pos[1])
 endfu
+" >>>
+" Function: s:Cmp_pos_to_pos() <<<
 fu! s:Cmp_pos_to_pos(p, pos)
 	return s:Is_pos_before_pos(a:p, a:pos)
 		\? -1
 		\: s:Is_pos_after_pos(a:p, a:pos)
 			\? 1 : 0
 endfu
+" >>>
+" Function: s:Cmp_pos_to_rng() <<<
 fu! s:Cmp_pos_to_rng(p, pos_beg, pos_end)
 	return s:Is_pos_before_pos(a:p, a:pos_beg)
 		\? -1
@@ -3041,7 +2815,127 @@ fu! s:Cmp_pos_to_rng(p, pos_beg, pos_end)
 			\? 1
 			\: 0
 endfu
+" >>>
+" Function: s:Is_pos_valid() <<<
+" Return true iff input position is valid.
+fu! s:Is_pos_valid(pos)
+	return !!col([a:pos[0], a:pos[1]])
+endfu
+" >>>
+" Function: s:Get_at_offset() <<<
+" Return position at signed (character) offset from input position.
+" TODO: Add detailed documentation...
+fu! s:Get_at_offset(offset, pos = [], what = '')
+	let off_inc = a:offset < 0 ? 1 : -1
+	if !empty(a:pos) && !s:Is_pos_valid(a:pos)
+		" Invalid char position! Return something empty().
+		return []
+	endif
+	let [line, col] = empty(a:pos) ? getpos('.')[1:2] : a:pos
+	let off = a:offset
+	let fwd = a:offset > 0
+	let ltext = getline(line)
+	let linelen = len(ltext)
+	let idx = col - 1
+	" Note: Unlike byteidx(), charidx() can't handle empty line.
+	let cidx = !linelen ? 0 : charidx(ltext, idx)
+	if !fwd
+		" Bootstrap reverse stepping by finding the char *past* start.
+		let cidx += 1
+		let idx = byteidx(ltext, cidx)
+		if idx < 0
+			" At eol: make subsequent byte offset subtraction work by setting to
+			" position just past eol.
+			" Note: Because byteidx() can handle 1 char past eol on
+			" non-empty line, this should happen only for empty line.
+			let idx = linelen
+		endif
+	endif
 
+	" Keep going across lines till offset char steps have been peformed or we
+	" run out of room in the buffer.
+	while 1
+		" Move across line.
+		while 1
+			let cidx_next = cidx + (fwd ? 1 : -1)
+			" Note: byteidx returns -1 for an invalid char index, but doesn't
+			" consider index of 1 char past end to be invalid.
+			let idx_next = byteidx(ltext, cidx_next)
+			if idx_next < 0
+				" Note: Algorithm ensures idx_next can't be negative in the
+				" non-forward case.
+				if fwd
+					" Note: Because byteidx() can handle 1 char past eol on
+					" non-empty line, this should happen only for empty line.
+					let idx_next = linelen
+				else
+					throw "Internal error: Get_at_offset():"
+								\ . " byteidx() unexpectedly returned -1 for reverse direction."
+				endif
+			endif
+			if !off
+				" This is the sought char.
+				if fwd
+					let byte = idx
+					let sz = idx_next - idx
+				else
+					let byte = idx_next
+					let sz = idx - idx_next
+				endif
+				if a:what == 'pos'
+					return [line, byte + 1]
+				else
+					let ch = strpart(ltext, byte, sz)
+					if empty(a:what)
+						return [[line, byte + 1], ch]
+					elseif a:what == 'char'
+						return ch
+					endif
+				endif
+				" Shouldn't get here!
+				throw "Internal error: Invalid `what` value passed to s:Get_at_offset: " . a:what
+			endif
+			" Record step taken.
+			let off += off_inc
+			if fwd ? !idx_next || idx_next >= linelen : idx_next <= 0
+				" Hit beginning or end of line.
+				break
+			endif
+			" Prepare for next iteration.
+			let cidx = cidx_next
+			let idx = idx_next
+		endwhile
+		" Done with current line. Have we hit beginning or end of buffer?
+		if fwd ? line >= line('$') : line <= 1
+			" Hit beginning or end of buffer before completing requested number
+			" of steps.
+			" TODO: Decide how best to handle... Throw?
+			return []
+		endif
+		" Advance/retreat to first/last char of next/prev line, taking care to
+		" position on start of a char.
+		let line += fwd ? 1 : -1
+		let ltext = getline(line)
+		let linelen = len(ltext)
+		if fwd
+			let cidx = 0
+			let idx = 0
+		else
+			if linelen
+				" Get char index 1 past end.
+				let idx = linelen
+				let cidx = charidx(ltext, linelen - 1) + 1
+			else
+				" Empty line is special: make cidx 1 past, but set idx to 0 so
+				" that offset subtraction reflects zero-width char.
+				let idx = 0
+				let cidx = 1
+			endif
+		endif
+	endwhile
+endfu
+" >>>
+" Function: s:Vmap_apply_fmt() <<<
 " TODO: Document...
 " Return the idx resulting from application of fmt pspec to fmt idx
 " TODO: Perhaps rename...
@@ -3056,7 +2950,8 @@ fu! s:Vmap_apply_fmt(pspec, idx)
 		return and(or(a:idx, a:pspec[0]), invert(a:pspec[1]))
 	endif
 endfu
-
+" >>>
+" Function: s:Get_hlable_patt() <<<
 " Return regex matching any single char, highlightable by input tok_info.
 " Note: tok_info is irrelevant when non-aggressive cleanup is configured; also,
 " caller can override configuration by passing empty tok_info (forces
@@ -3111,7 +3006,8 @@ fu! s:Get_hlable_patt(tok_info)
 	endif
 	return b:txtfmt_re_any_ntok . re_extra
 endfu
-
+" >>>
+" Function: s:Contains_hlable() <<<
 " Return true iff the region between pos1 and pos2 (inclusivity/exclusivity
 " specified by the inc arg) contains anything hlable, given the specified rgn
 " type and tok idx.
@@ -3157,7 +3053,8 @@ fu! s:Contains_hlable(pos1, pos2, inc, ...)
 	call cursor(savepos)
 	return ret
 endfu
-
+" >>>
+" Function: s:Add_byte_offset() <<<
 " Add specified byte offset to the input pos and return the adjusted pos.
 " Inputs:
 " pos:    [lnum, col]
@@ -3196,13 +3093,8 @@ fu! s:Add_byte_offset(pos, offset)
 	endif
 	return [lnum_tgt, bi_tgt - bi_bol_tgt + 1]
 endfu
-
-" Workaround for Vim Bug with getpos()
-" TODO: I've removed use of this, so understand what the bug was?
-fu! s:Getpos(m)
-	return [line(a:m), col(a:m)]
-endfu
-
+" >>>
+" Function: s:Make_pos_zwa() <<<
 " Generate and return a zero-width assertion (in plain string form) based on
 " the input beg/end positions.
 " Note: Apply_zwa is provided as a convenience for wrapping it onto a regex.
@@ -3234,14 +3126,13 @@ fu! s:Make_pos_zwa(cfg)
 	endfor
 	return join(res, '\&')
 endfu
-
+" >>>
+" Function: s:Apply_zwa() <<<
 fu! s:Apply_zwa(zwa, patt)
 	return !empty(a:zwa) ? a:zwa . '\&\%(' . a:patt . '\)' : a:patt
 endfu
-
-" TODO: Determine where to define these constants.
-let s:SYNC_DIST_BYTES = 2500
-
+" >>>
+" Function: s:Vmap_sync_start() <<<
 " Working backwards from start of region, accumulate tokens until we find one
 " that cannot be superseded (i.e., has hlable between it and subsequent tok (or
 " region head); if such a token cannot be found, we prepend a positionless
@@ -3338,12 +3229,22 @@ fu! s:Vmap_sync_start(rgn, opt)
 		\'toks': toks
 	\}
 endfu
+" >>>
+" Function: s:Vmap_collect() <<<
 " Note: This function should augment tok_info with loc and action: i.e., in
 " addition to the basic tok returned by Search_tok, the toks in the returned
 " list will have the following:
 "   loc    =~ '^[<{=}>]$'
+"             < tok before region
+"             { phantom head tok
+"             = tok within region
+"             } phantom tail tok
+"             > tok after region
 "          TODO: Consider treating non-phantom `{'s and `}'s as `='
 "   action =~ '^[ia]\?$'
+"             i              insert
+"             a              append
+"             <empty string> no action
 "          Note: action may be assigned other values in Vmap_apply, but for now,
 "          phantom head/tail will be set to i/a respectively, with all others
 "          empty.
@@ -3396,20 +3297,22 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 				" Need to add something for head: either a phantom (here) or
 				" augmented tok (end of loop).
 				let sel_beg_found = 1
-				" If we didn't find tok at all, or found one not at region head,
-				" add phantom.
-				if ti.typ != 'tok' || ti.pos != a:opt.rgn.beg
+				" 29Nov2022_Update: Add unconditionally and clean up if it pans
+				" out...
+				"" If we didn't find tok at all, or found one not at region head,
+				"" add phantom.
+				"if ti.typ != 'tok' || ti.pos != a:opt.rgn.beg
 					" Add phantom tok for region beg
 					call add(toks, {
 						\'typ': 'tok',
 						\'rgn': a:rgn,
-						\'pos': a:opt.rgn.beg,
+						\'pos': a:opt.rgn.beg[:],
 						\'idx': -1,
 						\'tok': '',
 						\'loc': '{',
 						\'action': 'i'
 					\})
-				endif
+				"endif
 			endif
 			if !sel_end_found && sel_cmp == 1
 				let sel_end_found = 1
@@ -3418,7 +3321,7 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 				call add(toks, {
 					\'typ': 'tok',
 					\'rgn': a:rgn,
-					\'pos': a:opt.rgn.end,
+					\'pos': a:opt.rgn.end[:],
 					\'idx': -1,
 					\'tok': '',
 					\'loc': '}',
@@ -3435,9 +3338,12 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 		if ti.typ == 'tok'
 			" We have an actual (non-phantom) tok.
 			" Note: Phantom toks are always added above.
-			let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>'
-				\: a:opt.rgn.beg == ti.pos ? '{'
-				\: a:opt.rgn.end == ti.pos ? '}' : '='
+			" Note: Originally, we set loc to '}' for non-phantom tok at end of
+			" selection, but this resulted in buggy corner cases in delete case.
+			" Simple (albeit wasteful) solution is to append phantom tok
+			" unconditonally at region end and allow token cleanup to remove the
+			" extras.
+			let ti.loc = sel_cmp < 0 ? '<' : sel_cmp > 0 ? '>' : '='
 			" Finish updating and add the current tok.
 			let ti.action = ''
 			if ti.loc == '}' | let sel_end_found = 1 | endif
@@ -3468,7 +3374,10 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 			" 'other' rgn types: for example, if fmt changes are qualified by a
 			" selector matching clr == 'red', simply passing into or out of a
 			" red clr region could entail a change to fmt attrs.
+			" Note: Interior phantoms are not needed or wanted in the smart
+			" delete case.
 			if empty(ti.action) && ti.loc =~ '[{=]'
+				\ && a:opt['op'] != 'delete'
 				for rgn in other_rgns
 					" Add a phantom.
 					" Note: Action 'a' is used (rather than 'i') to ensure that
@@ -3525,31 +3434,35 @@ fu! s:Vmap_collect(rgn, sync_info, pspecs, opt)
 	endwhile
 	return toks
 endfu
-
-fu! s:Vmap_apply(pspecs, toks)
-	" Old/new_idx logic:
-	" old_idx: the idx that *was* active at a given point prior to the
-	"          highlighting operation (considering effect of tok at point).
-	" new_idx: the idx that *will be* active at a given point *after* the
-	"          highlighting operation (ignoring effect of tok at point).
-	"          Important Note: When we process a given tok, new_idx reflects
-	"          what came *before* that tok, not the tok itself. This is why we
-	"          don't update till end of loop.
-	" set_idx: Set upon each iteration to the value a tok will have *after* the
-	"          highlighting operation is complete (considering effect of tok at
-	"          point).
-	"          Note: Whenever set_idx is assigned a value >=0, that same value
-	"          will be transferred to new_idx at loop end; deferring the new_idx
-	"          assignment allows us to defer the tok update logic (which needs
-	"          to know both prev (new_idx) and next (set_idx) states, because it
-	"          currently handles removal of both redundant toks and unnecessary
-	"          phantom toks).
-	"          Possible TODO: If we didn't bother with redundant/unnecessary tok
-	"          removal here (cleanup already handles), we could probably do away
-	"          with set_idx and the deferred set of new_idx.
-	" Implementation Note: old/new_idx implemented as hashes to facilitate
-	" looping over all rgn types at once.
-	"
+" >>>
+" Function: s:Vmap_apply() <<<
+" Old/new_idx logic:
+" old_idx: the idx that *was* active at a given point prior to the highlighting
+"          operation (considering effect of tok at point).
+" new_idx: the idx that *will be* active at a given point *after* the
+"          highlighting operation (considering effect of previous tok, but
+"          ignoring effect of tok at point). In other words... new idx is
+"          effectively double-buffered, with new_idx representing previous state
+"          and set_idx representing next state. Note: When we process a given
+"          tok (prior to end of loop update), new_idx reflects everything that
+"          came before that tok (taking highlighting operation into account),
+"          but not the tok itself.
+" set_idx: Set upon each iteration to the value a tok will have *after* the
+"          highlighting operation is complete (considering effect of tok at
+"          point).
+"          Note: Whenever set_idx is assigned a value >=0, that same value will
+"          be transferred to new_idx at loop end; deferring the new_idx
+"          assignment allows us to defer the tok update logic (which needs to
+"          know both prev (new_idx) and next (set_idx) states, because it
+"          currently handles removal of both redundant toks and unnecessary
+"          phantom toks).
+"          Possible TODO: If we didn't bother with redundant/unnecessary tok
+"          removal here (cleanup already handles), we could probably do away
+"          with set_idx and the deferred set of new_idx.
+" Implementation Note: old/new_idx implemented as hashes to facilitate looping
+" over all rgn types at once.
+fu! s:Vmap_apply(pspecs, toks, opt)
+	let is_del = a:opt.op == 'delete' ? 1 : 0
 	" Initialize to sentinel so that we know when we encounter first of a type.
 	" Note: Having unused keys in old_idx is harmless; rgn types present in
 	" a:toks determines which keys will be used.
@@ -3609,6 +3522,7 @@ fu! s:Vmap_apply(pspecs, toks)
 		elseif tok.loc == '}'
 			if tok.action != 'a'
 				" Existing tok - not phantom
+				" FIXME: This shouldn't be possible any more...
 				let old_idx[tok.rgn] = tok.idx
 			endif
 			let set_idx = old_idx[tok.rgn]
@@ -3639,6 +3553,10 @@ fu! s:Vmap_apply(pspecs, toks)
 				endif	   
 			else
 				 " Phantom tok
+				 " TODO: Decide whether to set phantoms unconditionally and
+				 " allow cleanup to remove redundancies, or whether to clear
+				 " action and ensure a cleared action doesn't cause anything to
+				 " be added to buffer (currently, it mistakenly does).
 				 if set_idx != new_idx[tok.rgn]
 					 let tok.idx = set_idx
 				 else
@@ -3646,12 +3564,120 @@ fu! s:Vmap_apply(pspecs, toks)
 					 let tok.action = ''
 				 endif
 			endif
-			" Update for next iteration.
-			let new_idx[tok.rgn] = set_idx
+			" Update for next iteration unless we're deleting and this tok is
+			" within the delete range, in which case, we don't update new_idx
+			" since we can't rely on such toks to affect anything past them.
+			if !is_del || tok.loc != '='
+				let new_idx[tok.rgn] = set_idx
+			endif
 		endif
 	endfor
 endfu
+" >>>
+" Function: s:Range_spans_pos() <<<
+" Return true iff 'range' spans 'pos'.
+" Note: Second component may be either an exclusive end pos or a length in
+" bytes, in which case, range must not span multiple lines.
+fu! s:Range_spans_pos(range, pos)
+	let [beg, end] = a:range
+	" Question: Should we validate range and pos?
+	if type(end) == v:t_number
+		" Convert provided byte count to pos.
+		" Assumption: Range can't span line.
+		let end = [beg[0], beg[1] + end]
+		if end[1] > col([beg[0], '$'])
+			throw "Internal error: s:Range_spans_pos():"
+						\ . " range specified by length cannot be multiline."
+		endif
+	endif
+	" Is pos within exclusive-at-end range?
+	return a:pos[0] >= beg[0] && a:pos[0] <= end[0]
+				\ && a:pos[1] >= beg[1]
+				\ && a:pos[1] < end[1]
+endfu
+" >>>
+" Function: s:Collect_bslash_ranges() <<<
+fu! s:Collect_bslash_ranges(opt, sync_info, toks)
+	" 2D hash: [line, col]
+	" ...where col is the column past the sequence of backslashes
+	let ret = {}
+	" Note: This pattern includes the discarded pre-text only to facilitate
+	" finding the next start index.
+	" TODO: Consider using searchpos() in conjunction with matchlist().
+	let re = '\([^\\]*\)\(\\\+\)\([' . b:txtfmt_re_any_tok_atom . ']\)\?'
 
+	" Start at beginning of line containing either first actual tok found in
+	" sync or beginning of region.
+	" FIXME: How to use toks here? We have all rgn types but probably care only
+	" about the earliest of all...
+	let pos = empty(a:toks[0].pos) ? a:opt.rgn.beg : a:toks[0].pos
+	let line = pos[0]
+	" TODO: Verify that this test is correct: in particular, do we need to
+	" include stopline?.
+	" TODO: Consider starting at particular character on line...
+	while line <= a:sync_info.stopline
+		" Add an entry for all ranges on current line.
+		" Each line entry will be a hash of ranges keyed by the col just past
+		" the end of the range.
+		let ret[line] = {}
+		let line_map = ret[line]
+		let ltext = getline(line)
+		let linelen = len(ltext)
+		let idx = 0
+		while idx < linelen
+			let mlist = matchlist(ltext, re, idx)
+			if !empty(mlist)
+				" Found a bslash sequence.
+				" Note: bslashes is the only field that can't be empty.
+				let [all, discard, bslashes, tok; _] = mlist
+				" TODO: Consider whether beg should be full pos, or just col
+				" (given that line is key in containing map).
+				let entry = { 'count': len(bslashes)
+							\,'special': !!len(tok)
+							\,'beg': [line, idx + len(discard) + 1] }
+							
+				" Note: For test of end against range, we use one char position
+				" *beyond* end to reflect fact that append at end would put end
+				" pos within the first range.
+				let beg = a:opt.rgn.beg[:]
+				let end = s:Get_at_offset(1, a:opt.rgn.end, 'pos')
+				let range = [entry.beg, entry.count]
+				let break_pos = s:Range_spans_pos(range, beg)
+							\ ? beg
+							\ : s:Range_spans_pos(range, end)
+							\ ? end
+							\ : []
+				if !empty(break_pos)
+					" Split the range
+					" How many bslashes before start?
+					" Assumption: Prior logic has ensured beg positioned on
+					" escape, end positioned on escapee.
+					" TODO: Make this assumption valid.
+					let bslash_cnt = break_pos[1] - entry.beg[1]
+					let entry2 = { 'count': entry.count - bslash_cnt
+								\, 'special': entry.special
+								\, 'beg': break_pos }
+					" Truncate the previously-added range before the split.
+					let entry.count = bslash_cnt
+					
+					" Add entry at col key.
+					let line_map[entry2.beg[1] + entry2.count] = entry2
+				endif
+				" Add entry at col key.
+				let line_map[entry.beg[1] + entry.count] = entry
+				" Advance past the entire match before trying again.
+				let idx += len(all)
+			else
+				" Finished with line
+				break
+			endif
+		endwhile
+		let line += 1
+	endwhile
+	return ret
+endfu
+" >>>
+" Function: s:Vmap_compute() <<<
 fu! s:Vmap_compute(pspecs, opt)
 	let toks = {}
 	" Since the addition of selectors, it is necessary to perform syncing and
@@ -3669,17 +3695,31 @@ fu! s:Vmap_compute(pspecs, opt)
 	let mtoks = s:Vmap_merge_toks(toks, sync_info, a:opt)
 	call s:dbg_display_toks("after Vmap_merge_toks", mtoks)
 
+	if b:txtfmt_cfg_escape == 'bslash'
+		let a:opt['bslashes'] = s:Collect_bslash_ranges(a:opt, sync_info, mtoks)
+		let g:debug = a:opt.bslashes
+	endif
+
 	" Note: Currently, pspecs.rgns cannot be empty: if it were,
 	" Parse_fmt_clr_transformer would have returned empty, resulting in
 	" operation cancellation.
 	if !s:Is_empty(a:pspecs.rgns)
 		" Apply pspec without worrying about whether mtoks will be kept.
-		call s:Vmap_apply(a:pspecs, mtoks)
+		call s:Vmap_apply(a:pspecs, mtoks, a:opt)
 	endif
 	call s:dbg_display_toks("after Vmap_apply", mtoks)
 	return mtoks
 endfu
-
+" >>>
+" Function: s:Vmap_cmp_loc() <<<
+" Compare locations of input tokens
+fu! s:Vmap_cmp_loc(a, b)
+	let actions = {'<': 0, '{': 1, '=': 2, '}': 3, '>': 4}
+	let [a_prec, b_prec] = [actions[a:a], actions[a:b]]
+	return a_prec < b_prec ? -1 : a_prec > b_prec ? 1 : 0
+endfu
+" >>>
+" Function: s:Vmap_cmp_pos() <<<
 " Compare input positions (format: [row, col])
 fu! s:Vmap_cmp_pos(p_a, p_b)
 	let [al, bl, ac, bc] = [a:p_a[0], a:p_b[0], a:p_a[1], a:p_b[1]]
@@ -3698,6 +3738,8 @@ fu! s:Vmap_cmp_pos(p_a, p_b)
 		endif
 	endif
 endfu
+" >>>
+" Function: s:Vmap_cmp_tok() <<<
 " Compare input tokens, considering first pos, then action iff necessary to
 " break tie.
 fu! s:Vmap_cmp_tok(t_a, t_b)
@@ -3721,15 +3763,25 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 		" Position decides.
 		return cmp
 	endif
+
+	" Give 'loc' a chance to break tie.
+	let cmp = s:Vmap_cmp_loc(a:t_a.loc, a:t_b.loc)
+	if cmp
+		" loc decides.
+		return cmp
+	endif
+	
 	" Consider action to break positional tie.
 	" Possible values: i|a|r|d
 	" Assumption: Empty actions have been discarded.
+	" FIXME: I don't think the assumption above is true any more.
 	" Assumption: For tokens of same type, [ia] and [rd] are
 	" mutually-exclusive sets: i.e., one from each set could exist at same
 	" pos, but not multiples from same set. For hetereogeneous types, the sets
 	" are not mutually-exclusive, but the ordering logic must still be applied
 	" when the heterogeneous toks fall into different groups. When ordering is
 	" inconsequential, be deterministic in preferring not to re-order a and b.
+	" Question FIXME: Why are we checking for internal error here????
 	let [act_a, act_b] = [a:t_a.action, a:t_b.action]
 	" Test neg. return cases first to give preference to input order.
 	if act_a == 'i'
@@ -3749,7 +3801,8 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 			\act_a, act_b, a:t_a.pos[0], a:t_a.pos[1])
 	endif
 endfu
-
+" >>>
+" Function: s:Vmap_merge_toks() <<<
 " Convert hash of tok arrays, keyed by rgn type, to a single, ordered array of
 " toks, with rgn type stored in each element.
 fu! s:Vmap_merge_toks(toks, sync_info, opt)
@@ -3797,7 +3850,8 @@ fu! s:Vmap_merge_toks(toks, sync_info, opt)
 	endwhile
 	return mtoks
 endfu
-
+" >>>
+" Function: s:Vmap_rev_and_merge() <<<
 " Reverse toks and merge with mtoks (assumed to be reversed/merged already).
 " TODO: Probably should just merge in-place.
 " Tested: 18Apr2015 (the functional (non-merge-in-place) version)
@@ -3863,14 +3917,15 @@ fu! s:Vmap_rev_and_merge(mtoks, toks, opt)
 	endif
 	return mtoks_ret
 endfu
-
+" >>>
+" Function: s:Tok_nr_to_char() <<<
 " Return the actual tok char corresponding to inputs.
-" !!!!!!!!!!!!! UNDER CONSTRUCTION !!!!!!!!!!!!!
 " TODO: Move somewhere else and perhaps use within Translate_fmt_clr_spec.
 fu! s:Tok_nr_to_char(rgn, idx)
 	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
 endfu
-
+" >>>
+" Function: s:Get_pos_past_rgn() <<<
 " TODO: Remove if this ends up not being needed.
 " Caveat: It's come to my attention that calls to getpos() with a mark of '>
 " will cause large negative number to be reported for column, so if this is ever
@@ -3884,9 +3939,9 @@ fu! s:Get_pos_past_rgn(opt)
 	let pos[1] + len(s:Get_char(pos))
 	return pos
 endfu
-
-
-" TODO: Probably pull this back into Vmap_apply_changes, as there doesn't appear
+" >>>
+" Function: s:Adjust_rgn_by_off() <<<
+" TODO: Possibly pull this back into Vmap_apply_changes, as there doesn't appear
 " to be much value in the refactor (see commit ce94a9).
 fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 	let [line, col] = [a:tok.pos[0], a:tok.pos[1]]
@@ -3899,6 +3954,8 @@ fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 	" 1. bp must be col 1 and ep must be col('$')
 	" 2. raw and non-raw positions are co-linear (because of the way the
 	"    operator positions are calculated).
+	" Note: In non-linewise mode, bpr and epr are aliases to their non-raw
+	" counterparts and may lie to the right and left of them, respectively.
 	let linewise = has_key(a:opt.rgn, 'beg_raw') && a:opt.rgn.beg isnot a:opt.rgn.beg_raw
 	" Cache ref to the region boundary positions.
 	let [bp, ep] = [a:opt.rgn.beg, a:opt.rgn.end]
@@ -3907,105 +3964,98 @@ fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 		let [bpr, epr] = [a:opt.rgn.beg_raw, a:opt.rgn.end_raw]
 	endif
 	
-	" TODO: Consider moving this logic back into Vmap_apply_changes... (It
-	" doesn't appear to simplify much to have factored it out.) If I end up
-	" keeping this function separate from Vmap_apply_changes, at least rework: I
-	" don't like the way tokstr is passed, and the refactor doesn't feel clean.
+	" Finish determining the signed offset to be *added* to account for token
+	" manipulation. 
 	if a:tok.action == 'd'
 		" Since offset is *added* unconditionally, negate to account for net
 		" byte removal.
 		let off = -off
-		" Determine impact of delete on offsets.
-		if a:tok.loc == '<'
-			if line == bp[0]
-				" Assumption: Can't get here in 'linewise' case.
-				let bp[1] += off
-				if line == ep[0] | let ep[1] += off | endif
-			endif
-		elseif a:tok.loc == '{'
-			" !!! UNDER CONSTRUCTION !!!
-			" Note: relying on region constraints to obviate need to test end of
-			" region.
-			if linewise && bpr[1] > 1 | let bpr[1] += off | endif
-			if line == ep[0]
-				let ep[1] += off
-				if linewise && epr[1] > 1 | let epr[1] += off | endif
-			endif
-		elseif a:tok.loc == '='
-			if line == ep[0]
-				let ep[1] += off
-				" Never allow epr to drift to right of ep (recall that ep is
-				" always at end of line in 'linewise' case).
-				if linewise && (col < epr[1] || epr[1] >= ep[1])
-					let epr[1] += off
-				endif
-			endif
-		elseif a:tok.loc == '}'
-			" Region end pos must be pulled leftward to avoid including first
-			" char beyond region.
+	elseif a:tok.action == 'r'
+		" Subtract len of tok being replaced.
+		let off -= len(s:Get_char(a:tok.pos))
+	endif
+	" Determine impact of insert/append/delete/replace on operator region
+	" offsets.
+	" Design Decision: In general, prefer to expand operator region to include
+	" any added tokens.
+	" Note: Originally, what followed was a complex sequence of nested if/else
+	" blocks representing the various combinations of tok 'action' and 'loc',
+	" but it's been condensed to logic that considers only the relationship
+	" between manipulated token and operator region begin/end locations.
+	" Design Decision: max() is used to prevent decrement of col pos below 1;
+	" however, we might want to consider moving mark to end of previous line in
+	" such cases.
+	if line == bp[0]
+		if linewise && bpr[1] >= max([col, 1])
+			" Assumption: bp[] isnot bpr[]
+			let bpr[1] += off
+		endif
+		if bp[1] >= max([col, 1])
+			let bp[1] += off
+		endif
+	endif
+	if line == ep[0]
+		if linewise && epr[1] >= max([col, 1])
+			" Assumption: ep[] isnot epr[]
+			let epr[1] += off
+		endif
+		if ep[1] >= max([col, 1])
 			let ep[1] += off
-			" Never allow epr to drift to right of ep.
-			if linewise && epr[1] >= ep[1] | let epr[1] += off | endif
-		endif
-	else " [iar]
-		if a:tok.action == 'r'
-			" Subtract len of tok being replaced.
-			let off -= len(s:Get_char(a:tok.pos))
-		endif
-		" Determine impact of insert/replace on offsets.
-		if a:tok.loc == '<'
-			" Must be r
-			if line == bp[0]
-				" Assumption: Can't get here in 'linewise' case.
-				let bp[1] += off
-				if line == ep[0] | let ep[1] += off | endif
-			endif
-		elseif a:tok.loc == '{'
-			" Must be i or r
-			" Recall that bpr can lie to the right of bp.
-			" Design Decision: If operator pos was in col 1, don't let insertion
-			" of phantom at head change that.
-			" Rationale: Follows general approach of expansion to include
-			" inserted toks that 'wrap' the region.
-			if linewise && bpr[1] > 1 | let	bpr[1] += off | endif
-			if line == ep[0]
-				let ep[1] += off
-				" Note: linewise implies col == 1 here.
-				" Note: See earlier design note for rationale behind test.
-				if linewise && epr[1] > 1 | let epr[1] += off | endif
-			endif
-		elseif a:tok.loc == '='
-			" Must be r
-			if line == ep[0]
-				let ep[1] += off
-				if linewise && col < epr[1] | let epr[1] += off | endif
-			endif
-		elseif a:tok.loc == '}'
-			" Must be i, a or r
-			" Note: 'i' was impossible before this function was extended to
-			" support vsel delete.
-			" action 'r' can't affect end, even when lengths differ (since pos
-			" represents *beginning* of mb char)
-			" action 'i' can't affect end because it's a special case for '}',
-			" needed only when there's no actual char on the line to append to.
-			" Design Decision: It might seem odd that 'a' causes adjustment, but
-			" the current approach is to include { and } toks in the region.
-			" TODO: Note the similarities between this and { and } cases, and
-			" consider refactor. Look also at potentially including the 'delete'
-			" cases in the refactor...
-			if a:tok.action == 'a'
-				if line == ep[0]
-					" Expand to include the tok appended.
-					" Note: Processing epr first because we need to know when
-					" it starts out collocated with ep.
-					if linewise && epr[1] >= ep[1] | let epr[1] += off | endif
-					let ep[1] += off
-				endif
-			endif
 		endif
 	endif
 endfu
+" >>>
+" Function: s:Adjust_bslashes_maybe() <<<
+" If a bslash range immediately precedes the input tok, adjust the range as
+" required by the tok's action.
+fu! s:Adjust_bslashes_maybe(bslash_ranges, tok)
+	" Determine the col position under which the range would be keyed.
+	let key_col = a:tok.action == 'a' ? a:tok.pos[1] + 1 : a:tok.pos[1]
+	" See whether there's an applicable bslash range.
+	let bsr = get(a:bslash_ranges, a:tok.pos[0], {})->get(key_col, {})
+	if empty(bsr)
+		" No affected bslash range...
+		return
+	endif
+	let linetext = getline(a:tok.pos[0])
+	let re = '^\%(\\\+\)[' . b:txtfmt_re_any_tok_atom . ']'
+	" Is this range special now?
+	"echomsg string(bsr)
+	let new_special = match(linetext, re, bsr.beg[1] - 1) >= 0
+	if bsr.special == new_special
+		" No change: nothing to do...
+		return
+	endif
+	" Specialness is changing.
+	" Build a replacement line in 3 parts: leading / bslashes / trailing.
+	let new_linetext = strpart(linetext, 0, bsr.beg[1] - 1)
+	"echomsg "new_linetext(1): " . new_linetext
+	if new_special
+		" Transition to special
+		let new_linetext .= repeat('\', 2 * bsr.count)
+		"echomsg "new_linetext(2): " . new_linetext
+	else
+		" Transition to not special
+		" Assumption: A range with odd number of bslashes would represent an
+		" internal error, since it would imply the removal of an escaped token.
+		" Hmmm... Perhaps we could simply cull the range up front, given that
+		" it's effectively insulated from changes in specialness.
+		if bsr.count % 2
+			echoerr "Internal error: Adjust_bslashes_maybe():"
+						\ . ' "specialness" changed on bslash range ending in escaped token.'
+		endif
+		let new_linetext .= repeat('\', bsr.count / 2)
+		"echomsg "new_linetext(3): " . new_linetext
+	endif
+	" Append trailing portion of new line.
+	let new_linetext .= strpart(linetext, bsr.beg[1] - 1 + bsr.count)
 
+	"echomsg "new_linetext(4): " . new_linetext
+	" Replace the old line.
+	call setline(a:tok.pos[0], new_linetext)
+endfu
+" >>>
+" Function: s:Vmap_apply_changes() <<<
 " Apply changes in input tok list, which contains all 3 tok types in a single
 " flat list, ordered from later in buffer to earlier.
 " Side-effects:
@@ -4019,6 +4069,9 @@ endfu
 "     loc: <|{|=|}|>
 " }, ...]
 fu! s:Vmap_apply_changes(toks, opt)
+	" TODO: Should we do this here, or just call s:Adjust_bslashes_maybe
+	" unconditionally with a:opt.
+	let bslash_ranges = get(a:opt, 'bslashes', {})
 	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
 		if tok.typ == 'eob' || empty(tok.action)
@@ -4033,17 +4086,20 @@ fu! s:Vmap_apply_changes(toks, opt)
 		if tok.action == 'd'
 			" Delete tok from buffer.
 			let tokstr = s:Delete_char(tok.pos)
-		else " [iar]
+		elseif !empty(tok.action) " [iar]
 			" We're going to be inserting/replacing a tok.
 			" Special Case: If insert pos is past end of non-empty line, need to
 			" convert to append at last char (but inserting at col 1 of empty
 			" line is ok).
 			" Assumption: Caller logic ensures no append past end of line, but
 			" even if it didn't, there's nothing we'd want to change here.
-			if tok.action == 'i' && tok.pos[1] > 1 && tok.pos[1] >= col([tok.pos[0], '$'])
-				" Note: Ok to leave pos as is: cursor() can handle pos past end
-				" of line.
+			let eol_col = col([tok.pos[0], '$'])
+			if tok.action == 'i' && tok.pos[1] > 1 && tok.pos[1] >= eol_col
 				let tok.action = 'a'
+				" Note: Ok to leave pos as is - cursor() can handle pos past end
+				" of line - however, for sake of s:Adjust_bslashes_maybe, let's
+				" ensure it's correct.
+				let tok.pos[1] = eol_col - 1
 			endif
 			" Note: pos could be just past end of line, in which case we simply
 			" position at end.
@@ -4055,12 +4111,15 @@ fu! s:Vmap_apply_changes(toks, opt)
 		endif
 		" Are adjustments required?
 		if !empty(tokstr)
-			" TODO: Reconsider this refactor...
 			call s:Adjust_rgn_by_off(tok, tokstr, a:opt)
+			if !empty(bslash_ranges)
+				call s:Adjust_bslashes_maybe(bslash_ranges, tok)
+			endif
 		endif
 	endfor
 endfu
-
+" >>>
+" Function: s:Vmap_cleanup() <<<
 " Format of toks array:
 " toks: [{
 "     rgn: 'fmt|clr|bgc',
@@ -4213,177 +4272,158 @@ fu! s:Vmap_cleanup(toks, opt)
 		let ti_safe_[ti.rgn] = ti_safe
 	endfor
 endfu
+" >>>
+" Function: s:Vmap_delete() <<<
+" Delete all toks in list between phantom toks at head and tail (both
+" exclusive) and make corresponding position adjustments for toks beyond the
+" region. Also, delete the actual text in the buffer and adjust region bounds
+" accordingly.
+"
+" -- Logic for line/col adjustments --
+" Note: These assignments are performed only if applicable: for line adjustment,
+" this means at or beyond last line of a multiline range; for col adjustment, on
+" final line of range after end of range.
+" foo<bar>$
+" 	: tok.pos[0] -= end[0] - beg[0] + 1
+" foo<bar
+" 	blammo>$
+" 	: tok.pos[0] -= end[0] - beg[0] + 1
+" foo<$
+" 	blammo>$
+" 	: tok.pos[0] -= end[0] - beg[0] + 1
+" 	
+" foo<bar>baz
+" 	: tok.pos[1] -= end[1] - beg[1] + end_clen
 
-fu! s:Vmap_get_region_info(opt)
-	" Calculate first pos deleted at head, and first pos not deleted at tail.
-	let [lb, cb, le, ce] = [
-		\a:opt.rgn.beg[0], a:opt.rgn.beg[1],
-		\a:opt.rgn.end[0], a:opt.rgn.end[1]]
-	" Adjust end pos such that it points to first char pos *beyond* text to be
-	" deleted.
-	if ce == col([le, '$'])
-		" Special Case: Region end includes pos at end of line: advance end pos
-		" to include newline.
-		" Rationale: Consistent with the way Vim handles visual sel deletes.
-		let [le, ce] = [le + 1, 1]
-	else
-		" Note: Getting the entire line to determine length of char at end pos
-		" may be heavy-handed. Consider other approaches... (TODO)
-		let ce += byteidx(getline(le)[ce - 1 : ], 1)
-	endif
-	" Determine # of whole lines after beg that should be deleted.
-	" Note: Ok to include a partial final line, since the text on it that's kept
-	" will be appended to first line.
-	let del_lines = le - lb
-
-	" Calculate signed byte left-shift on final line.
-	" Note: Left shift in bytes to apply to toks *beyond* region end.
-	" TODO: Should this one be in the interface, given that it's easily
-	" calculable from others that are?
-	let byte_lsh = ce - cb
-
-	" Determine phantom tail pos/action.
-	" Assumption: Phantom head pos is going away; thus, we don't need to worry
-	" about relative ordering of head and tail.
-	" Logic: Nominal case is to convert phantom tail to an insert at first kept
-	" char pos, but if that turns out to be the end of line (because the last
-	" char on line was included in delete), attempting to position at ce would
-	" actually put us on char just *before* region, and we don't want to insert
-	" there.
-	" WHOAAA!!!: Instead of all this, should I perhaps just make
-	" Vmap_apply_changes capable of handling append to nonexistent position at
-	" end of line?
-	" DONE:
-	return {
-		\'pos_beg': [lb, cb],
-		\'pos_end': [le, ce],
-		\'pos_end_adj': [le - del_lines, cb],
-		\'del_lines': del_lines,
-		\'byte_lsh': byte_lsh
-	\}
-endfu
-
-" Delete all toks in buffer between phantom tok at head (inclusive) and phantom
-" tok at tail (exclusive).
-" Note: Could probably leave the phantom tok at head, and let it be cleaned up
-" naturally if necessary. Since region it modifies is empty, it will be
-" superseded by a surviving, non-default phantom at the tail. If that tail is
-" default, the tail phantom would be redundant, but it's a difference without a
-" distinction in that case: i.e., doesn't matter which we delete... Still, I'm
-" thinking just delete the phantom at head, or for that matter, perhaps don't
-" even add it to begin with - it really serves no purpose for a delete...
-" Note: This function deletes only toks; the regular text will be deleted later
-" by Delete_region_text.
-fu! s:Vmap_delete(toks, ri)
+" foo<bar
+" 	blammo>baz
+" 	: tok.pos[0] -= end[0] - beg[0]
+" 	  tok.pos[1] += beg[1] - 1 - end[1] - end_clen
+" foo<$
+"	blammo>baz
+"	: tok.pos[0] -= end[0] - beg[0]
+"	  tok.pos[1] += beg[1] - 1 - end[1] - end_clen
+fu! s:Vmap_delete(toks, opt)
 	" Loop over all tokens, though the we won't really start doing anything till
 	" we get to phantom head.
 	" Possible TODO: If location were cached somewhere, we could start there.
-	let [idx_head, idx_tail] = [{}, {}]
-	for idx in range(len(a:toks))
+	let [del_head, del_tail] = [-1, -1]
+	let idx = 0
+	let num_toks = len(a:toks)
+	while idx < num_toks
 		let tok = a:toks[idx]
-		if tok.loc == '{'
-			" TODO: Consider whether to skip adding this tok in the 'delete'
-			" case (since we know it will be deleted); in that case, phantom
-			" head pos would correspond to a:opt.rgn.beg.
-			let idx_head[tok.rgn] = idx
-			" Note: Record position of *first* phantom head (since delete is
-			" inclusive of head).
-			if !exists('l:del_head')
-				let del_head = idx
+		if del_head < 0 && tok.loc == '='
+			let del_head = idx
+		endif
+		if del_tail < 0 && (tok.loc == '}' || tok.loc == '>')
+			if del_head >= 0
+				" Delete through previous tok.
+				let del_tail = idx - 1
 			endif
-		elseif tok.loc == '}' || tok.loc == '>'
-			if tok.loc == '}'
-				" Phantom tail
-				let idx_tail[tok.rgn] = idx
-				" Note: Record position of *first* phantom tail (since delete is
-				" exclusive of phantom tail).
-				" REFACTOR_TODO: Verify that there will always be phantom tail
-				" in delete case.
-				if !exists('l:del_tail')
-					let del_tail = idx
+			break
+		endif
+		let idx += 1
+	endwhile
+	" Note: Value of idx at loop exit is reused.
+
+	" Make line/col adjustments needed to account for removal of deleted text
+	" (and toks).
+	let [beg, end] = [a:opt.rgn.beg, a:opt.rgn.end]
+	let linewise = has_key(a:opt.rgn, 'beg_raw') && beg isnot a:opt.rgn.beg_raw
+	let beg_line_len = strlen(getline(beg[0]))
+	let end_line_len = strlen(getline(end[0]))
+	let eol_at_beg = beg[1] > beg_line_len
+	let eol_at_end = end[1] > end_line_len
+	let line_off = end[0] - beg[0]
+	if linewise || eol_at_end
+		" Assumption: In linewise (or linewise at end) mode, there can be no
+		" tokens after region on same line as end of region; hence, no col
+		" adjustments are needed.
+		let line_off += 1
+	endif
+	" Figure out the col offset for final line in range.
+	" TODO: Use byteidx() in loop to create a function that can return length of
+	" char at position analytically.
+	" Assumption: clen isn't used in linewise cases.
+	let beg_clen = eol_at_beg ? 0 : strlen(s:Get_char(beg))
+	let end_clen = eol_at_end ? 0 : strlen(s:Get_char(end))
+	"let col_off = (end[0] = beg[0] < end[0] ? 1 : beg[1]) + end_clen
+	let col_off = (beg[0] == end[0]
+		\ ? end[1] - beg[1]
+		\ : end[1] - 1) + end_clen
+
+	" Assumption: idx unmodified from end of previous loop: i.e., we're looking
+	" only at toks that *might* require position adjustments.
+	while idx < len(a:toks)
+		let tok = a:toks[idx]
+		" Skip positionless toks.
+		if !empty(tok.pos)
+			" TODO: Decide whether the source material above should be preserved here...
+			" Perform col adjustments.
+			if !eol_at_end
+				if tok.pos[0] == end[0]
+					" Column adjustment needed
+					if beg[0] == end[0] 
+						" Intra-line delete
+						let tok.pos[1] -= end[1] - beg[1]
+							\ + (tok.pos[1] > end[1] ? end_clen : 0)
+					else
+						" Add remaining chars from beg line and subtract deleted
+						" chars from end line.
+						let tok.pos[1] += beg[1] - end[1]
+							\ - (tok.pos[1] > end[1] ? end_clen : 0)
+					endif	
+					" Convert an append at col 0 to an insert at col 1.
+					if tok.pos[1] == 0
+						let tok.pos[1] = 1
+						if tok.action == 'a'
+							let tok.action = 'i'
+						endif
+					elseif tok.action == 'a' && tok.loc == '}'
+						" TODO: Maybe ensure this is set to first byte of mb
+						" char? Probably not necessary, since cursor(line, col)
+						" allows col to be any byte within char, but keeping
+						" things in canonical form could prevent confusion.
+						let tok.pos[1] -= 1
+					endif
 				endif
-				" Note: Convert append to insert and adjust pos accordingly.
-				" Rationale: Any char at original append position is being
-				" deleted, which precludes append at that location.
-				" Solution: Convert append to an insert at location just past
-				" deleted region (taking into account any adjustment intended to
-				" include trailing newline in delete region). (Note that
-				" Vmap_apply_changes can handle location past end of line.)
-				" Caveat: The action test ensures we don't resuscitate a phantom
-				" tail that has already been removed (action == '') upstream.
-				if tok.action == 'a'
-					let tok.pos = a:ri.pos_end_adj
-					let tok.action = 'i'
+			endif
+			" Perform line adjustments if delete is *effectively* multi-line
+			" (i.e., true multi-line or 1 line plus trailing newline).
+			if beg[0] != end[0] || eol_at_end
+				if tok.pos[0] >= end[0]
+					let tok.pos[0] -= end[0] - beg[0] + (eol_at_end ? 1 : 0)
 				endif
-			else " tok.loc == '>'
-				" If this tok is on final line in range, adjust for # of bytes
-				" deleted on that line.
-				if tok.pos[0] == a:ri.pos_end[0]
-					" TODO: Consider how this will work with NUL on empty line being
-					" at end of char.
-					let tok.pos[1] -= a:ri.byte_lsh
-				endif
-				" Adjust for # of newlines deleted (could be 0).
-				let tok.pos[0] -= a:ri.del_lines
 			endif
 		endif
-	endfor
+		let idx += 1
+	endwhile
 
-	" Remove tok elements corresponding to what we deleted.
+	" Now remove the buffer text in range [head, tail]
+	" Call either s:Delete_range_vi or s:Delete_range_op (depending on mode) to
+	" delete the text from the buffer.
+	call {'s:Delete_range_' . (a:opt.mode == 'v' ? 'vi' : 'op')}(beg, end)
+	" Adjust end of deletion region.
+	" Design Decision: Allow col to float to one past end in the linewise cases.
+	let end = [beg[0], beg[1]]
+	
+	" Remove tok elements corresponding to what was deleted.
 	" Rationale: Could introduce an 'action' type that means ignore, but
 	" removing them from the list simplifies subsequent stages. Note that we
 	" couldn't set to 'd', since that would result in attempt to delete already
 	" deleted tok. Similarly, setting to '' would allow the deleted tok's effect
-	" to be felt in (eg) tok cleanup, and we don't want that either. We want it
+	" to be felt in (eg) tok cleanup, and we don't want that either; we want it
 	" completely ignored.
-	" Assumption: Upstream logic guarantees existence of both idx_head and
-	" idx_tail.
-	" Note: del_tail - 1 reflects exclusive nature of delete at tail.
-	call remove(a:toks, del_head, del_tail - 1)
-endfu
-
-fu! s:Vmap_protect_bslash(opt)
-	" Note: No point in continuing in the 'linewise' case.
-	" Rationale: In 'linewise' case, there can be nothing (including unescaped
-	" bslash) just before head of region (and on same line as region head),
-	" since region begins (by definition) at beginning of line.
-	if has_key(a:opt.rgn, 'beg_raw') && a:opt.rgn.beg isnot a:opt.rgn.beg_raw
-		return
-	endif
-	let [l, c] = [a:opt.rgn.beg[0], a:opt.rgn.beg[1]]
-	call cursor(l, c)
-	if !search('\%#' . b:re_no_bslash_esc, 'cnW')
-		" Unescaped bslash just before region. Is it now escaping something it
-		" shouldn't?
-		" Assumption: Bslash fixup prior to operation precludes possibility that
-		" it was meant to escape anything.
-		if c < col([l, '$'])
-			" Rationale: We've already determined that the preceding bslash was
-			" not meant to escape anything, but if it's allowed to come into
-			" contact with either a token or a sequence of bslashes immediately
-			" preceding a token, it will have an escaping effect (either to
-			" escape or unescape the token).
-			" TODO: In current syntax, bslashes in isolation do not escape one
-			" another - only when preceding a token. Should they?
-			" Caveat: Use <...>_atom regex here, since the preceding bslash
-			" would preclude a match with b:txtfmt_re_any_tok.
-			" TODO: Consider adding regex vars for the character class (to
-			" obviate need for wrapping with [ ... ].
-			if search('\%#\\*[' . b:txtfmt_re_any_tok_atom . ']', 'cnW')
-				" Escape the preceding bslash and adjust offsets.
-				normal! hi\
-				let a:opt.rgn.beg[1] += 1
-				" Adjust end offset if it's on same line as start (always is for
-				" delete, though we don't really even need end offset for delete).
-				if a:opt['op'] == 'delete' || a:opt.rgn.beg[0] == a:opt.rgn.end[0]
-					let a:opt.rgn.end[1] += 1
-				endif
-			endif
-		endif
+	" BUGFIX_TODO: Consider implementing the ignore idea as part of a fix for
+	" "smart delete" operator.
+	if del_head >= 0
+		call remove(a:toks, del_head, del_tail)
 	endif
 endfu
-
-" Debug only!
+" >>>
+" Function: s:dbg_display_toks() <<<
+" Debug function that prints details of all toks in the provided list with the
+" provided string for context.
 fu! s:dbg_display_toks(context, toks)
 	if !exists('g:dbg_display_on') || !g:dbg_display_on
 		return
@@ -4402,7 +4442,8 @@ fu! s:dbg_display_toks(context, toks)
 	endfor
 	echomsg "\r"
 endfu
-
+" >>>
+" Function: s:Operate_region() <<<
 fu! s:Operate_region(pspecs, opt)
 	" Caveat: Because Vmap_compute() can move cursor off screen,
 	" saving/restoring view is needed to prevent spurious scrolling.
@@ -4422,25 +4463,14 @@ fu! s:Operate_region(pspecs, opt)
 		" Note: This loop is a bit kludgy; unfortunately,VimL doesn't appear to
 		" offer a functional way to transform an array to a dictionary.
 		for r in s:Get_active_rgns() | let pspecs.rgns[r] = 0 | endfor
-		" Get info needed for proper delete.
-		let dri = s:Vmap_get_region_info(a:opt)
 	endif
 	" Note: Returned array of toks is merged (all rgns combined).
 	let toks = s:Vmap_compute(pspecs, a:opt)
 	if a:opt['op'] == 'delete'
 		" Update list to reflect toks we're going to delete before cleanup.
 		call s:dbg_display_toks("before Vmap_delete", toks)
-		call s:Vmap_delete(toks, dri)
+		call s:Vmap_delete(toks, a:opt)
 		call s:dbg_display_toks("Vmap_delete", toks)
-		" Delete text between phantom head (inclusive) and phantom tail
-		" (exclusive).
-		" Note: Phantom tail tok would be *appended* at the stored position:
-		" hence, the 'inclusive' arg.
-		" WHOA!!!! Do I really not need to know # of bytes deleted by the
-		" following? If not, I did a lot of work in Delete_region_text for
-		" nothing. Could probably really simplify things if # of deleted bytes
-		" isn't needed.
-		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Begin cleanup phase...
 	call s:dbg_display_toks("before Vmap_cleanup", toks)
@@ -4454,25 +4484,43 @@ fu! s:Operate_region(pspecs, opt)
 	call reverse(filter(toks, 'v:val.typ == "tok" && !empty(v:val.action)'))
 	call s:dbg_display_toks("Reversed and discarded virtual markers and action-less toks", toks)
 
+	" BUG: Vmap_apply_changes attempts to delete tok already deleted in Vmap_delete.
 	" Apply changes to buffer (in reverse order, to ensure offsets are not
 	" invalidated before use).
 	call s:Vmap_apply_changes(toks, a:opt)
-	if b:txtfmt_cfg_escape == 'bslash'
-		" Note: There can be only 1 bslash affected, no matter how many rgn
-		" types are involved in the operation.
-		call s:Vmap_protect_bslash(a:opt)
-	endif
+
 	call winrestview(wsv)
 endfu
-
-" Adjust region bounds (if necessary) to avoid splitting an escape-escapee pair,
-" and throw exception if the adjusted region contains nothing that can be
-" operated upon.
+" >>>
+" Function: s:Vmap_validate_region() <<<
+" Perform both validation and adjustments required to establish pre-conditions
+" as follows:
+" 1. Adjust region bounds as necessary to prevent the following:
+"    -splitting an escape-escapee pair
+"    -excluding a char at the end of the region which is not part of the visual
+"     selection, but appears to be because `> is positioned on a concealed char
+"     in a sequence of one or more concealed chars at the end of the region.
+"     Note: It's not necessary to perform this adjustment at the start of the
+"     region because in that case, the unconcealed chars that appear to be
+"     selected actually would be (since the sense of the selection is reversed).
+" 2. Throw exception if the adjusted region contains nothing that can be
+"    operated upon.
 " Rule: Non-token characters and blank lines can be operated upon.
+" TODO: I think I may prefer that this adjusted '<,'> and/or '[,']. Actually,
+" I'm wondering whether it might be simpler if we used those in lieu of beg/end,
+" etc...
 fu! s:Vmap_validate_region(opt)
 	" Make sure sel borders don't 'split' an escape-escapee pair.
 	" Note: Function modifies positions in-place.
 	call s:Adjust_sel_to_protect_escapes(a:opt)
+
+	" Expand region end to include a non-concealed char under the cursor.
+	call s:Move_pos_rightward_maybe(a:opt.rgn.end)
+
+	" TODO: Consider whether we need to check for a backslash escape just prior
+	" to and a token just following region... Actually, I think all we could do
+	" here is check for the backslash, since we can't know at this point what
+	" will follow the region after token processing and cleanup.
 	" Note: Intentionally omitting optional tok_info arg.
 	" Rationale: We want non-aggressive hlable interpretation.
 	" BUG - Why does a \tok pair not pass validation?
@@ -4484,7 +4532,8 @@ fu! s:Vmap_validate_region(opt)
 	" between '> and end of buffer. If special case exists, expand region to
 	" include the toks adjacent to region.
 endfu
-
+" >>>
+" Function: s:Get_opfunc_adjusted_pos() <<<
 fu! s:Get_opfunc_adjusted_pos(mode)
 	" Note: Vim provides the actual start/end pos of motion, regardless of mode.
 	" The raw positions may or may not be what txtfmt operation will use. Ensure
@@ -4507,7 +4556,10 @@ fu! s:Get_opfunc_adjusted_pos(mode)
 	endif
 	return rgn
 endfu
-
+" >>>
+" Function: s:Delete_region() <<<
+" Delete_region() is a workhorse function used by both Delete_visual() and
+" Delete_operator().
 fu! s:Delete_region(rgn, mode)
 	let opt = {'rgn': a:rgn, 'op': 'delete', 'mode': a:mode}
 	" Note: Validation may adjust cur pos, but never alters '< '> or '[ '].
@@ -4518,7 +4570,8 @@ fu! s:Delete_region(rgn, mode)
 	call cursor(opt.rgn.beg)
 	return opt
 endfu
-
+" >>>
+" Function: s:Delete_visual() <<<
 fu! s:Delete_visual()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
@@ -4529,10 +4582,10 @@ fu! s:Delete_visual()
 		" TODO: Perhaps switch to call form, since return not used.
 		" TODO: Refactor the line/col workaround for problematic getpos("'>")
 		" into separate function, since it's also used in Highlight_visual.
-		let opt = s:Delete_region({
+		let rgn = {
 			\'beg': [l1, col([l1, col("'<")])],
-			\'end': [l2, col([l2, col("'>")])]},
-			\'visual')
+			\'end': [l2, col([l2, col("'>")])]}
+		let opt = s:Delete_region(rgn, 'visual')
 	catch
 		throw "Delete_visual: Unable to delete selection: "
 			\. v:exception . " occurred at " . v:throwpoint
@@ -4541,7 +4594,8 @@ fu! s:Delete_visual()
 		call cursor(getpos("'<")[1:2])
 	endtry
 endfu 
-
+" >>>
+" Function: s:Delete_operator() <<<
 fu! s:Delete_operator(mode)
 	if a:mode == 'block'
 		" TODO: Can we constrain with mapping itself?
@@ -4566,12 +4620,15 @@ fu! s:Delete_operator(mode)
 	finally
 	endtry
 endfu 
-
+" >>>
+" Function: s:Highlight_region() <<<
+" Highlight_region() is a workhorse function used by both Highlight_visual() and
+" Highlight_operator().
 fu! s:Highlight_region(rgn, mode)
 	" TODO: Consider factoring the common stuff out of Delete/Highlight_region...
 	" Initialize a struct to hold r/w params passed to various functions.
 	let opt = {'rgn': a:rgn, 'op': 'highlight', 'mode': a:mode}
-	" Note: Validation may adjust cur pos, but never alters '< and '>.
+	" Note: Validation may adjust region beg/end, but never alters '< and '>.
 	call s:Vmap_validate_region(opt)
 	" Prompt user for desired highlighting
 	let tokstr = s:Prompt_fmt_clr_spec()
@@ -4586,7 +4643,8 @@ fu! s:Highlight_region(rgn, mode)
 	endif
 	return opt
 endfu
-
+" >>>
+" Function: s:Highlight_visual() <<<
 fu! s:Highlight_visual()
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
@@ -4596,10 +4654,10 @@ fu! s:Highlight_visual()
 		" Caveat: Use line() and col() to work around idiosyncrasy/bug with
 		" getpos(), which returns very large negative column number for '> mark.
 		let [l1, l2] = [line("'<"), line("'>")]
-		let opt = s:Highlight_region({
+		let rgn = {
 			\'beg': [l1, col([l1, col("'<")])],
-			\'end': [l2, col([l2, col("'>")])]},
-			\'visual')
+			\'end': [l2, col([l2, col("'>")])]}
+		let opt = s:Highlight_region(rgn, 'visual')
 		" Adjust '< and '> to account for any modifications.
 		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
 	catch
@@ -4611,7 +4669,8 @@ fu! s:Highlight_visual()
 	endtry
 	call cursor(opt.rgn.beg)
 endfu
-
+" >>>
+" Function: s:Highlight_operator() <<<
 fu! s:Highlight_operator(mode)
 	if a:mode == 'block'
 		" TODO: Can we constrain with mapping itself?
@@ -4635,15 +4694,8 @@ fu! s:Highlight_operator(mode)
 		call cursor(getpos("'[")[1:2])
 	endtry
 endfu
-
-" Prior to v3.0, a color name was permitted to contain whitespace; disallowing
-" it permits us to use whitespace, rather than comma, to separate terms in
-" fmt/clr spec list. It's unlikely anyone is relying upon this, but provide an
-" option just in case.
-" TODO: Need to go back and make Translate_fmt_clr_list handle this.
-let s:cfg_color_name_compat = 0
-
-" EBNF Grammar
+" >>>
+" EBNF Grammar for highlight specs <<<
 " Whitespace Handling: Within a production rule, 'opt_ws' indicates where
 " whitespace is permitted (but not required).
 "
@@ -4687,13 +4739,19 @@ let s:cfg_color_name_compat = 0
 "    interpret the latter as f_attrs.
 " 2. Put explicit `-' or `=' after f.
 " 3. Use `&&' (always means logical AND).
+" >>>
+" Function: s:Sel_identity() <<<
 fu! s:Sel_identity()
 	return {'op': '!', 'val': 1}
 endfu
+" >>>
+" Function: s:Sel_parser_tok_init() <<<
 fu! s:Sel_parser_tok_init(sel)
 	let ps = {'sel': a:sel, 'idx': 0}
 	return ps
 endfu
+" >>>
+" Function: s:Sel_parser_match() <<<
 fu! s:Sel_parser_match(ps, re, ...)
 	if a:0 ? a:1 : 0
 		" Whitespace matched only explicitly.
@@ -4715,12 +4773,16 @@ fu! s:Sel_parser_match(ps, re, ...)
 	" No match.
 	return {}
 endfu
+" >>>
+" Function: s:Sel_parser_accept() <<<
 " Convenience method used when only boolean success/failure is desired from
 " s:Sel_parser_match. Optional explicit_ws arg defaults to false, but may be
 " overridden.
 fu! s:Sel_parser_accept(ps, re, ...)
 	return !empty(s:Sel_parser_match(a:ps, a:re, a:0 ? a:1 : 0))
 endfu
+" >>>
+" Function: s:Sel_parser_bool_expr() <<<
 " Handle both &[&] and |[|] bool expressions.
 fu! s:Sel_parser_bool_expr(ps, op)
 	let expr = {'op': a:op, 'expr': []}
@@ -4751,6 +4813,8 @@ fu! s:Sel_parser_bool_expr(ps, op)
 	endif
 	return expr
 endfu
+" >>>
+" Function: s:Sel_parser_try_fterm() <<<
 fu! s:Sel_parser_try_fterm(ps)
 	if s:Sel_parser_accept(a:ps, 'f')
 		let term = {'mask': 0}
@@ -4776,6 +4840,8 @@ fu! s:Sel_parser_try_fterm(ps)
 	" No fterm
 	return {}
 endfu
+" >>>
+" Function: s:Sel_parser_try_ckterm() <<<
 fu! s:Sel_parser_try_ckterm(ps)
 	let m = s:Sel_parser_match(a:ps, '[ck]')
 	if !empty(m)
@@ -4814,6 +4880,8 @@ fu! s:Sel_parser_try_ckterm(ps)
 	" No clr/bgc term
 	return {}
 endfu
+" >>>
+" Function: s:Sel_parser_term() <<<
 fu! s:Sel_parser_term(ps)
 	let term = s:Sel_parser_try_fterm(a:ps)
 	if !empty(term) | return term | endif
@@ -4839,7 +4907,10 @@ fu! s:Sel_parser_term(ps)
 	endif
 	return {}
 endfu
+" >>>
+" Function: s:Sel_parser_expr_to_string() <<<
 " Debug function
+" TODO: Document if keeping...
 fu! s:Sel_parser_expr_to_string(expr, indent)
 	let sw = 2
 	let s = ''
@@ -4865,6 +4936,9 @@ fu! s:Sel_parser_expr_to_string(expr, indent)
 	endif
 	return s
 endfu
+" >>>
+" Function: s:Parse_selector() <<<
+" TODO: Document...
 fu! s:Parse_selector(sel)
 	let ps = s:Sel_parser_tok_init(a:sel)
 	try
@@ -4884,7 +4958,8 @@ fu! s:Parse_selector(sel)
 			\. ", unconsumed input: `" . ps.sel[ps.idx:] . "'"
 	endtry
 endfu
-
+" >>>
+" Function: s:Check_selector() <<<
 " Evaluate input expression against the input toks, returning 1 if expression
 " evaluates true.
 " Inputs:
@@ -4928,7 +5003,6 @@ fu! s:Check_selector(expr, toks)
 	"echomsg "Check_selector returning " . (has_key(e, 'neg') && e.neg ? !val : !!val)
 	return has_key(e, 'neg') && e.neg ? !val : !!val
 endfu
-
 " >>>
 " Function: s:Jump_to_tok() <<<
 " Purpose: Jumps forward or backwards (as determined by a:dir), to the
@@ -5949,7 +6023,6 @@ fu! s:GetTokInfo(...)
 		return ''.char_nr.''
 	endif
 endfu
-" >>>
 " >>>
 " Menus <<<
 " Return list of formats for menu in which combinations with fewer attributes
@@ -6981,6 +7054,337 @@ call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
 " Restore compatibility options to what they were
 let &cpo = s:save_cpo
 " >>>
+" The stuff below may be useful one day, but until then, don't waste time
+" compiling...
+finish
 " Code Graveyard <<<
+" Function: s:At_buf_end() <<<
+" TODO: !!! UNUSED - REMOVE !!!
+fu! s:At_buf_end()
+	return !!search('\%#.\?\%$', 'ncW')
+endfu
+" >>>
+" Function: s:Cleanup_tokens_working() <<<
+" TODO: Make static after testing
+" TODO !!! UNUSED !!! REMOVE !!!
+fu! Cleanup_tokens_working(startline, stopline)
+	" Save original position
+	let orig_line = line('.')
+	let orig_col = col('.')
+	" Create array to facilitate looping over region types:
+	" Note: Ignore inactive tokens completely.
+	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
+	"  for building other var names
+	let rgn_arrlen = 0
+	if b:txtfmt_cfg_numfgcolors > 0
+		let rgn{rgn_arrlen} = 'clr'
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	let rgn{rgn_arrlen} = 'fmt'
+	let rgn_arrlen = rgn_arrlen + 1
+	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
+		let rgn{rgn_arrlen} = 'bgc'
+		let rgn_arrlen = rgn_arrlen + 1
+	endif
+	" Loop over region types
+	let rgn_idx = 0
+	while rgn_idx < rgn_arrlen
+		" Set some convenience vars for current region type
+		" --re_hlable--
+		" Define regex that matches any char that is hlable for current region
+		" type: i.e., for bgc regions, anything that's not a token, and for
+		" non-bgc regions, anything that's neither token nor whitespace
+		let re_hlable = b:txtfmt_re_any_ntok
+		if rgn{rgn_idx} != 'bgc'
+			" Whitespace is hlable only for bgc regions
+			let re_hlable = re_hlable . '\&\S'
+		endif
+		" --rgn_typ--
+		" 3 char rgn name (clr|fmt|bgc)
+		let rgn_typ = rgn{rgn_idx}
+		" --re_tok--
+		" Define regex that matches any token (start or end) for current
+		" region type
+		let re_tok = b:txtfmt_re_{rgn_typ}_tok
+		let re_stok = b:txtfmt_re_{rgn_typ}_stok
+		let re_etok = b:txtfmt_re_{rgn_typ}_etok
+
+		" Ensure that certain vars are undefined upon loop entry
+		" Note: pptok (prev prev tok) is used to save the token that's about
+		" to be overwritten in ptok, but only when something hlable separates
+		" ptok from the tok under consideration (tok).
+		" Rationale: Each time through the loop, we consider 2 tokens: tok and
+		" ptok. If nothing hlable separates them, at least one of them will be
+		" deleted; in some cases, both tok and ptok will be deleted. As long
+		" as something is being deleted, ptok should be sufficient to hold
+		" whatever token needs saving. When neither token is being deleted,
+		" we need to ensure that whatever is in ptok is not lost, since it's
+		" always possible that the token about to be assigned to ptok will
+		" eventually be deleted, in which case, we'll need to know what region
+		" was active before it was encountered. (Note that we don't need
+		" pptok_line and pptok_col, since a token followed by hlable chars
+		" won't be deleted.)
+		unlet! ptok ptok_line ptok_col
+		unlet! pptok
+
+		" Move to requested starting position
+		call cursor(a:startline, 1)
+		let tok_line = line('.')
+		let tok_col = col('.')
+		let tok = s:Get_char()
+		if tok =~ re_tok
+			" Process this token first time through loop
+			" Don't search for hlable, which won't be used this time through
+			" anyway
+			let hlable = 0 " value doesn't matter
+			let hlable_override = 1
+			let tok_override = 1
+		elseif tok =~ re_hlable
+			" Skip the hlable test first time through
+			let hlable = 1 " value doesn't matter
+			let hlable_override = 1
+			let tok_override = 0
+		else
+			" Nothing special about this char; we can do first search from it
+			let hlable_override = 0
+			let tok_override = 0
+		endif
+		" Loop until all tokens within region have been processed
+		while 1
+			" Perform hlable test if necessary
+			if !hlable_override
+				" Init hlable to 0. May be set later, depending upon search
+				" results
+				let hlable = 0
+				" Search for next hlable char within region
+				let hl_line = search(re_hlable, 'W', a:stopline)
+				if hl_line
+					let hl_col = col('.')
+					" Return to current pos
+					call cursor(tok_line, tok_col)
+				endif
+			endif
+			" Search for next tok within region if we don't already have it
+			if !tok_override
+				let tok_line = search(re_tok, 'W', a:stopline)
+				if tok_line
+					let tok_col = col('.')
+					let tok = s:Get_char()
+				endif
+			endif
+
+			" Is there anything to delete from preceding iteration?
+			if exists('l:del_line')
+				" Move to char to be deleted
+				call cursor(del_line, del_col)
+				let len = s:Delete_cur_char()
+				" Adjust column positions and return to saved pos (but only if
+				" we're coming back through loop)
+				if tok_line
+					" Assumption: tok_line/tok_col is beyond the deleted char
+					if tok_line == del_line
+						let tok_col = tok_col - len
+					endif
+					" Assumption: ptok_line/ptok_col could be before or after
+					" deleted token (but cannot be the deleted token)
+					if exists('l:ptok_line') && ptok_line == del_line
+						if ptok_col > del_col
+							let ptok_col = ptok_col - len
+						endif
+					endif
+					" Assumption: Search for hlable is always past any char
+					" deleted on preceding iteration
+					if !hlable_override && hl_line == del_line
+						let hl_col = hl_col - len
+					endif
+					" Return to saved pos
+					call cursor(tok_line, tok_col)
+				endif
+				" Make sure we don't try to delete again
+				unlet del_line del_col
+			endif
+
+			" Are we done with this region type?
+			if !tok_line
+				break
+			endif
+				
+			" Account for only remaining way that hlable could become set
+			if !hlable_override && hl_line && (hl_line < tok_line || hl_line == tok_line && hl_col < tok_col)
+				let hlable = 1
+			endif
+
+			" Clear any active overrides
+			let tok_override = 0
+			let hlable_override = 0
+
+			if !exists('l:ptok')
+				" No knowledge of previous token means we can't possibly
+				" delete anything this time through...
+				let ptok = tok
+				let ptok_line = tok_line
+				let ptok_col = tok_col
+			else
+				" Consider current and previous token...
+				if tok =~ re_stok && ptok =~ re_stok
+					" Start tok preceded by start tok
+					if !hlable && ptok != tok
+						" Start toks are different and not separated by
+						" hlable. Delete useless ptok
+						call cursor(ptok_line, ptok_col)
+						let len = s:Delete_cur_char()
+						" Adjust column positions
+						if tok_line == ptok_line
+							let tok_col = tok_col - len
+						endif
+						" Return to current position
+						call cursor(tok_line, tok_col)
+						" Is new tok redundant with the one we just deleted?
+						if exists('l:pptok') && tok == pptok
+							" Mark redundant tok for deletion
+							let del_line = tok_line | let del_col = tok_col
+							" Restore pptok
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else pptok would have
+							" been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" Advance to new tok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					else
+						" Either stoks are the same or they're separated by
+						" hlable (or both)
+						if ptok == tok
+							" Mark redundant (second) tok for deletion
+							" Note: We're not overwriting ptok so save to
+							" pptok is not necessary, even if hlable is set
+							let del_line = tok_line | let del_col = tok_col
+							if hlable
+								" No need to search for hlable next iteration,
+								" since this hlable is after ptok
+								let hlable_override = 1
+							endif
+						else
+							" hlable separates different stoks
+							" Advance without deleting any tokens
+							" Note: Must save ptok before overwriting since
+							" tok could eventually be deleted.
+							let pptok = ptok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					endif
+				elseif tok =~ re_etok && ptok =~ re_stok
+					" End tok preceded by start tok
+					if hlable
+						" Start token (ptok) will never be deleted now, but
+						" end token (tok) still could be, so save ptok
+						let pptok = ptok
+						" Advance ptok
+						let ptok = tok
+						let ptok_line = tok_line
+						let ptok_col = tok_col
+					else
+						" Delete empty region
+						" First delete ptok, which we're no longer sitting on...
+						call cursor(ptok_line, ptok_col)
+						let len = s:Delete_cur_char()
+						" Adjust column positions
+						if tok_line == ptok_line
+							let tok_col = tok_col - len
+						endif
+						" Return to current position
+						call cursor(tok_line, tok_col)
+						" Mark end token for deletion
+						let del_line = tok_line | let del_col = tok_col
+						" Restore pptok if possible
+						if exists('l:pptok')
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else one of them would
+							" have been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" We'll have to sync up again
+							unlet! ptok ptok_line ptok_col
+						endif
+					endif
+				elseif tok =~ re_etok && ptok =~ re_etok
+					" End tok preceded by end tok. The second one is unnecessary.
+					" Delete it.
+					let del_line = tok_line | let del_col = tok_col
+					if hlable
+						" The first etok can never be deleted now
+						" Note: No need to save ptok to pptok since we're not
+						" overwriting ptok; however, we need to make sure we
+						" skip the search for hlable next time through loop.
+						let hlable_override = 1
+					endif
+				elseif tok =~ re_stok && ptok =~ re_etok
+					" Start tok preceded by end tok
+					if hlable
+						" End tok can never be deleted now but start tok
+						" eventually could be, so save end tok
+						let pptok = ptok
+						" Advance ptok
+						let ptok = tok
+						let ptok_line = tok_line
+						let ptok_col = tok_col
+					else
+						" Delete the useless etok
+						call cursor(ptok_line, ptok_col)
+						let len = s:Delete_cur_char()
+						" Adjust column positions
+						if tok_line == ptok_line
+							let tok_col = tok_col - len
+						endif
+						" Move back to current position
+						call cursor(tok_line, tok_col)
+						" Is start tok redundant with the tok prior to the end
+						" tok we just deleted?
+						if exists('l:pptok') && tok == pptok
+							" Mark redundant stok for deletion
+							let del_line = tok_line | let del_col = tok_col
+							" Restore pptok
+							let ptok = pptok
+							unlet! ptok_line ptok_col
+							unlet! pptok
+							" Assumption: There has to have been hlable
+							" between pptok and ptok (else one of them would
+							" have been deleted)
+							let hlable_override = 1 | let hlable = 1
+						else
+							" Advance to new tok
+							let ptok = tok
+							let ptok_line = tok_line
+							let ptok_col = tok_col
+						endif
+					endif
+				endif
+			endif
+		endwhile
+		" Next region type
+		let rgn_idx = rgn_idx + 1
+	endwhile
+	" Restore starting position
+	call cursor(orig_line, orig_col)
+endfu
+" >>>
+" Function: s:Getpos()
+" Workaround for Vim Bug with getpos()
+" TODO: I've removed use of this, so understand what the bug was?
+fu! s:Getpos(m)
+	return [line(a:m), col(a:m)]
+endfu
+" >>>
 " >>>
 	" vim: sw=4 ts=4 tw=80 foldmethod=marker foldmarker=<<<,>>> :
