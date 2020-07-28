@@ -4336,6 +4336,8 @@ fu! s:Vmap_delete(toks, ri)
 	" deleted tok. Similarly, setting to '' would allow the deleted tok's effect
 	" to be felt in (eg) tok cleanup, and we don't want that either. We want it
 	" completely ignored.
+	" BUGFIX_TODO: Consider implementing the ignore idea as part of a fix for
+	" "smart delete" operator.
 	" Assumption: Upstream logic guarantees existence of both idx_head and
 	" idx_tail.
 	" Note: del_tail - 1 reflects exclusive nature of delete at tail.
@@ -4435,16 +4437,18 @@ fu! s:Operate_region(pspecs, opt)
 		" Delete text between phantom head (inclusive) and phantom tail
 		" (exclusive).
 		" Note: Phantom tail tok would be *appended* at the stored position:
-		" hence, the 'inclusive' arg.
+		" hence, the 'exclusive' arg.
 		" WHOA!!!! Do I really not need to know # of bytes deleted by the
 		" following? If not, I did a lot of work in Delete_region_text for
 		" nothing. Could probably really simplify things if # of deleted bytes
 		" isn't needed.
-		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
+		" BUGFIX_TODO: Can't do this before Vmap_apply_changes!!!!!!
+		" Note: This has always been a bbug.
+		"call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
 	endif
 	" Begin cleanup phase...
 	call s:dbg_display_toks("before Vmap_cleanup", toks)
-	call s:Vmap_cleanup(toks, a:opt)
+	"call s:Vmap_cleanup(toks, a:opt)
 	call s:dbg_display_toks("after Vmap_cleanup", toks)
 	" Reverse list, discarding action-less toks and non-tok virtual markers (e.g., <eob>).
 	" Rationale: When applying changes to buffer, we work from the end to avoid
@@ -4457,6 +4461,16 @@ fu! s:Operate_region(pspecs, opt)
 	" Apply changes to buffer (in reverse order, to ensure offsets are not
 	" invalidated before use).
 	call s:Vmap_apply_changes(toks, a:opt)
+	" BUGFIX_TODO: Rework this. Probably can't come after Vmap_cleanup, but
+	" needs to come after Vmap_apply_changes. Problem is, Vmap_cleanup() doesn't
+	" currently adjust cursor positions, which could mess up
+	" Delete_region_text().
+	" Also Note: This still isn't working, probably because dri isn't being
+	" adjusted for tokens deleted above. WORK IN PROGRESS!!!!!
+	if a:opt['op'] == 'delete'
+		call s:Delete_region_text(dri.pos_beg, dri.pos_end, [1, 0])
+	endif
+
 	if b:txtfmt_cfg_escape == 'bslash'
 		" Note: There can be only 1 bslash affected, no matter how many rgn
 		" types are involved in the operation.
