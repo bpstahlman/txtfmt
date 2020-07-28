@@ -4567,14 +4567,15 @@ fu! s:Delete_operator(mode)
 	endtry
 endfu 
 
-fu! s:Highlight_region(rgn, mode)
+fu! s:Highlight_region(rgn, mode, spec)
 	" TODO: Consider factoring the common stuff out of Delete/Highlight_region...
 	" Initialize a struct to hold r/w params passed to various functions.
 	let opt = {'rgn': a:rgn, 'op': 'highlight', 'mode': a:mode}
 	" Note: Validation may adjust cur pos, but never alters '< and '>.
 	call s:Vmap_validate_region(opt)
-	" Prompt user for desired highlighting
-	let tokstr = s:Prompt_fmt_clr_spec()
+	" Prompt user for desired highlighting unless it was provided by caller
+	" (shortcut map case).
+	let tokstr = !empty(a:spec) ? a:spec : s:Prompt_fmt_clr_spec()
 	" Parse and validate fmt/clr transformer spec
 	let pspecs = s:Parse_fmt_clr_transformer(tokstr)
 	" Check for Cancel request
@@ -4587,19 +4588,23 @@ fu! s:Highlight_region(rgn, mode)
 	return opt
 endfu
 
-fu! s:Highlight_visual()
+fu! s:Highlight_visual(...)
 	" Blockwise visual selections not supported!
 	if visualmode() == "\<C-V>"
 		throw "Highlight_visual: blockwise-visual mode not supported"
 	endif
 	try
+		" If non-empty spec was provided, pass it on.
+		let spec = a:0 && !empty(a:1) ? a:1 : ''
+
 		" Caveat: Use line() and col() to work around idiosyncrasy/bug with
 		" getpos(), which returns very large negative column number for '> mark.
 		let [l1, l2] = [line("'<"), line("'>")]
 		let opt = s:Highlight_region({
 			\'beg': [l1, col([l1, col("'<")])],
 			\'end': [l2, col([l2, col("'>")])]},
-			\'visual')
+			\'visual',
+			\spec)
 		" Adjust '< and '> to account for any modifications.
 		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
 	catch
@@ -4612,14 +4617,25 @@ fu! s:Highlight_visual()
 	call cursor(opt.rgn.beg)
 endfu
 
-fu! s:Highlight_operator(mode)
+" Wrapper used with 'opfunc' when lambdas are not supported.
+if !has('lambda') || 1
+fu! s:Highlight_operator_wrapper(mode)
+	" Note: b:active_shortcut_spec is set by map before executing g@
+	return s:Highlight_operator(a:mode, b:active_shortcut_spec)
+endfu
+endif
+
+fu! s:Highlight_operator(mode, ...)
 	if a:mode == 'block'
 		" TODO: Can we constrain with mapping itself?
 		throw "Highlight_operator: blockwise motions not supported"
 	endif
 	let rgn = s:Get_opfunc_adjusted_pos(a:mode)
 	try
-		let opt = s:Highlight_region(rgn, 'operator')
+		" If non-empty spec was provided, pass it on.
+		let spec = a:0 && !empty(a:1) ? a:1 : ''
+
+		let opt = s:Highlight_region(rgn, 'operator', spec)
 		" Adjust '[ and '] to account for any modifications.
 		" Design Decision: Currently, '_raw' positions always set, though they
 		" may be simple aliases to the non-raw versions (in non-linewise case).
@@ -6251,6 +6267,114 @@ fu! s:Do_user_maps()
 	endwhile
 endfu
 " >>>
+" Function: s:Shortcut_validate() <<<
+fu! s:Parse_user_shortcut(sc)
+	" In the following regex:
+	" $1=modes $2=map_lhs $3=highlight_spec
+	" 2 formats:
+	" 1. lhs spec
+	" 2. v:vlhs o:olhs spec
+	" (MODES: LHS)+ SPEC
+	let re = '^\s*\(\%([vo]\+\s*:\s*\S\+\s\+\%)\{1,2}\)\(\S.*\)$'
+	let ret = []
+	let m = matchlist(a:sc, re)
+	if empty(m)
+		return {}
+	endif
+	" Split the lhs's
+	let lhss = split(m[1])
+	for lhs in 
+endfu
+" >>>
+" Function: s:Do_user_automaps() <<<
+" Purpose: Process global list containing user-defined auto map presets.
+fu! s:Do_user_automaps()
+	" Preferred strategy uses lambdas, which are available only in Vim8 and
+	" higher.
+	let has_lambda = has('lambda')
+
+	if has_lambda
+		" If refreshing buffer, allow old lambdas to be gc'd.
+		let b:txtfmt_opfunc_lambdas = {}
+	endif
+	" Loop over global, then buf-local version of txtfmtShortcuts.
+	" Rationale: Buf-local maps override global ones.
+	for scope in [g:, b:]
+		let i = 0
+		for s in get(scope, 'txtfmtShortcuts', [])
+			" Validate and process the user map string
+			let m = s:Parse_user_shortcut(s)
+			if m.err
+				echoerr 'Ignoring malformed user-defined shortcut specified by '
+					\.(scope is b: ? 'b:' : 'g:').'txtfmtShortcuts['.i.'] = '.s
+					\.': help txtfmt-user-shortcuts'
+				return
+			else
+				" Extract the modes and the map lhs/rhs
+				let modes = substitute(s, re, '\1', '')
+				let lhs = substitute(s, re, '\2', '')
+				let spec = substitute(s, re, '\3', '')
+
+				" Parse the spec for validation and caching..
+				let pspecs = s:Parse_fmt_clr_transformer(tokstr)
+				if empty(pspecs)
+					echoerr 'Bad spec...'
+				endif
+
+				" FIXME: Validation
+				"if empty(map_lhs) || empty(map_rhs)
+				"	echoerr "Empty user-defined shortcut #".i." ignored due to error: ".s:err_str
+				"endif
+				" Validate the spec to be passed to the function.
+				" Define the maps in appropriate mode(s).
+				for mode in split(modes, '\zs')
+					let key = prefix . ":" . lhs
+					let b:txtfmt_opfunc_data[key] = pspecs
+					if mode == 'v'
+						if has_lambda
+							echomsg "Using lambda!"
+							let Fn = {motion -> s:Highlight_visual(pspecs)}
+							let fn_name = substitute(string(Fn),
+								\ 'function(''\([^)'']\+\)'')', '\1', '')
+							let b:txtfmt_opfunc_data[key] = Fn
+							let rhs = ":<C-U>call {" . fn_name . "}()"
+						else
+							echomsg "Not using lambda!"
+							" No lambdas, so pass the spec to wrapper via buf-local var.
+							let b:txtfmt_opfunc_data[key] = pspecs
+							let rhs = ":<C-U>call <SID>Highlight_visual(b:txtfmt_opfunc_data['" . key . "'])<cr>"
+						endif
+						let prefix = 'v'
+					else
+						if has_lambda
+							echomsg "Using lambda!"
+							let Fn = {motion -> s:Highlight_operator(motion, pspecs)}
+							let fn_name = substitute(string(Fn),
+								\ 'function(''\([^)'']\+\)'')', '\1', '')
+							" Note: The Fn will never be looked up in this
+							" dict, but we add it to prevent gc of the lambda.
+							let b:txtfmt_opfunc_data[key] = Fn
+							let rhs = ":set opfunc=" . fn_name . "<cr>g@"
+						else
+							echomsg "Not using lambda!"
+							" No lambdas, so pass the spec to wrapper via buf-local var.
+							let b:txtfmt_opfunc_data[key] = pspecs
+							let rhs = ":let b:txtfmt_shortcut_key = '" . key . "'"
+								\."\<c-v>|set opfunc=<SID>Highlight_operator_wrapper<cr>g@"
+						endif
+						let prefix = 'n'
+					endif
+					exe prefix.'noremap <silent> <buffer> '.lhs.' '.rhs
+					" Create undo action for the map just created
+					call s:Undef_map(lhs, rhs, prefix)
+				endfor
+
+			endif
+			let i += 1
+		endfor
+	endfor
+endfu
+" >>>
 " Function: s:Set_mapwarn() <<<
 " Purpose: Set txtfmt_cfg_mapwarn option either from user-supplied
 " g:txtfmtMapwarn or to default value. Global var txtfmtMapwarn is a character
@@ -6447,6 +6571,9 @@ fu! s:Do_config()
 	" >>>
 	" Process any user-defined maps <<<
 	call s:Do_user_maps()
+	" >>>
+	" Process any user-defined shortcut (preset) auto maps <<<
+	call s:Do_user_automaps()
 	" >>>
 endfu
 " >>>
