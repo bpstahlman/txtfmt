@@ -3677,6 +3677,10 @@ fu! s:Collect_bslash_ranges(opt, sync_info, toks)
 	return ret
 endfu
 " >>>
+" Function: s:Merge_bslash_ranges() <<<
+fu! s:Merge_bslash_ranges(bslashes)
+endfu
+" >>>
 " Function: s:Vmap_compute() <<<
 fu! s:Vmap_compute(pspecs, opt)
 	let toks = {}
@@ -4007,50 +4011,56 @@ endfu
 " >>>
 " Function: s:Adjust_bslashes_maybe() <<<
 " If a bslash range immediately precedes the input tok, adjust the range as
-" required by the tok's action.
+" required by the tok's action. If "specialness" of bslashes in range is not
+" changing, there's nothing to do; if, on the  other hand, the range is
+" transitioning from special to non-special or vice-versa, we need to halve or
+" double the bslashes, respectively.
 fu! s:Adjust_bslashes_maybe(bslash_ranges, tok)
+	" Only tok changes (action ~= '[iad]') can necessitate bslash changes.
+	" Note: Empty action indicates existing tok that isn't changing, which can't
+	" have any impact on specialness of a preceding bslash range.
+	if a:tok.action !~ '^[iad]$'
+		return
+	endif
 	" Determine the col position under which the range would be keyed.
 	let key_col = a:tok.action == 'a' ? a:tok.pos[1] + 1 : a:tok.pos[1]
-	" See whether there's an applicable bslash range.
+	" See whether there's an applicable bslash range just before col.
 	let bsr = get(a:bslash_ranges, a:tok.pos[0], {})->get(key_col, {})
 	if empty(bsr)
 		" No affected bslash range...
 		return
 	endif
+	" Get the line containing the bslash range.
 	let linetext = getline(a:tok.pos[0])
 	let re = '^\%(\\\+\)[' . b:txtfmt_re_any_tok_atom . ']'
 	" Is this range special now?
-	"echomsg string(bsr)
 	let new_special = match(linetext, re, bsr.beg[1] - 1) >= 0
 	if bsr.special == new_special
 		" No change: nothing to do...
 		return
 	endif
-	" Specialness is changing.
+	" If here, specialness is changing.
 	" Build a replacement line in 3 parts: leading / bslashes / trailing.
 	let new_linetext = strpart(linetext, 0, bsr.beg[1] - 1)
 	"echomsg "new_linetext(1): " . new_linetext
 	if new_special
 		" Transition to special
 		let new_linetext .= repeat('\', 2 * bsr.count)
-		"echomsg "new_linetext(2): " . new_linetext
 	else
 		" Transition to not special
 		" Assumption: A range with odd number of bslashes would represent an
 		" internal error, since it would imply the removal of an escaped token.
-		" Hmmm... Perhaps we could simply cull the range up front, given that
-		" it's effectively insulated from changes in specialness.
+		" Hmmm... Perhaps we could simply cull such ranges up front, given that
+		" they're effectively insulated from changes in specialness.
 		if bsr.count % 2
 			echoerr "Internal error: Adjust_bslashes_maybe():"
 						\ . ' "specialness" changed on bslash range ending in escaped token.'
 		endif
 		let new_linetext .= repeat('\', bsr.count / 2)
-		"echomsg "new_linetext(3): " . new_linetext
 	endif
 	" Append trailing portion of new line.
 	let new_linetext .= strpart(linetext, bsr.beg[1] - 1 + bsr.count)
 
-	"echomsg "new_linetext(4): " . new_linetext
 	" Replace the old line.
 	call setline(a:tok.pos[0], new_linetext)
 endfu
@@ -4072,6 +4082,7 @@ fu! s:Vmap_apply_changes(toks, opt)
 	" TODO: Should we do this here, or just call s:Adjust_bslashes_maybe
 	" unconditionally with a:opt.
 	let bslash_ranges = get(a:opt, 'bslashes', {})
+	let prev_tok = {}
 	" Note: List of toks is ordered from later in buffer to earlier.
 	for tok in a:toks
 		if tok.typ == 'eob' || empty(tok.action)
@@ -4110,12 +4121,20 @@ fu! s:Vmap_apply_changes(toks, opt)
 			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-O>=l:tokstr\<CR>"
 		endif
 		" Are adjustments required?
-		if !empty(tokstr)
-			call s:Adjust_rgn_by_off(tok, tokstr, a:opt)
-			if !empty(bslash_ranges)
+		if !empty(bslash_ranges)
+			" Bslash adjustment can be needed only just prior to a tok (either
+			" existing or new) and since multiple toks can be added at same
+			" buffer location, prev_tok test is required to ensure we don't
+			" adjust the same range more than once.
+			if !empty(prev_tok) && s:Vmap_cmp_pos(tok.pos, prev_tok.pos) < 0
 				call s:Adjust_bslashes_maybe(bslash_ranges, tok)
 			endif
 		endif
+
+		if !empty(tokstr)
+			call s:Adjust_rgn_by_off(tok, tokstr, a:opt)
+		endif
+		let prev_tok = tok
 	endfor
 endfu
 " >>>
@@ -4484,7 +4503,8 @@ fu! s:Operate_region(pspecs, opt)
 	call reverse(filter(toks, 'v:val.typ == "tok" && !empty(v:val.action)'))
 	call s:dbg_display_toks("Reversed and discarded virtual markers and action-less toks", toks)
 
-	" BUG: Vmap_apply_changes attempts to delete tok already deleted in Vmap_delete.
+	" If 2 ranges are still adjacent even after token processing, merge
+	call s:Merge_bslash_ranges(a:opt.bslashes)
 	" Apply changes to buffer (in reverse order, to ensure offsets are not
 	" invalidated before use).
 	call s:Vmap_apply_changes(toks, a:opt)
