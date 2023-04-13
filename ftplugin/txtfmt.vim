@@ -1685,9 +1685,9 @@ endfu
 fu! s:Prompt_fmt_clr_spec()
 	" Prompt the user for fmt/clr spec string
 	" TODO: Decide whether prompt needs to distinguish between bgc and clr
-	call inputsave()
+	"call inputsave()
 	let str = input('Enter a fmt / clr string. (Enter to cancel): ')
-	call inputrestore()
+	"call inputrestore()
 	return str
 endfu
 " >>>
@@ -2442,6 +2442,24 @@ fu! s:Is_escaped_tok()
 	endif
 	" Can't be on an escaped tok if we're not even on a tok char.
 	return 0
+endfu
+" >>>
+" Function: s:Get_effective_pos <<<
+fu! s:Get_effective_pos(tok)
+	let pos = a:tok.pos
+	if a:tok.action == 'a'
+		" Get the token so we can determine its length.
+		let tokstr = s:Tok_nr_to_char(a:tok.rgn, a:tok.idx)
+		" Effective position is after the token.
+		let pos[1] += len(tokstr)
+	endif
+	return pos
+endfu
+" >>>
+" Function: s:Is_phantom_null <<<
+" Description: Return true iff input tok is a phantom that wasn't needed.
+fu! s:Is_phantom_null(tok)
+	return empty(a:tok.action) && a:tok.loc =~ '[{}]'
 endfu
 " >>>
 " Function: s:Search_tok <<<
@@ -3596,6 +3614,69 @@ fu! s:Range_spans_pos(range, pos)
 				\ && a:pos[1] < end[1]
 endfu
 " >>>
+" Function: s:Create_del_pos_adjuster() <<<
+" Create and return an object that can be used to adjust positions for toks and
+" bslash ranges beyond a delete range.
+fu! s:Create_del_pos_adjuster(opt)
+	let ret = {'vars': {}}
+	" Make line/col adjustments needed to account for removal of deleted text
+	" (and toks).
+	let [beg, end] = [a:opt.rgn.beg, a:opt.rgn.end]
+	let linewise = has_key(a:opt.rgn, 'beg_raw') && beg isnot a:opt.rgn.beg_raw
+	let beg_line_len = strlen(getline(beg[0]))
+	let end_line_len = strlen(getline(end[0]))
+	let ret.beg = beg
+	let ret.end = end
+	let ret.eol_at_end = end[1] > end_line_len
+	" Assumption: clen isn't used in linewise cases.
+	let ret.end_clen = ret.eol_at_end ? 0 : strlen(s:Get_char(end))
+
+	fu! ret.Adjust(bsr_or_pos) dict
+		let is_tok = has_key(a:bsr_or_pos, 'pos')
+		let pos = is_tok ? a:bsr_or_pos.pos : a:bsr_or_pos.beg
+
+		if !self.eol_at_end
+			if pos[0] == self.end[0]
+				" Column adjustment needed
+				if self.beg[0] == self.end[0] 
+					" Intra-line delete
+					let pos[1] -= self.end[1] - self.beg[1]
+						\ + (pos[1] > self.end[1] ? self.end_clen : 0)
+				else
+					" Add remaining chars from beg line and subtract deleted
+					" chars from end line.
+					let pos[1] += self.beg[1] - self.end[1]
+						\ - (pos[1] > self.end[1] ? self.end_clen : 0)
+				endif	
+				if is_tok
+					let tok = a:bsr_or_pos
+					" Convert an append at col 0 to an insert at col 1.
+					if pos[1] == 0
+						let pos[1] = 1
+						if tok.action == 'a'
+							let tok.action = 'i'
+						endif
+					elseif tok.action == 'a' && tok.loc == '}'
+						" TODO: Maybe ensure this is set to first byte of mb
+						" char? Probably not necessary, since cursor(line, col)
+						" allows col to be any byte within char, but keeping
+						" things in canonical form could prevent confusion.
+						let pos[1] -= 1
+					endif
+				endif
+			endif
+		endif
+		" Perform line adjustments if delete is *effectively* multi-line
+		" (i.e., true multi-line or 1 line plus trailing newline).
+		if self.beg[0] != self.end[0] || self.eol_at_end
+			if pos[0] >= self.end[0]
+				let pos[0] -= self.end[0] - self.beg[0] + (self.eol_at_end ? 1 : 0)
+			endif
+		endif
+	endfu
+	return ret
+endfu
+" >>>
 " Function: s:Collect_bslash_ranges() <<<
 fu! s:Collect_bslash_ranges(opt, sync_info, toks)
 	" 2D hash: [line, col]
@@ -3606,6 +3687,9 @@ fu! s:Collect_bslash_ranges(opt, sync_info, toks)
 	" TODO: Consider using searchpos() in conjunction with matchlist().
 	let re = '\([^\\]*\)\(\\\+\)\([' . b:txtfmt_re_any_tok_atom . ']\)\?'
 
+	" Initialize object that can be used to adjust position of bslash ranges
+	" beyond deletion range.
+	let bsr_adj = a:opt.op == 'delete' ? s:Create_del_pos_adjuster(a:opt) : {}
 	" Start at beginning of line containing either first actual tok found in
 	" sync or beginning of region.
 	" FIXME: How to use toks here? We have all rgn types but probably care only
@@ -3616,55 +3700,72 @@ fu! s:Collect_bslash_ranges(opt, sync_info, toks)
 	" include stopline?.
 	" TODO: Consider starting at particular character on line...
 	while line <= a:sync_info.stopline
-		" Add an entry for all ranges on current line.
-		" Each line entry will be a hash of ranges keyed by the col just past
-		" the end of the range.
-		let ret[line] = {}
-		let line_map = ret[line]
 		let ltext = getline(line)
 		let linelen = len(ltext)
 		let idx = 0
+		" Loop over ranges on current line.
 		while idx < linelen
 			let mlist = matchlist(ltext, re, idx)
 			if !empty(mlist)
 				" Found a bslash sequence.
 				" Note: bslashes is the only field that can't be empty.
 				let [all, discard, bslashes, tok; _] = mlist
-				" TODO: Consider whether beg should be full pos, or just col
-				" (given that line is key in containing map).
-				let entry = { 'count': len(bslashes)
-							\,'special': !!len(tok)
-							\,'beg': [line, idx + len(discard) + 1] }
-							
+				let special = !!len(tok)
+				let num_slashes = len(bslashes)
+				" Determine col of start of range.
+				let range_col = idx + len(discard) + 1
 				" Note: For test of end against range, we use one char position
 				" *beyond* end to reflect fact that append at end would put end
 				" pos within the first range.
 				let beg = a:opt.rgn.beg[:]
-				let end = s:Get_at_offset(1, a:opt.rgn.end, 'pos')
-				let range = [entry.beg, entry.count]
-				let break_pos = s:Range_spans_pos(range, beg)
-							\ ? beg
-							\ : s:Range_spans_pos(range, end)
-							\ ? end
-							\ : []
-				if !empty(break_pos)
-					" Split the range
-					" How many bslashes before start?
-					" Assumption: Prior logic has ensured beg positioned on
-					" escape, end positioned on escapee.
-					" TODO: Make this assumption valid.
-					let bslash_cnt = break_pos[1] - entry.beg[1]
-					let entry2 = { 'count': entry.count - bslash_cnt
-								\, 'special': entry.special
-								\, 'beg': break_pos }
-					" Truncate the previously-added range before the split.
-					let entry.count = bslash_cnt
-					
-					" Add entry at col key.
-					let line_map[entry2.beg[1] + entry2.count] = entry2
-				endif
-				" Add entry at col key.
-				let line_map[entry.beg[1] + entry.count] = entry
+				let end = a:opt.rgn.end[:]
+				let end_plus1 = s:Get_at_offset(1, end, 'pos')
+				" Break the range into up to 3 segments, as necessary.
+				for pos in [beg, end_plus1, []]
+					" Create an entry that may be truncated (or discarded)
+					" subsequently.
+					let entry = { 'count': num_slashes
+								\,'special': !!len(tok)
+								\,'beg': [line, range_col] }
+					" Is this the end sentinel or an actual region boundary?
+					if !empty(pos)
+						" Does the range require splitting?
+						let need_split = s:Range_spans_pos([entry.beg, entry.count], pos)
+						if !need_split
+							continue
+						endif
+						let entry.count = pos[1] - range_col
+					endif
+					" Don't add an empty range.
+					if !entry.count
+						continue
+					endif
+					let num_slashes -= entry.count
+					let range_col += entry.count
+					" Don't add range that's within deletion region.
+					" Assumption: Loop logic above ensures range stored in entry
+					" will not straddle either end of deletion region.
+					" FIXME!!!!: This test is wrong - it discards the range just
+					" *after* end of region!!!!!
+					if a:opt.op == 'delete'
+						if !s:Cmp_pos_to_rng(entry.beg, beg, end)
+							"""echomsg "Skipping range at " . string(entry.beg)
+							continue
+						endif
+						" Adjust the positions before determining entry's
+						" index/key in array/map.
+						call bsr_adj.Adjust(entry)
+					endif
+					" Add the entry to 2-level hash of ranges keyed by line,
+					" then the col just past the end of the range.
+					" Important Note: The range *must* be adjusted before its
+					" line/col is used.
+					if !has_key(ret, entry.beg[0])
+						let ret[entry.beg[0]] = {}
+					endif
+					let ret[entry.beg[0]][entry.beg[1] + entry.count] = entry
+				endfor
+
 				" Advance past the entire match before trying again.
 				let idx += len(all)
 			else
@@ -3674,11 +3775,8 @@ fu! s:Collect_bslash_ranges(opt, sync_info, toks)
 		endwhile
 		let line += 1
 	endwhile
+	"""echomsg "Returning " . string(ret)
 	return ret
-endfu
-" >>>
-" Function: s:Merge_bslash_ranges() <<<
-fu! s:Merge_bslash_ranges(bslashes)
 endfu
 " >>>
 " Function: s:Vmap_compute() <<<
@@ -4016,10 +4114,14 @@ endfu
 " transitioning from special to non-special or vice-versa, we need to halve or
 " double the bslashes, respectively.
 fu! s:Adjust_bslashes_maybe(bslash_ranges, tok)
-	" Only tok changes (action ~= '[iad]') can necessitate bslash changes.
-	" Note: Empty action indicates existing tok that isn't changing, which can't
-	" have any impact on specialness of a preceding bslash range.
-	if a:tok.action !~ '^[iad]$'
+	" Only tok changes (action ~= '[iad]') can necessitate bslash changes;
+	" however, empty phantoms may separate bslash ranges, so we need to handle
+	" them as well.
+	" FIXME: Why do I have to remove the \? from the following pattern to make
+	" deletion work????
+	" Note: Deletion works without out; highlighting works with it...
+	if a:tok.action !~ '^[iad]\?$'
+	"if a:tok.action !~ '^[iad]$'
 		return
 	endif
 	" Determine the col position under which the range would be keyed.
@@ -4030,6 +4132,7 @@ fu! s:Adjust_bslashes_maybe(bslash_ranges, tok)
 		" No affected bslash range...
 		return
 	endif
+	"""echomsg "Adjust_bslashes_maybe: bsr=" . string(bsr)
 	" Get the line containing the bslash range.
 	let linetext = getline(a:tok.pos[0])
 	let re = '^\%(\\\+\)[' . b:txtfmt_re_any_tok_atom . ']'
@@ -4042,7 +4145,7 @@ fu! s:Adjust_bslashes_maybe(bslash_ranges, tok)
 	" If here, specialness is changing.
 	" Build a replacement line in 3 parts: leading / bslashes / trailing.
 	let new_linetext = strpart(linetext, 0, bsr.beg[1] - 1)
-	"echomsg "new_linetext(1): " . new_linetext
+	"""echomsg "new_linetext(1): " . new_linetext
 	if new_special
 		" Transition to special
 		let new_linetext .= repeat('\', 2 * bsr.count)
@@ -4079,14 +4182,19 @@ endfu
 "     loc: <|{|=|}|>
 " }, ...]
 fu! s:Vmap_apply_changes(toks, opt)
-	" TODO: Should we do this here, or just call s:Adjust_bslashes_maybe
-	" unconditionally with a:opt.
 	let bslash_ranges = get(a:opt, 'bslashes', {})
-	let prev_tok = {}
 	" Note: List of toks is ordered from later in buffer to earlier.
-	for tok in a:toks
-		if tok.typ == 'eob' || empty(tok.action)
+	let num_toks = len(a:toks)
+	let tok_idx = 0
+	while tok_idx < num_toks
+		let tok = a:toks[tok_idx]
+		" Originally, empty action toks were skipped here too, but empty
+		" (null) phantoms are needed as triggers for bslash adjustment.
+		" Note: Currently, non-phantom empty toks are discarded by earlier
+		" stage.
+		if tok.typ == 'eob'
 			" No change from what's in buffer.
+			let tok_idx += 1
 			continue
 		endif
 		" Set to actual tok being considered iff adjustments required.
@@ -4124,18 +4232,24 @@ fu! s:Vmap_apply_changes(toks, opt)
 		if !empty(bslash_ranges)
 			" Bslash adjustment can be needed only just prior to a tok (either
 			" existing or new) and since multiple toks can be added at same
-			" buffer location, prev_tok test is required to ensure we don't
+			" buffer location, the following test is required to ensure we don't
 			" adjust the same range more than once.
-			if !empty(prev_tok) && s:Vmap_cmp_pos(tok.pos, prev_tok.pos) < 0
+			let next_tok_idx = tok_idx + 1
+			if next_tok_idx >= num_toks
+				\ || s:Get_effective_pos(a:toks[next_tok_idx]) != s:Get_effective_pos(tok)
+				echomsg " tok=" . string(tok) . " Adjusting bslashes"
 				call s:Adjust_bslashes_maybe(bslash_ranges, tok)
 			endif
 		endif
 
+		" Adjust the region itself.
+		" TODO: Decide how important this is; also, consider whether
+		" s:Create_del_pos_adjuster() could be used for this.
 		if !empty(tokstr)
 			call s:Adjust_rgn_by_off(tok, tokstr, a:opt)
 		endif
-		let prev_tok = tok
-	endfor
+		let tok_idx += 1
+	endwhile
 endfu
 " >>>
 " Function: s:Vmap_cleanup() <<<
@@ -4213,7 +4327,6 @@ fu! s:Vmap_cleanup(toks, opt)
 			" Design Decision: When both superseding and redundant toks exist,
 			" prefer to delete redundant.
 			if (empty(tip) ? ti_safe.idx : tip.idx) == ti.idx
-				"echomsg "Removing in 1st red test: " . string(ti)
 				let ti.action = ti.action == 'i' || ti.action == 'a' ? '' : 'd'
 				" Note: Leave tip unchanged, but don't make safe.
 				continue
@@ -4229,7 +4342,6 @@ fu! s:Vmap_cleanup(toks, opt)
 		let tip_next = ti
 		if !empty(tip)
 			" Need check for supersedence.
-			"echomsg "Super test on tip=" . string(tip) . ", ti=" . string(ti)
 			" TODO: No longer considering tip means I should probably just move
 			" away from the aggressive cleanup altogether...
 			" Caveat: ti.typ == 'eob' implies no actual tok pos.
@@ -4345,75 +4457,18 @@ fu! s:Vmap_delete(toks, opt)
 	endwhile
 	" Note: Value of idx at loop exit is reused.
 
-	" Make line/col adjustments needed to account for removal of deleted text
-	" (and toks).
-	let [beg, end] = [a:opt.rgn.beg, a:opt.rgn.end]
-	let linewise = has_key(a:opt.rgn, 'beg_raw') && beg isnot a:opt.rgn.beg_raw
-	let beg_line_len = strlen(getline(beg[0]))
-	let end_line_len = strlen(getline(end[0]))
-	let eol_at_beg = beg[1] > beg_line_len
-	let eol_at_end = end[1] > end_line_len
-	let line_off = end[0] - beg[0]
-	if linewise || eol_at_end
-		" Assumption: In linewise (or linewise at end) mode, there can be no
-		" tokens after region on same line as end of region; hence, no col
-		" adjustments are needed.
-		let line_off += 1
-	endif
-	" Figure out the col offset for final line in range.
-	" TODO: Use byteidx() in loop to create a function that can return length of
-	" char at position analytically.
-	" Assumption: clen isn't used in linewise cases.
-	let beg_clen = eol_at_beg ? 0 : strlen(s:Get_char(beg))
-	let end_clen = eol_at_end ? 0 : strlen(s:Get_char(end))
-	"let col_off = (end[0] = beg[0] < end[0] ? 1 : beg[1]) + end_clen
-	let col_off = (beg[0] == end[0]
-		\ ? end[1] - beg[1]
-		\ : end[1] - 1) + end_clen
+	" Initialize object that can be used to adjust position of tokens beyond
+	" deletion range.
+	let tok_adj = s:Create_del_pos_adjuster(a:opt)
 
 	" Assumption: idx unmodified from end of previous loop: i.e., we're looking
 	" only at toks that *might* require position adjustments.
+	" FIXME: Refactor this loop to use Create_del_pos_adjuster().
 	while idx < len(a:toks)
 		let tok = a:toks[idx]
 		" Skip positionless toks.
 		if !empty(tok.pos)
-			" TODO: Decide whether the source material above should be preserved here...
-			" Perform col adjustments.
-			if !eol_at_end
-				if tok.pos[0] == end[0]
-					" Column adjustment needed
-					if beg[0] == end[0] 
-						" Intra-line delete
-						let tok.pos[1] -= end[1] - beg[1]
-							\ + (tok.pos[1] > end[1] ? end_clen : 0)
-					else
-						" Add remaining chars from beg line and subtract deleted
-						" chars from end line.
-						let tok.pos[1] += beg[1] - end[1]
-							\ - (tok.pos[1] > end[1] ? end_clen : 0)
-					endif	
-					" Convert an append at col 0 to an insert at col 1.
-					if tok.pos[1] == 0
-						let tok.pos[1] = 1
-						if tok.action == 'a'
-							let tok.action = 'i'
-						endif
-					elseif tok.action == 'a' && tok.loc == '}'
-						" TODO: Maybe ensure this is set to first byte of mb
-						" char? Probably not necessary, since cursor(line, col)
-						" allows col to be any byte within char, but keeping
-						" things in canonical form could prevent confusion.
-						let tok.pos[1] -= 1
-					endif
-				endif
-			endif
-			" Perform line adjustments if delete is *effectively* multi-line
-			" (i.e., true multi-line or 1 line plus trailing newline).
-			if beg[0] != end[0] || eol_at_end
-				if tok.pos[0] >= end[0]
-					let tok.pos[0] -= end[0] - beg[0] + (eol_at_end ? 1 : 0)
-				endif
-			endif
+			call tok_adj.Adjust(tok)
 		endif
 		let idx += 1
 	endwhile
@@ -4421,10 +4476,9 @@ fu! s:Vmap_delete(toks, opt)
 	" Now remove the buffer text in range [head, tail]
 	" Call either s:Delete_range_vi or s:Delete_range_op (depending on mode) to
 	" delete the text from the buffer.
-	call {'s:Delete_range_' . (a:opt.mode == 'v' ? 'vi' : 'op')}(beg, end)
-	" Adjust end of deletion region.
-	" Design Decision: Allow col to float to one past end in the linewise cases.
-	let end = [beg[0], beg[1]]
+	call {'s:Delete_range_' . (a:opt.mode == 'v' ? 'vi' : 'op')}(a:opt.rgn.beg, a:opt.rgn.end)
+	" FIXME: Decide whether anything needs to be done to adjust region itself.
+	" Design Decision: If so, allow col to float to one past end in the linewise cases.
 	
 	" Remove tok elements corresponding to what was deleted.
 	" Rationale: Could introduce an 'action' type that means ignore, but
@@ -4498,13 +4552,17 @@ fu! s:Operate_region(pspecs, opt)
 	" Reverse list, discarding action-less toks and non-tok virtual markers (e.g., <eob>).
 	" Rationale: When applying changes to buffer, we work from the end to avoid
 	" invalidating line/col offsets before they're used.
-	" TODO: Consider integrating this cleanup into Vmap_cleanup, but
-	" probably wait till refactor is complete...
-	call reverse(filter(toks, 'v:val.typ == "tok" && !empty(v:val.action)'))
+	" Note: If esc=bslash, null phantoms will be needed in Vmap_apply_changes to
+	" consolidate bslash ranges, so don't remove them here.
+	" TODO: Consider integrating this cleanup into Vmap_cleanup, but probably
+	" wait till refactor is complete...
+	call reverse(filter(toks,
+				\ {idx, tok -> tok.typ == "tok" && (!empty(tok.action) || s:Is_phantom_null(tok))}))
 	call s:dbg_display_toks("Reversed and discarded virtual markers and action-less toks", toks)
 
-	" If 2 ranges are still adjacent even after token processing, merge
-	call s:Merge_bslash_ranges(a:opt.bslashes)
+	if exists('g:dbg_display_on') && g:dbg_display_on
+		echomsg "bslash ranges: " . string(a:opt.bslashes)
+	endif
 	" Apply changes to buffer (in reverse order, to ensure offsets are not
 	" invalidated before use).
 	call s:Vmap_apply_changes(toks, a:opt)
