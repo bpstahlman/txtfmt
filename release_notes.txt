@@ -1,6 +1,4 @@
-Version 4.1 Alpha release:
-** !!! Much Faster Syntax !!!: Eliminated redundant group permutations to
-achieve a signficant reduction in the number of syntax groups required for
-highlighting.
-** New Feature(s): "Smart" versions of indent/dedent/retab maps/commands,
-which take Txtfmt 'leadingindent' option into account
+Version 4.2
+Bugfix: Fixed broken "smart delete" operator.
+Enhancement: Added logic that treats backslashes specially when escape=bslash, doubling or halving them as necessary to prevent a highlighting or smart delete operation from changing the number of *displayed* backslashes.
+Enhancement: Stopped treating CTRL-C cancellation of a highlighting/delete operation as an error.
