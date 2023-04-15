@@ -100,7 +100,7 @@ if !exists('b:txtfmt_did_common_config')
 	" file is sourced.
 	let b:txtfmt_do_common_config = 1
 	" TODO - Should we ensure that warning occurs for missing file?
-	runtime plugin/txtfmt.vim 
+	runtime plugin/txtfmt.vim
 	" Make sure the common config doesn't run again
 	unlet b:txtfmt_do_common_config
 
@@ -614,7 +614,7 @@ endfu
 fu! s:Restore_visual_mode(pos_beg, pos_end, deactivate)
 	let poss = [a:pos_beg, a:pos_end]
 	" Start with the old selection...
-	exe 'normal! ' . visualmode() 
+	exe 'normal! ' . visualmode()
 	" Possible TODO: Could make this an Adjust_visual_mode function taking offset, or leave as Restore, but take optional offsets.
 	let i = getpos(".") == getpos("'<") ? 1 : 0
 	" ...Adjust the opposite end first.
@@ -626,51 +626,6 @@ fu! s:Restore_visual_mode(pos_beg, pos_end, deactivate)
 	if a:deactivate
 		" TODO: Consider using v or V (as function of visualmode() return) to de-activate.
 		exe "normal! \<Esc>"
-	endif
-endfu
-" >>>
-" Function: s:Is_esc_tok_obsolete() <<<
-" Purpose: Determine whether the char under the cursor is a Txtfmt escape
-" token.
-" Inputs: 
-" Return: Nonzero if and only if the cursor is sitting on a Txtfmt escape
-" char.
-" Error: N/A
-" TESTING: Tested on both a self and bslash test page.
-" TODO: Remove this after 
-fu! s:Is_esc_tok_obsolete()
-	" Take care of the obvious cases first...
-	if !s:Is_cursor_on_char()
-		return 0
-	endif
-	if b:txtfmt_cfg_escape == 'none'
-		return 0
-	endif
-	" Get name of syntax group under cursor
-	let s = synIDattr(synID(line("."), col("."), 1), "name")
-	let bgc_active = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-	let clr_active = b:txtfmt_cfg_numfgcolors > 0
-	" Any of the following regions result in nonzero return
-	" Tf_outer_esc
-	" Tf_any_stok_inner_esc
-	" Tf_fmt_etok_inner_esc
-	" Tf_clr_etok_inner_esc
-	" Tf_bgc_etok_inner_esc
-	if s =~
-		\ '^Tf_\%('
-			\ . 'outer'
-			\ . '\|\%('
-				\ . 'any_s'
-				\ . '\|\%('
-					\ . 'fmt'
-					\ . (clr_active ? '\|clr' : '')
-					\ . (bgc_active ? '\|bgc' : '')
-				\ . '\)_e'
-			\ . '\)tok_inner'
-		\ . '\)_esc$'
-		return 1
-	else
-		return 0
 	endif
 endfu
 " >>>
@@ -1130,7 +1085,7 @@ endfu
 " Purpose: If cursor is within the body of a Txtfmt highlighting region (i.e.,
 " not on an escape, start or end token) return the applicable token;
 " otherwise, return empty string.
-" Inputs: 
+" Inputs:
 " rgn    One of the following 3 strings: 'clr', 'fmt', 'bgc
 "        Indicates the region type of interest
 " Return: If the cursor lies within a region of the following form...
@@ -1268,411 +1223,6 @@ fu! s:Get_cur_tok_for_rgn(rgn)
 		" Not a valid Txtfmt group
 		return ''
 	endif
-endfu
-" >>>
-" Function: s:Cleanup_tokens() <<<
-" TODO: Make static after testing
-" VMAPS TODO: I'm thinking this can go away, though I might want to review
-" first. It's a *very* early implementation.
-" TODO !!! UNUSED !!! REMOVE !!!
-fu! Cleanup_tokens(startline, stopline, adj_vsel)
-	" Save original position
-	let orig_line = line('.')
-	let orig_col = col('.')
-	" Create array to facilitate looping over region types:
-	" Note: Ignore inactive tokens completely.
-	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
-	"  for building other var names
-	let rgn_arrlen = 0
-	if b:txtfmt_cfg_numfgcolors > 0
-		let rgn{rgn_arrlen} = 'clr'
-		let rgn_arrlen = rgn_arrlen + 1
-	endif
-	let rgn{rgn_arrlen} = 'fmt'
-	let rgn_arrlen = rgn_arrlen + 1
-	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-		let rgn{rgn_arrlen} = 'bgc'
-		let rgn_arrlen = rgn_arrlen + 1
-	endif
-	" Loop over region types
-	let rgn_idx = 0
-	while rgn_idx < rgn_arrlen
-		" Set some convenience vars for current region type
-		" --re_hlable--
-		" Define regex that matches any char that is hlable for current region
-		" type: i.e., for bgc regions, anything that's not a token, and for
-		" non-bgc regions, anything that's neither token nor whitespace
-		let re_hlable = b:txtfmt_re_any_ntok
-		if rgn{rgn_idx} != 'bgc'
-			" Whitespace is hlable only for bgc regions
-			let re_hlable = re_hlable . '\&\S'
-		endif
-		" --rgn_typ--
-		" 3 char rgn name (clr|fmt|bgc)
-		let rgn_typ = rgn{rgn_idx}
-		" --re_tok--
-		" Define regex that matches any token (start or end) for current
-		" region type
-		let re_tok = b:txtfmt_re_{rgn_typ}_tok
-		let re_stok = b:txtfmt_re_{rgn_typ}_stok
-		let re_etok = b:txtfmt_re_{rgn_typ}_etok
-
-		" Ensure that certain vars are undefined upon loop entry
-		" Note: pptok (prev prev tok) is used to save the token that's about
-		" to be overwritten in ptok, but only when something hlable separates
-		" ptok from the tok under consideration (tok).
-		" Rationale: Each time through the loop, we consider 2 tokens: tok and
-		" ptok. If nothing hlable separates them, at least one of them will be
-		" deleted; in some cases, both tok and ptok will be deleted. As long
-		" as something is being deleted, ptok should be sufficient to hold
-		" whatever token needs saving. When neither token is being deleted,
-		" we need to ensure that whatever is in ptok is not lost, since it's
-		" always possible that the token about to be assigned to ptok will
-		" eventually be deleted, in which case, we'll need to know what region
-		" was active before it was encountered. (Note that we don't need
-		" pptok_line and pptok_col, since a token followed by hlable chars
-		" won't be deleted.)
-		unlet! ptok ptok_line ptok_col
-		unlet! pptok
-
-		" Move to requested starting position
-		call cursor(a:startline, 1)
-		let tok_line = line('.')
-		let tok_col = col('.')
-		let tok = s:Get_char()
-		" Note: Some of the complexity associated with the '_overrides' could
-		" go away if we refactored using Vim 7 capabilities: specifically, the
-		" ability to find a match at the cursor position.
-		if tok =~ re_tok
-			" Process this token first time through loop
-			" Don't search for hlable, which won't be used this time through
-			" anyway
-			let hlable = 0 " value doesn't matter
-			let hlable_override = 1
-			let tok_override = 1
-		elseif tok =~ re_hlable
-			" Skip the hlable test first time through
-			let hlable = 1 " value doesn't matter
-			let hlable_override = 1
-			let tok_override = 0
-		else
-			" Nothing special about this char; we can do first search from it
-			let hlable_override = 0
-			let tok_override = 0
-		endif
-		" Nothing to delete on first iteration
-		let del_cnt = 0
-		" Loop until all tokens within region have been processed
-		while 1
-			" Perform hlable test if necessary
-			if !hlable_override
-				" Init hlable to 0. May be set later, depending upon search
-				" results
-				let hlable = 0
-				" Search for next hlable char within region
-				let hl_line = search(re_hlable, 'W', a:stopline)
-				if hl_line
-					let hl_col = col('.')
-					" Return to current pos
-					call cursor(tok_line, tok_col)
-				endif
-			endif
-			" Search for next tok within region if we don't already have it
-			if !tok_override
-				let tok_line = search(re_tok, 'W', a:stopline)
-				if tok_line
-					let tok_col = col('.')
-					let tok = s:Get_char()
-				endif
-			endif
-
-			" Is there anything to delete from preceding iteration?
-			" Do it in reverse order to ensure we don't have to update
-			" positions of tokens to be deleted
-			let del_idx = del_cnt - 1
-			while del_idx >= 0
-				" Move to char to be deleted
-				call cursor(del{del_idx}_line, del{del_idx}_col)
-				let len = s:Delete_cur_char()
-				if tok_line
-					" The following col adjustments are required only if we're
-					" going through loop again.
-					" Assumption: tok_line/tok_col is beyond the deleted char
-					if tok_line == del{del_idx}_line
-						let tok_col = tok_col - len
-					endif
-					" Assumption: ptok_line/ptok_col could be before or after
-					" deleted token (but cannot be the deleted token)
-					" Rationale: Logic within loop never leaves
-					" ptok_line/ptok_col pointing at a char about to be
-					" deleted. It may unlet ptok_line and ptok_col.
-					if exists('l:ptok_line') && ptok_line == del{del_idx}_line
-						" Adjustment required only if ptok is after deleted
-						" tok
-						if ptok_col > del{del_idx}_col
-							let ptok_col = ptok_col - len
-						endif
-					endif
-					" Assumption: Search for hlable (when it occurs) is always
-					" past any char deleted on preceding iteration
-					if !hlable_override && hl_line == del{del_idx}_line
-						let hl_col = hl_col - len
-					endif
-				endif
-				" Are we adjusting visual selection?
-				if a:adj_vsel
-					if s:vsel_beg_line == del{del_idx}_line
-						if s:vsel_beg_col > del{del_idx}_col
-							let s:vsel_beg_col = s:vsel_beg_col - len
-						elseif s:vsel_beg_col == del{del_idx}_col
-							" If token being deleted is also vsel_end, unlet
-							" the latter to indicate null selection
-							if exists('s:vsel_end_line')
-								\ && s:vsel_beg_line == s:vsel_end_line
-								\ && s:vsel_beg_col == s:vsel_end_col
-								unlet s:vsel_end_line s:vsel_end_col
-							endif
-							" Token to be deleted is at vsel_beg. Col position
-							" won't change unless the token is at the end of
-							" the line.
-							" Attempt to move vsel_beg to next char rightward.
-							" If vsel_beg is at end of line, move to start of
-							" next line. If it's also at end of buffer, move
-							" vsel_beg one char beyond last char in buffer.
-							" Design Alternative: Could leave on last char in
-							" buffer. It doesn't really matter because a call
-							" to cursor() makes no distinction between a
-							" position at end of line and 1 past end of line.
-							" Design Alternative: Could move vsel_beg
-							" rightward if and only if original vsel_end was
-							" beyond current line (for aesthetic, intuitive
-							" reasons).
-							if s:vsel_beg_col + len >= col('$')
-								" Token deleted is at end of line
-								" Note: If this is last line in buffer, we
-								" don't need to do anything, since
-								" s:vsel_beg_col will naturally end up being 1
-								" char past end of line, which is what we want.
-								if del{del_idx}_line != line('$')
-									let s:vsel_beg_col = 1
-									let s:vsel_beg_line = s:vsel_beg_line + 1
-								endif
-							endif
-						endif
-					endif
-					" Now look at end of selection
-					if exists('s:vsel_end_line')
-						if s:vsel_end_line == del{del_idx}_line
-							if s:vsel_end_col > del{del_idx}_col
-								let s:vsel_end_col = s:vsel_end_col - len
-							elseif s:vsel_end_col == del{del_idx}_col
-								" Assumption: Deleted char can't be both
-								" vsel_beg and vsel_end. That case is handled
-								" above in vsel_beg logic.
-								" Deleted token is at vsel_end
-								" Move leftward if possible
-								if s:vsel_end_col == 1
-									" At start of line
-									" Assumption: This really can't be start
-									" of buffer.
-									" Rationale: vsel_beg has to be before
-									" vsel_end; hence, we would have processed
-									" this token already as part of the
-									" vsel_beg logic.
-									" Design Decision: Should we take
-									" advantage of the assumption, or try to
-									" fix things if necessary?
-									if del{del_idx}_line > 1
-										" Move to end of preceding line and
-										" obtain its position
-										normal! k$
-										let s:vsel_end_line = s:vsel_end_line - 1
-										let s:vsel_end_col = col('.')
-									endif
-								else
-									" Not at start of line
-									normal! h
-									let s:vsel_end_col = col('.')
-								endif
-							endif
-						endif
-					endif
-				endif
-
-				" Retreat to preceding deletion
-				let del_idx = del_idx - 1
-			endwhile
-			" Cleanup after deletions
-			if del_cnt
-				" Return to saved pos after deletions if we're not done yet
-				if tok_line
-					call cursor(tok_line, tok_col)
-				endif
-				" Any pending deletions have been performed
-				let del_cnt = 0
-			endif
-
-			" Are we done with this region type?
-			if !tok_line
-				break
-			endif
-				
-			" Account for only remaining way that hlable could become set
-			if !hlable_override && hl_line && (hl_line < tok_line || hl_line == tok_line && hl_col < tok_col)
-				let hlable = 1
-			endif
-
-			" Clear any active overrides
-			let tok_override = 0
-			let hlable_override = 0
-
-			if !exists('l:ptok')
-				" No knowledge of previous token means we can't possibly
-				" delete anything this time through...
-				let ptok = tok
-				let ptok_line = tok_line
-				let ptok_col = tok_col
-			else
-				" Consider current and previous token...
-				if tok =~ re_stok && ptok =~ re_stok
-					" Start tok preceded by start tok
-					if !hlable && ptok != tok
-						" Start toks are different and not separated by
-						" hlable. Delete useless ptok
-						let del{del_cnt}_line = ptok_line | let del{del_cnt}_col = ptok_col
-						let del_cnt = del_cnt + 1
-						" Is new tok redundant with the one marked for
-						" deletion?
-						if exists('l:pptok') && tok == pptok
-							" Mark redundant tok for deletion
-							let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
-							let del_cnt = del_cnt + 1
-							" Restore pptok
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else pptok would have
-							" been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" Advance to new tok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					else
-						" Either stoks are the same or they're separated by
-						" hlable (or both)
-						if ptok == tok
-							" Mark redundant (second) tok for deletion
-							" Note: We're not overwriting ptok so save to
-							" pptok is not necessary, even if hlable is set
-							let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
-							let del_cnt = del_cnt + 1
-							if hlable
-								" No need to search for hlable next iteration,
-								" since this hlable is after ptok
-								let hlable_override = 1
-							endif
-						else
-							" hlable separates different stoks
-							" Advance without deleting any tokens
-							" Note: Must save ptok before overwriting since
-							" tok could eventually be deleted.
-							let pptok = ptok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					endif
-				elseif tok =~ re_etok && ptok =~ re_stok
-					" End tok preceded by start tok
-					if hlable
-						" Start token (ptok) will never be deleted now, but
-						" end token (tok) still could be, so save ptok
-						let pptok = ptok
-						" Advance ptok
-						let ptok = tok
-						let ptok_line = tok_line
-						let ptok_col = tok_col
-					else
-						" Delete empty region
-						" Mark start tok for deletion
-						let del{del_cnt}_line = ptok_line | let del{del_cnt}_col = ptok_col
-						let del_cnt = del_cnt + 1
-						" Mark end tok for deletion
-						let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
-						let del_cnt = del_cnt + 1
-						" Restore pptok if possible
-						if exists('l:pptok')
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else one of them would
-							" have been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" We'll have to sync up again
-							unlet! ptok ptok_line ptok_col
-						endif
-					endif
-				elseif tok =~ re_etok && ptok =~ re_etok
-					" End tok preceded by end tok. The second one is unnecessary.
-					" Delete it.
-					let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
-					let del_cnt = del_cnt + 1
-					if hlable
-						" The first etok can never be deleted now
-						" Note: No need to save ptok to pptok since we're not
-						" overwriting ptok; however, we need to make sure we
-						" skip the search for hlable next time through loop.
-						let hlable_override = 1
-					endif
-				elseif tok =~ re_stok && ptok =~ re_etok
-					" Start tok preceded by end tok
-					if hlable
-						" End tok can never be deleted now but start tok
-						" eventually could be, so save end tok
-						let pptok = ptok
-						" Advance ptok
-						let ptok = tok
-						let ptok_line = tok_line
-						let ptok_col = tok_col
-					else
-						" Delete the useless etok
-						let del{del_cnt}_line = ptok_line | let del{del_cnt}_col = ptok_col
-						let del_cnt = del_cnt + 1
-						" Is start tok redundant with the tok prior to the end
-						" tok we just deleted?
-						if exists('l:pptok') && tok == pptok
-							" Mark redundant stok for deletion
-							let del{del_cnt}_line = tok_line | let del{del_cnt}_col = tok_col
-							let del_cnt = del_cnt + 1
-							" Restore pptok
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else one of them would
-							" have been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" Advance to new tok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					endif
-				endif
-			endif
-		endwhile
-		" Next region type
-		let rgn_idx = rgn_idx + 1
-	endwhile
-	" Restore starting position
-	call cursor(orig_line, orig_col)
 endfu
 " >>>
 " Function: s:Prompt_fmt_clr_spec() <<<
@@ -2484,7 +2034,7 @@ endfu
 "     c - allow match (of token) at cursor pos
 "     Design Decision: Don't bother validating, as use of others would be
 "     internal error.
-"     
+"
 " Return:
 " {
 "   %% what was found
@@ -2771,12 +2321,12 @@ fu! s:Adjust_sel_to_protect_escapes(opt)
 	if s:Is_escaped_tok()
 		" Assumption: Because tok was escaped, we know there's a preceding char.
 		normal! h
-		let [a:opt.rgn.beg[0], a:opt.rgn.beg[1]] = [line('.'), col('.')] 
+		let [a:opt.rgn.beg[0], a:opt.rgn.beg[1]] = [line('.'), col('.')]
 	endif
 	call cursor(a:opt.rgn.end)
 	if s:Is_escaping_tok()
 		normal! l
-		let [a:opt.rgn.end[0], a:opt.rgn.end[1]] = [line('.'), col('.')] 
+		let [a:opt.rgn.end[0], a:opt.rgn.end[1]] = [line('.'), col('.')]
 	endif
 endfu
 " >>>
@@ -3239,7 +2789,7 @@ fu! s:Vmap_sync_start(rgn, opt)
 		let ti.chr = s:Idx_to_tok(a:rgn, ti.idx)
 		call insert(toks, ti)
 	endif
-	
+
 	" TODO: Consider whether this function should be responsible for fixing
 	" 'stopline'. If not, could simply return the list of toks.
 	return {
@@ -3568,7 +3118,7 @@ fu! s:Vmap_apply(pspecs, toks, opt)
 					" Need to change existing tok.
 					let tok.idx = set_idx
 					let tok.action = 'r'
-				endif	   
+				endif
 			else
 				 " Phantom tok
 				 " TODO: Decide whether to set phantoms unconditionally and
@@ -3638,7 +3188,7 @@ fu! s:Create_del_pos_adjuster(opt)
 		if !self.eol_at_end
 			if pos[0] == self.end[0]
 				" Column adjustment needed
-				if self.beg[0] == self.end[0] 
+				if self.beg[0] == self.end[0]
 					" Intra-line delete
 					let pos[1] -= self.end[1] - self.beg[1]
 						\ + (pos[1] > self.end[1] ? self.end_clen : 0)
@@ -3647,7 +3197,7 @@ fu! s:Create_del_pos_adjuster(opt)
 					" chars from end line.
 					let pos[1] += self.beg[1] - self.end[1]
 						\ - (pos[1] > self.end[1] ? self.end_clen : 0)
-				endif	
+				endif
 				if is_tok
 					let tok = a:bsr_or_pos
 					" Convert an append at col 0 to an insert at col 1.
@@ -3872,7 +3422,7 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 		" loc decides.
 		return cmp
 	endif
-	
+
 	" Consider action to break positional tie.
 	" Possible values: i|a|r|d
 	" Assumption: Empty actions have been discarded.
@@ -4065,9 +3615,9 @@ fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 		" Cache ref to the 'operator' boundary positions.
 		let [bpr, epr] = [a:opt.rgn.beg_raw, a:opt.rgn.end_raw]
 	endif
-	
+
 	" Finish determining the signed offset to be *added* to account for token
-	" manipulation. 
+	" manipulation.
 	if a:tok.action == 'd'
 		" Since offset is *added* unconditionally, negate to account for net
 		" byte removal.
@@ -4237,7 +3787,6 @@ fu! s:Vmap_apply_changes(toks, opt)
 			let next_tok_idx = tok_idx + 1
 			if next_tok_idx >= num_toks
 				\ || s:Get_effective_pos(a:toks[next_tok_idx]) != s:Get_effective_pos(tok)
-				echomsg " tok=" . string(tok) . " Adjusting bslashes"
 				call s:Adjust_bslashes_maybe(bslash_ranges, tok)
 			endif
 		endif
@@ -4422,7 +3971,7 @@ endfu
 " foo<$
 " 	blammo>$
 " 	: tok.pos[0] -= end[0] - beg[0] + 1
-" 	
+"
 " foo<bar>baz
 " 	: tok.pos[1] -= end[1] - beg[1] + end_clen
 
@@ -4479,7 +4028,7 @@ fu! s:Vmap_delete(toks, opt)
 	call {'s:Delete_range_' . (a:opt.mode == 'v' ? 'vi' : 'op')}(a:opt.rgn.beg, a:opt.rgn.end)
 	" FIXME: Decide whether anything needs to be done to adjust region itself.
 	" Design Decision: If so, allow col to float to one past end in the linewise cases.
-	
+
 	" Remove tok elements corresponding to what was deleted.
 	" Rationale: Could introduce an 'action' type that means ignore, but
 	" removing them from the list simplifies subsequent stages. Note that we
@@ -4498,7 +4047,7 @@ endfu
 " Debug function that prints details of all toks in the provided list with the
 " provided string for context.
 fu! s:dbg_display_toks(context, toks)
-	if !exists('g:dbg_display_on') || !g:dbg_display_on
+	if !exists('g:txtfmt_debug_enabled') || !g:txtfmt_debug_enabled
 		return
 	endif
 	echomsg "\r"
@@ -4560,7 +4109,7 @@ fu! s:Operate_region(pspecs, opt)
 				\ {idx, tok -> tok.typ == "tok" && (!empty(tok.action) || s:Is_phantom_null(tok))}))
 	call s:dbg_display_toks("Reversed and discarded virtual markers and action-less toks", toks)
 
-	if exists('g:dbg_display_on') && g:dbg_display_on
+	if exists('g:txtfmt_debug_enabled') && g:txtfmt_debug_enabled
 		echomsg "bslash ranges: " . string(a:opt.bslashes)
 	endif
 	" Apply changes to buffer (in reverse order, to ensure offsets are not
@@ -4671,7 +4220,7 @@ fu! s:Delete_visual()
 		" Leave cursor just past deleted text (as Vim does).
 		call cursor(getpos("'<")[1:2])
 	endtry
-endfu 
+endfu
 " >>>
 " Function: s:Delete_operator() <<<
 fu! s:Delete_operator(mode)
@@ -4697,7 +4246,7 @@ fu! s:Delete_operator(mode)
 			\. v:exception . " occurred at " . v:throwpoint
 	finally
 	endtry
-endfu 
+endfu
 " >>>
 " Function: s:Highlight_region() <<<
 " Highlight_region() is a workhorse function used by both Highlight_visual() and
@@ -4937,7 +4486,7 @@ fu! s:Sel_parser_try_ckterm(ps)
 		if cname == '-'
 			let term.idx = 0
 		else
-			" TODO!!!!!!!!!!!!!!!! 
+			" TODO!!!!!!!!!!!!!!!!
 			" Obviate need for boilerplate error-checking after call to
 			" Lookup_clr_namepat - probably just have it throw exception
 			" directly, but there's a legacy case to consider...
@@ -5143,7 +4692,7 @@ fu! s:Jump_to_tok(mode, type, dir, till, ...)
 				\ ? b:txtfmtJumptoinactive
 				\ : exists('g:txtfmtJumptoinactive')
 				\   ? g:txtfmtJumptoinactive
-				\   : 0 
+				\   : 0
 	" Get the search pattern
 	" Design Decision Needed: Decide whether to permit inactive color tokens
 	" to serve as target of jump. If this is desired, perhaps create special
@@ -5817,7 +5366,7 @@ fu! s:MoveStartTok(moveto, ...)
 	let new_starttok = a:moveto
 	" Determine amount of shift (signed value)
 	let l:offset = new_starttok - old_starttok
-	
+
 	" Before proceeding, cache 'effective' values for bgcolor, longformats and
 	" undercurl. Note that 'effective' values are those that would be in
 	" effect if current Vim version were old_ver. Note that effective
@@ -6315,7 +5864,7 @@ fu! s:Translate_user_map_rhs(rhs)
 		let expseq = s:Expand_user_map_macro(seq)
 		" Was it valid?
 		if expseq == ''
-			let s:err_str = "Invalid usermap rhs: " . seq 
+			let s:err_str = "Invalid usermap rhs: " . seq
 			return ''
 		endif
 		" Append the expanded text to the return string
@@ -6570,7 +6119,7 @@ fu! s:Do_config()
 	" Rationale: I don't feel that the complexity that would be added by the
 	" logic to exclude them is justified by any advantage doing so would
 	" provide.
-	if (b:txtfmt_last_tok <= 255) 
+	if (b:txtfmt_last_tok <= 255)
 		let val = '^'.b:txtfmt_clr_first_tok.'-'.b:txtfmt_last_tok
 		exe 'setlocal iskeyword+='.val
 		call s:Add_undo('setlocal iskeyword-='.val)
@@ -7140,321 +6689,6 @@ finish
 " TODO: !!! UNUSED - REMOVE !!!
 fu! s:At_buf_end()
 	return !!search('\%#.\?\%$', 'ncW')
-endfu
-" >>>
-" Function: s:Cleanup_tokens_working() <<<
-" TODO: Make static after testing
-" TODO !!! UNUSED !!! REMOVE !!!
-fu! Cleanup_tokens_working(startline, stopline)
-	" Save original position
-	let orig_line = line('.')
-	let orig_col = col('.')
-	" Create array to facilitate looping over region types:
-	" Note: Ignore inactive tokens completely.
-	" -rgn{0,...} is list of 3 character abbreviations for rgn types. Useful
-	"  for building other var names
-	let rgn_arrlen = 0
-	if b:txtfmt_cfg_numfgcolors > 0
-		let rgn{rgn_arrlen} = 'clr'
-		let rgn_arrlen = rgn_arrlen + 1
-	endif
-	let rgn{rgn_arrlen} = 'fmt'
-	let rgn_arrlen = rgn_arrlen + 1
-	if b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
-		let rgn{rgn_arrlen} = 'bgc'
-		let rgn_arrlen = rgn_arrlen + 1
-	endif
-	" Loop over region types
-	let rgn_idx = 0
-	while rgn_idx < rgn_arrlen
-		" Set some convenience vars for current region type
-		" --re_hlable--
-		" Define regex that matches any char that is hlable for current region
-		" type: i.e., for bgc regions, anything that's not a token, and for
-		" non-bgc regions, anything that's neither token nor whitespace
-		let re_hlable = b:txtfmt_re_any_ntok
-		if rgn{rgn_idx} != 'bgc'
-			" Whitespace is hlable only for bgc regions
-			let re_hlable = re_hlable . '\&\S'
-		endif
-		" --rgn_typ--
-		" 3 char rgn name (clr|fmt|bgc)
-		let rgn_typ = rgn{rgn_idx}
-		" --re_tok--
-		" Define regex that matches any token (start or end) for current
-		" region type
-		let re_tok = b:txtfmt_re_{rgn_typ}_tok
-		let re_stok = b:txtfmt_re_{rgn_typ}_stok
-		let re_etok = b:txtfmt_re_{rgn_typ}_etok
-
-		" Ensure that certain vars are undefined upon loop entry
-		" Note: pptok (prev prev tok) is used to save the token that's about
-		" to be overwritten in ptok, but only when something hlable separates
-		" ptok from the tok under consideration (tok).
-		" Rationale: Each time through the loop, we consider 2 tokens: tok and
-		" ptok. If nothing hlable separates them, at least one of them will be
-		" deleted; in some cases, both tok and ptok will be deleted. As long
-		" as something is being deleted, ptok should be sufficient to hold
-		" whatever token needs saving. When neither token is being deleted,
-		" we need to ensure that whatever is in ptok is not lost, since it's
-		" always possible that the token about to be assigned to ptok will
-		" eventually be deleted, in which case, we'll need to know what region
-		" was active before it was encountered. (Note that we don't need
-		" pptok_line and pptok_col, since a token followed by hlable chars
-		" won't be deleted.)
-		unlet! ptok ptok_line ptok_col
-		unlet! pptok
-
-		" Move to requested starting position
-		call cursor(a:startline, 1)
-		let tok_line = line('.')
-		let tok_col = col('.')
-		let tok = s:Get_char()
-		if tok =~ re_tok
-			" Process this token first time through loop
-			" Don't search for hlable, which won't be used this time through
-			" anyway
-			let hlable = 0 " value doesn't matter
-			let hlable_override = 1
-			let tok_override = 1
-		elseif tok =~ re_hlable
-			" Skip the hlable test first time through
-			let hlable = 1 " value doesn't matter
-			let hlable_override = 1
-			let tok_override = 0
-		else
-			" Nothing special about this char; we can do first search from it
-			let hlable_override = 0
-			let tok_override = 0
-		endif
-		" Loop until all tokens within region have been processed
-		while 1
-			" Perform hlable test if necessary
-			if !hlable_override
-				" Init hlable to 0. May be set later, depending upon search
-				" results
-				let hlable = 0
-				" Search for next hlable char within region
-				let hl_line = search(re_hlable, 'W', a:stopline)
-				if hl_line
-					let hl_col = col('.')
-					" Return to current pos
-					call cursor(tok_line, tok_col)
-				endif
-			endif
-			" Search for next tok within region if we don't already have it
-			if !tok_override
-				let tok_line = search(re_tok, 'W', a:stopline)
-				if tok_line
-					let tok_col = col('.')
-					let tok = s:Get_char()
-				endif
-			endif
-
-			" Is there anything to delete from preceding iteration?
-			if exists('l:del_line')
-				" Move to char to be deleted
-				call cursor(del_line, del_col)
-				let len = s:Delete_cur_char()
-				" Adjust column positions and return to saved pos (but only if
-				" we're coming back through loop)
-				if tok_line
-					" Assumption: tok_line/tok_col is beyond the deleted char
-					if tok_line == del_line
-						let tok_col = tok_col - len
-					endif
-					" Assumption: ptok_line/ptok_col could be before or after
-					" deleted token (but cannot be the deleted token)
-					if exists('l:ptok_line') && ptok_line == del_line
-						if ptok_col > del_col
-							let ptok_col = ptok_col - len
-						endif
-					endif
-					" Assumption: Search for hlable is always past any char
-					" deleted on preceding iteration
-					if !hlable_override && hl_line == del_line
-						let hl_col = hl_col - len
-					endif
-					" Return to saved pos
-					call cursor(tok_line, tok_col)
-				endif
-				" Make sure we don't try to delete again
-				unlet del_line del_col
-			endif
-
-			" Are we done with this region type?
-			if !tok_line
-				break
-			endif
-				
-			" Account for only remaining way that hlable could become set
-			if !hlable_override && hl_line && (hl_line < tok_line || hl_line == tok_line && hl_col < tok_col)
-				let hlable = 1
-			endif
-
-			" Clear any active overrides
-			let tok_override = 0
-			let hlable_override = 0
-
-			if !exists('l:ptok')
-				" No knowledge of previous token means we can't possibly
-				" delete anything this time through...
-				let ptok = tok
-				let ptok_line = tok_line
-				let ptok_col = tok_col
-			else
-				" Consider current and previous token...
-				if tok =~ re_stok && ptok =~ re_stok
-					" Start tok preceded by start tok
-					if !hlable && ptok != tok
-						" Start toks are different and not separated by
-						" hlable. Delete useless ptok
-						call cursor(ptok_line, ptok_col)
-						let len = s:Delete_cur_char()
-						" Adjust column positions
-						if tok_line == ptok_line
-							let tok_col = tok_col - len
-						endif
-						" Return to current position
-						call cursor(tok_line, tok_col)
-						" Is new tok redundant with the one we just deleted?
-						if exists('l:pptok') && tok == pptok
-							" Mark redundant tok for deletion
-							let del_line = tok_line | let del_col = tok_col
-							" Restore pptok
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else pptok would have
-							" been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" Advance to new tok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					else
-						" Either stoks are the same or they're separated by
-						" hlable (or both)
-						if ptok == tok
-							" Mark redundant (second) tok for deletion
-							" Note: We're not overwriting ptok so save to
-							" pptok is not necessary, even if hlable is set
-							let del_line = tok_line | let del_col = tok_col
-							if hlable
-								" No need to search for hlable next iteration,
-								" since this hlable is after ptok
-								let hlable_override = 1
-							endif
-						else
-							" hlable separates different stoks
-							" Advance without deleting any tokens
-							" Note: Must save ptok before overwriting since
-							" tok could eventually be deleted.
-							let pptok = ptok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					endif
-				elseif tok =~ re_etok && ptok =~ re_stok
-					" End tok preceded by start tok
-					if hlable
-						" Start token (ptok) will never be deleted now, but
-						" end token (tok) still could be, so save ptok
-						let pptok = ptok
-						" Advance ptok
-						let ptok = tok
-						let ptok_line = tok_line
-						let ptok_col = tok_col
-					else
-						" Delete empty region
-						" First delete ptok, which we're no longer sitting on...
-						call cursor(ptok_line, ptok_col)
-						let len = s:Delete_cur_char()
-						" Adjust column positions
-						if tok_line == ptok_line
-							let tok_col = tok_col - len
-						endif
-						" Return to current position
-						call cursor(tok_line, tok_col)
-						" Mark end token for deletion
-						let del_line = tok_line | let del_col = tok_col
-						" Restore pptok if possible
-						if exists('l:pptok')
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else one of them would
-							" have been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" We'll have to sync up again
-							unlet! ptok ptok_line ptok_col
-						endif
-					endif
-				elseif tok =~ re_etok && ptok =~ re_etok
-					" End tok preceded by end tok. The second one is unnecessary.
-					" Delete it.
-					let del_line = tok_line | let del_col = tok_col
-					if hlable
-						" The first etok can never be deleted now
-						" Note: No need to save ptok to pptok since we're not
-						" overwriting ptok; however, we need to make sure we
-						" skip the search for hlable next time through loop.
-						let hlable_override = 1
-					endif
-				elseif tok =~ re_stok && ptok =~ re_etok
-					" Start tok preceded by end tok
-					if hlable
-						" End tok can never be deleted now but start tok
-						" eventually could be, so save end tok
-						let pptok = ptok
-						" Advance ptok
-						let ptok = tok
-						let ptok_line = tok_line
-						let ptok_col = tok_col
-					else
-						" Delete the useless etok
-						call cursor(ptok_line, ptok_col)
-						let len = s:Delete_cur_char()
-						" Adjust column positions
-						if tok_line == ptok_line
-							let tok_col = tok_col - len
-						endif
-						" Move back to current position
-						call cursor(tok_line, tok_col)
-						" Is start tok redundant with the tok prior to the end
-						" tok we just deleted?
-						if exists('l:pptok') && tok == pptok
-							" Mark redundant stok for deletion
-							let del_line = tok_line | let del_col = tok_col
-							" Restore pptok
-							let ptok = pptok
-							unlet! ptok_line ptok_col
-							unlet! pptok
-							" Assumption: There has to have been hlable
-							" between pptok and ptok (else one of them would
-							" have been deleted)
-							let hlable_override = 1 | let hlable = 1
-						else
-							" Advance to new tok
-							let ptok = tok
-							let ptok_line = tok_line
-							let ptok_col = tok_col
-						endif
-					endif
-				endif
-			endif
-		endwhile
-		" Next region type
-		let rgn_idx = rgn_idx + 1
-	endwhile
-	" Restore starting position
-	call cursor(orig_line, orig_col)
 endfu
 " >>>
 " Function: s:Getpos()
