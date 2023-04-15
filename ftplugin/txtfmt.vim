@@ -1996,7 +1996,8 @@ endfu
 " >>>
 " Function: s:Get_effective_pos <<<
 fu! s:Get_effective_pos(tok)
-	let pos = a:tok.pos
+	" Initialize return pos with copy to avoid modifications to input.
+	let pos = copy(a:tok.pos)
 	if a:tok.action == 'a'
 		" Get the token so we can determine its length.
 		let tokstr = s:Tok_nr_to_char(a:tok.rgn, a:tok.idx)
@@ -4109,7 +4110,7 @@ fu! s:Operate_region(pspecs, opt)
 				\ {idx, tok -> tok.typ == "tok" && (!empty(tok.action) || s:Is_phantom_null(tok))}))
 	call s:dbg_display_toks("Reversed and discarded virtual markers and action-less toks", toks)
 
-	if exists('g:txtfmt_debug_enabled') && g:txtfmt_debug_enabled
+	if b:txtfmt_cfg_escape == 'bslash' && exists('g:txtfmt_debug_enabled') && g:txtfmt_debug_enabled
 		echomsg "bslash ranges: " . string(a:opt.bslashes)
 	endif
 	" Apply changes to buffer (in reverse order, to ensure offsets are not
@@ -4213,7 +4214,7 @@ fu! s:Delete_visual()
 			\'beg': [l1, col([l1, col("'<")])],
 			\'end': [l2, col([l2, col("'>")])]}
 		let opt = s:Delete_region(rgn, 'visual')
-	catch
+	catch /^\(Vim:Interrupt\)\@!.*$/
 		throw "Delete_visual: Unable to delete selection: "
 			\. v:exception . " occurred at " . v:throwpoint
 	finally
@@ -4239,7 +4240,7 @@ fu! s:Delete_operator(mode)
 		" Caveat: setpos fails if given an array with fewer than 3 elements.
 		call setpos("'[", [0] + opt.rgn.beg_raw)
 		call setpos("']", [0] + opt.rgn.beg_raw)
-	catch
+	catch /^\(Vim:Interrupt\)\@!.*$/
 		" Restore cursor position to start of operated region.
 		call cursor(getpos("'[")[1:2])
 		throw "Delete_operator: Unable to delete selection: "
@@ -4287,7 +4288,7 @@ fu! s:Highlight_visual()
 		let opt = s:Highlight_region(rgn, 'visual')
 		" Adjust '< and '> to account for any modifications.
 		call s:Restore_visual_mode(opt.rgn.beg, opt.rgn.end, 1)
-	catch
+	catch /^\(Vim:Interrupt\)\@!.*$/
 		throw "Highlight_visual: Unable to highlight selection: exception "
 			\. v:exception . " occurred at " . v:throwpoint
 	finally
@@ -4312,7 +4313,7 @@ fu! s:Highlight_operator(mode)
 		" Caveat: setpos fails if given an array with fewer than 3 elements.
 		call setpos("'[", [0] + opt.rgn.beg_raw)
 		call setpos("']", [0] + opt.rgn.end_raw)
-	catch
+	catch /^\(Vim:Interrupt\)\@!.*$/
 		throw "Highlight_operator: Unable to highlight operated region: exception "
 			\. v:exception . " occurred at " . v:throwpoint
 	finally
