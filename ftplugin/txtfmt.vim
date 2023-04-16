@@ -6091,10 +6091,6 @@ fu! s:Parse_user_shortcut(sc)
 		return {'err': "Expected shortcut map entry to be of type string or dictionary, got type " . type(a:sc)}
 	endif
 endfu
-echomsg string(s:Parse_user_shortcut('xs:\b o:_b v:,b fbi kg cblue'))
-echomsg string(s:Parse_user_shortcut('\b fbi'))
-echomsg string(s:Parse_user_shortcut('\b fbi kr cb'))
-echomsg string(s:Parse_user_shortcut({'lhs': {'xs': '\b', 'o': ',b'}, 'rhs': 'fbi kr cb'}))
 
 " >>>
 " Function: s:Do_user_automaps() <<<
