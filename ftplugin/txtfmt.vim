@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2023 Apr 15
+" Last Change: 2023 Apr 16
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
@@ -1235,9 +1235,9 @@ endfu
 fu! s:Prompt_fmt_clr_spec()
 	" Prompt the user for fmt/clr spec string
 	" TODO: Decide whether prompt needs to distinguish between bgc and clr
-	"call inputsave()
+	call inputsave()
 	let str = input('Enter a fmt / clr string. (Enter to cancel): ')
-	"call inputrestore()
+	call inputrestore()
 	return str
 endfu
 " >>>
