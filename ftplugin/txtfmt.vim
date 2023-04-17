@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2023 Apr 16
+" Last Change: 2023 Apr 19
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
 " License:	This file is placed in the public domain.
 
@@ -3639,20 +3639,20 @@ fu! s:Adjust_rgn_by_off(tok, tokstr, opt)
 	" however, we might want to consider moving mark to end of previous line in
 	" such cases.
 	if line == bp[0]
-		if linewise && bpr[1] >= max([col, 1])
+		if linewise && bpr[1] > max([col, 1])
 			" Assumption: bp[] isnot bpr[]
 			let bpr[1] += off
 		endif
-		if bp[1] >= max([col, 1])
+		if bp[1] > max([col, 1])
 			let bp[1] += off
 		endif
 	endif
 	if line == ep[0]
-		if linewise && epr[1] >= max([col, 1])
+		if linewise && epr[1] > max([col, 1])
 			" Assumption: ep[] isnot epr[]
 			let epr[1] += off
 		endif
-		if ep[1] >= max([col, 1])
+		if ep[1] > max([col, 1])
 			let ep[1] += off
 		endif
 	endif
