@@ -22,7 +22,7 @@ Txtfmt brings rich text highlighting to plain text files. The commands used to a
 * **Auto maps:** Change the highlighting of a range of text. There are currently 2 types of auto map:
   * Visual: Operate on the visually selected text 
   * Operator: Operate on the text moved over (or included in a "text object") 
-* **Shortcut maps:** Auto map "presets" that associate a specific combination of formats and colors with a map sequence.
+* **Shortcut maps:** Auto map "presets" that associate a specific combination of formats and colors with a keystroke mapping.
 * **Manual maps:** Insert one or more _highlighting tokens_, which affect all subsequent text up to the next token.
 
 **Note:** Txtfmt's highlighting relies upon invisible characters ("tokens") in the text, but you needn't know or care about this if you're using auto maps, which completely automate token insertion/removal. Manual maps (the _only_ type available until Txtfmt 3.0) do not shield the user nearly so well from this implementation detail, and hence, are provided mostly for backwards compatibility.
@@ -120,6 +120,8 @@ Each operator applies to all subsequent format attribute flags until the next op
 | `fu-b,cb,kr` | Add underline and remove bold, make text color blue and background color red |
 | `fu-b cb kr` | _same as previous_                                                           |
 
+<div id=selective-highlighting />
+
 ## Selective (Pattern-Based) Highlighting
 
 Up to this point, we've been applying highlighting to _all_ of the text in a range. It is also possible to target specific _sub-regions_ within the visually-selected or operated-on text. To apply highlighting selectively, append a `/` to the highlighting spec, followed by a "selector pattern expression": e.g.,
@@ -211,14 +213,17 @@ Shortcut maps are defined by adding entries to a List named `txtfmtShortcuts` de
 
 
 
+## Shortcut Map Configuration
+
 ```vim
 " Define some Txtfmt shortcut maps
+" Note: Using call add(...) syntax makes it easier to comment individual entries.
 let g:txtfmtShortcuts = []
-" 'bold-italic' preset (\b for both Visual and Operator auto maps)
+" 'bold-italic' (\b for both Visual and Operator auto maps)
 call add(g:txtfmtShortcuts, '\b fbi')
-" 'bold with red background and blue foreground' preset (\b for Visual, ,b for Operator)
+" 'bold with red background and blue foreground' (\b for Visual, ,b for Operator)
 call add(g:txtfmtShortcuts, 'v:\b o:,b fb rk cb')
-" 'red bold' preset (<LocalLeader>r for Visual, <F8> for Operator)
+" 'red bold' (<LocalLeader>r for Visual, <F8> for Operator)
 call add(g:txtfmtShortcuts, {'lhs': {'v': '<LocalLeader>r', 'o': '<F8>'}, 'rhs': 'fb cr'})
 " Same as previous, but with different key sequences in visual and select modes
 call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 's': '<F8>', 'o': '<F8>'}, 'rhs': 'fb cr'})
@@ -228,6 +233,8 @@ call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 's': '<F8>', 'o': '<
 
 
 
+## Shortcut Map Sample Descriptions
+
 The following table contains sample List entries, along with a description of the map(s) created:
 
 | List Entry                                                   | Result                                                                                                                                  |
@@ -235,16 +242,16 @@ The following table contains sample List entries, along with a description of th
 | `'\b fbi'`                                                   | Create a "bold-italic" preset and use `\b` for both Visual and Operator maps                                                            |
 | `'v:\b o:,b fb'`                                             | Like the preceding, but use `\b` for the Visual map and `,b` for the Operator map                                                       |
 | `{'lhs': {'v': '\b', 'o': ',b'}, 'rhs': 'fbi'}`              | Like the preceding, but using Dictionary syntax                                                                                         |
-| `{'lhs': {'x': '\b', 's': '<F8>', 'o': ',b'}, 'rhs': 'fbi'}` | Like the preceding, but with different keystroke sequences for Visual and Select maps                                                   |
+| `{'lhs': {'x': '\b', 's': '<F8>', 'o': ',b'}, 'rhs': 'fbi'}` | Like the preceding, but with different keystroke sequences forVisual and Select maps                                                    |
 | `'<LocalLeader>? fi/fb (cr \| kr)'`                          | Create a preset mapped to `<LocalLeader>?i` which adds the italic attribute to any bold region with red in its foreground or background |
 
 ### 
 
 ### Points to Note...
 
-- The rhs of a shortcut definition can contain any spec you would enter at a Txtfmt prompt after executing a Visual or Operator auto map.
+- The rhs of a shortcut definition can contain anything you would enter at a Txtfmt prompt after executing a Visual or Operator auto map, including the _selector patterns_ discussed in [Selective (Pattern-Based) Highlighting](./README.md#selective-highlighting).
 
-- String and Dictionary style entries may be freely intermixed throughout the `txtfmtShortcuts` list. The only caveat is that Dictionary style supports literal whitespace in the lhs key sequence, whereas string style requires the use of Vim's special key notation (e.g., `<Space>` for the space key).
+- String and Dictionary style entries may be freely intermixed throughout the `txtfmtShortcuts` list. The only caveat is that Dictionary style supports literal whitespace in the lhs key sequence, whereas string style requires the use of Vim's special key notation (e.g., `<space>` for the space key).
   
   
 
@@ -255,22 +262,46 @@ If you set `g:txtfmtEnableDefaultShortcuts` (or its buf-local counterpart) to 1,
 
 
 ```vim
-[
-    \ '\b fb'
-    \,'\i fi'
-    \,'\u fu'
-    \,'\r cr'
-    \,'\g cg'
-    \,'\b cb'
-    \,',r kr'
-    \,',g kg'
-    \,',b kb'
+let s:txtfmtShortcuts = [
+            \ '-f f-',
+            \ '-c c-',
+            \ '-k k-',
+            \ '-- f- c- k-',
+            \ '\b fb',
+            \ '\i fi',
+            \ '\u fu',
+            \ ',r cr',
+            \ ',g cg',
+            \ ',b cb',
+            \ '_r kr',
+            \ '_g kg',
+            \ '_b kb',
 \]
 ```
 
-**Caveat:** These default shortcuts are not guaranteed to remain constant from one version to the next. Moreover, the colors used in the foreground/background color specs assume you have not overridden the standard color names. If you have invalidated a color spec by renaming or disabling the corresponding color (using techniques discussed in [Color Configuration](./README.md#color-configuration)), the corresponding map will be skipped with a warning.
+**Caveat:** These default shortcuts are subject to change in future versions of Txtfmt. Moreover, the colors used in the foreground/background color specs assume the default color names. If you have invalidated a color spec by renaming or disabling the corresponding color (using techniques discussed in [Color Configuration](./README.md#color-configuration)), the corresponding map will be skipped.
+
+
+
+**Note:** If you wish to use the default maps, but with different map leaders, you can use global or buf-local Dictionary option `txtfmtShortcutLeaders{}` to change the leading portion of the default maps. The keys of `txtfmtShortcutLeaders{}` are used as Vim "magic" regular expressions anchored to the start of the map lhs; the corresponding values are used as replacement strings. Swapping the leaders used by the default foreground and background color maps is as simple as this:
+
+```vim
+let g:txtfmtShortcutLeaders = {',': '_', '_': ','}
+```
+
+
+
+But Vim's pattern syntax can be used to accomplish more complicated remappings: e.g. the following setting could be used to change backslash maps to the corresponding "metafied" form (e.g., `\b` =>`<Meta-b>`):
+
+```vim
+let g:txtfmtShortcutLeaders = {'\\\(.\)': '<m-\1>'}
+```
+
+**Note:** The substitutions performed are strictly textual; thus, when a key may be specified in multiple ways (e.g., `<bslash> or `\\`), you must select the form used by the default maps.
 
 # Manual Maps
+
+**Note:** The typical user will probably never need to use "manual maps", but they're presented here for the sake of completeness.
 
 Manual maps are used to insert specific highlighting tokens at specific locations in the buffer. Each token determines either the text color, background color, or format attributes in effect up until the subsequent token of the same type (possibly the end token `'-'`). With auto maps, you simply specify the desired highlighting changes, and Txtfmt _automagically_ performs the required token insertions and removals. This task is actually far more complex than it sounds. To see why, suppose that after selecting some text, you use an auto map with highlighting spec `fb,cr,kg` (add bold, text red, background green). You might assume that Txtfmt would insert 6 tokens as follows:
 

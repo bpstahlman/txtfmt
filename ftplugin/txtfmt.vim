@@ -29,17 +29,19 @@ let s:cfg_color_name_compat = 0
 
 " Define the default shortcut maps.
 let s:txtfmtShortcuts = [
-			\ '<LocalLeader>b fb',
-			\ '<LocalLeader>i fi',
-			\ '<LocalLeader>u fu',
-			\ {'lhs': {'v': '<LocalLeader>u', 'o': '<LocalLeader>u'}, 'rhs': 'fu'},
-			\ '<LocalLeader>cr cr',
-			\ '<LocalLeader>cb cb',
-			\ '<LocalLeader>cg cg',
-			\ '<LocalLeader>kr kr',
-			\ '<LocalLeader>kb kb',
-			\ '<LocalLeader>kg kg',
-			\ '<LocalLeader>kr kred',
+			\ '-f f-',
+			\ '-c c-',
+			\ '-k k-',
+			\ '-- f- c- k-',
+			\ '\b fb',
+			\ '\i fi',
+			\ '\u fu',
+			\ ',r cr',
+			\ ',g cg',
+			\ ',b cb',
+			\ '_r kr',
+			\ '_g kg',
+			\ '_b kb',
 \]
 " >>>
 " Function: s:Add_undo() <<<
@@ -6091,7 +6093,107 @@ fu! s:Parse_user_shortcut(sc)
 		return {'err': "Expected shortcut map entry to be of type string or dictionary, got type " . type(a:sc)}
 	endif
 endfu
-
+" >>>
+" Function: s:Def_shortcut() <<<
+fu! s:Def_shortcut(mode, lhs, rhs)
+	" Make sure <...> key notation works in mappings.
+	let save_cpo = &cpo
+	set nocp
+	try
+		if a:mode !~ '^[xsvn]$'
+			echoerr 'Internal error - unsupported mapmode passed to Def_shortcut()'
+			return 1
+		endif
+		" Construct the :map command.
+		let l:cmd = a:mode . 'map'
+		" Make sure there's no conflict or ambiguity between an existing map
+		" and the default one we plan to add...
+		let oldarg = maparg(a:lhs, a:mode)
+		let oldchk = mapcheck(a:lhs, a:mode)
+		" Check for conflicts and ambiguities, decoding applicable portions of
+		" mapwarn option character flag string into more immediately useful
+		" variables, to avoid messy ternaries in the subsequent logic.
+		" Note: Create only the variables that will be used.
+		" TODO: Refactor this logic into a function that returns an object
+		" representing the result, so it can be used by both Def_map() and
+		" Def_shortcut().
+		if oldarg != ''
+			" Map conflict
+			let l:problem = 'c'
+			if b:txtfmt_cfg_mapwarn =~ 'M'
+				let l:msg_or_err = 'm'
+			elseif b:txtfmt_cfg_mapwarn =~ 'E'
+				let l:msg_or_err = 'e'
+			endif
+			if exists('l:msg_or_err')
+				let l:once_only = b:txtfmt_cfg_mapwarn =~ 'O'
+			endif
+			let l:create = b:txtfmt_cfg_mapwarn =~ 'C'
+			let l:old_rhs = oldarg
+		elseif oldchk != ''
+			" Map ambiguity
+			let l:problem = 'a'
+			if b:txtfmt_cfg_mapwarn =~ 'm'
+				let l:msg_or_err = 'm'
+			elseif b:txtfmt_cfg_mapwarn =~ 'e'
+				let l:msg_or_err = 'e'
+			endif
+			if exists('l:msg_or_err')
+				let l:once_only = b:txtfmt_cfg_mapwarn =~ 'o'
+			endif
+			let l:create = b:txtfmt_cfg_mapwarn =~ 'c'
+			let l:old_rhs = oldchk
+		endif
+		if exists('l:problem')
+			" There's an ambiguity or conflict
+			if exists('l:msg_or_err')
+				" We need to warn unless warning is precluded by 'once-only'
+				" mechanism
+				if !l:once_only || !s:Mapwarn_check(a:lhs, l:old_rhs, a:mode, l:once_only)
+					let l:warnstr = 'Level 1 map '
+						\.(l:problem == 'a' ? 'ambiguity:' : 'conflict: ')
+						\.a:lhs.' already mapped to '.l:old_rhs
+					if l:msg_or_err == 'm'
+						echomsg l:warnstr
+					else
+						echoerr l:warnstr
+					endif
+				endif
+			endif
+		endif
+		" Do the map for buffer unless map creation is precluded by conflict
+		" or ambiguity in absence of the 'create' flag.
+		" Note: Do not use <unique> attribute, since that would cause an error if
+		" we're overriding.
+		if !exists('l:problem') || l:create
+			echomsg cmd.' <buffer> '.a:lhs.' '.a:rhs
+			exe cmd.' <buffer> '.a:lhs.' '.a:rhs
+			" Create undo action for the map just created
+			call s:Undef_map(a:lhs, a:rhs, a:mode)
+		endif
+	catch
+		let &cpo = save_cpo
+	endtry
+endfu
+" >>>
+" Function: s:Translate_shortcut_leader() <<<
+fu! s:Translate_shortcut_leader(lhs)
+	" Merge buf-local and global translation objects, with buf-local taking precedence.
+	let tr = get(g:, 'txtfmtShortcutLeaders', {})->extend(get(b:, 'txtfmtShortcutLeaders', {}))
+	let lhs = a:lhs
+	" Guarantee: These are internally created and a leading < is *always* the
+	" start of special key notation.
+	" Check against each key in the translation mapping.
+	" TODO: Consider building tr in canonicalized form to obviate need for loop.
+	for [k, v] in items(tr)
+		let translated_lhs = substitute(lhs, '^\%(' . k . '\)', v, '')
+		if translated_lhs != lhs
+			" Translation was performed.
+			return translated_lhs
+		endif
+	endfor
+	return lhs
+endfu
 " >>>
 " Function: s:Do_user_automaps() <<<
 " Purpose: Process global list containing user-defined auto map presets.
@@ -6138,6 +6240,10 @@ fu! s:Do_user_automaps()
 				" Loop over the mode-specfific lhs's...
 				" Define maps in appropriate mode(s).
 				for [modes, lhs] in items(m.lhs)
+					if scope is s:
+						" Canonicalize lhs and perform any requested map leader translations.
+						let lhs = s:Translate_shortcut_leader(lhs)
+					endif
 					for mode in modes->split('\zs')
 						let map_mode = mode
 						if mode =~ '[vxs]'
@@ -6168,11 +6274,8 @@ fu! s:Do_user_automaps()
 							echomsg ":help txtfmt-auto-map-shortcuts"
 						endif
 						let maps[k] = rhs
-						" Create the map.
-						" FIXME: Need to check for conflicts and ambiguities.
-						exe mode . 'noremap <silent> <buffer> ' . lhs . ' ' . rhs
-						" Append an undo action for the map just created.
-						call s:Undef_map(lhs, rhs, mode)
+						" Create the map (and corresponding undo).
+						call s:Def_shortcut(map_mode, lhs, rhs)
 					endfor
 				endfor
 			endif
