@@ -207,9 +207,9 @@ For reasons described in the preceding section, the presence of highlighting tok
 # Shortcut Maps
 
 The only drawback to auto maps is that each highlighting operation requires the user to enter a highlighting spec. Although the highlighting specs are concise and intuitive, most users find themselves using a few "favorites" far more frequently than others. Having to enter the same specs over and over can be tedious and annoying. Shortcut maps allow such favorites to be assigned to keystroke mappings, thereby reducing the tedium and cognitive load experienced by the user.
-**Note:** Early versions of Txtfmt provided a feature known as "user-maps", which allowed Txtfmt manual maps (discussed in the following section) to be embedded in keystroke mappings. Although this feature is still supported for backwards compatibility, there is really no reason to use it any longer: shortcut maps are **_much_** easier to use and **_much_** more powerful.
+**Note:** Early versions of Txtfmt provided a feature known as "user-maps", which allowed Txtfmt manual maps (discussed in a later section) to be embedded in keystroke mappings. Although this feature is still supported for backwards compatibility, there is really no longer a reason to use it: shortcut maps are **_much_** easier to use and **_much_** more powerful.
 
-Shortcut maps are defined by adding entries to a List named `txtfmtShortcuts` defined at either global or buf-local scope. Each element in the list is either a string or a Dictionary that defines a single highlighting spec, along with one or more (potentially mode-specific) keystroke sequences used to request the highlighting. The following Vim script snippet illustrates the use of both string and Dictionary syntax to define shortcuts. You could place something like this in your .vimrc; alternatively, you could change the `g:` prefix to `b:` and put the assignments in a function called from an autocommand. (This approach might be useful if you use Txtfmt in different types of files (denoted by file extension), and would like to define different mappings for each file type.)
+Shortcut maps are defined by adding entries to a List named `txtfmtShortcuts` defined at either global or buf-local scope. Each element in the list is either a string or a Dictionary that defines a single highlighting spec, along with one or more (potentially mode-specific) keystroke sequences used to trigger the highlighting action. The following Vim script snippet illustrates the use of both string and Dictionary syntax to define shortcuts. You could place something like this in your .vimrc; alternatively, you could change the `g:` prefix to `b:` and put the assignments in a function called from an autocommand. (This approach might be useful if you use Txtfmt in different types of files (denoted by file extension), and would like to define a different set of mappings for each file type.)
 
 
 
@@ -217,16 +217,20 @@ Shortcut maps are defined by adding entries to a List named `txtfmtShortcuts` de
 
 ```vim
 " Define some Txtfmt shortcut maps
-" Note: Using call add(...) syntax makes it easier to comment individual entries.
+" Note: Using call add(...) syntax makes it easier to comment individual entries
 let g:txtfmtShortcuts = []
-" 'bold-italic' (\b for both Visual and Operator auto maps)
-call add(g:txtfmtShortcuts, '\b fbi')
-" 'bold with red background and blue foreground' (\b for Visual, ,b for Operator)
-call add(g:txtfmtShortcuts, 'v:\b o:,b fb rk cb')
-" 'red bold' (<LocalLeader>r for Visual, <F8> for Operator)
+" bold (\b for both Visual and Operator auto maps)
+call add(g:txtfmtShortcuts, '\b fb')
+" bold-italic with green background (,bg for both Visual and Operator auto maps)
+" Note the use of Dictionary syntax.
+call add(g:txtfmtShortcuts, {'lhs': ',bg', 'rhs': 'fbi kg'})
+" bold with red background and blue foreground' (\b for Visual, ,b for Operator)
+call add(g:txtfmtShortcuts, 'v:\b o:,b fb kr cb')
+" bold with red foreground (<LocalLeader>r for Visual, <F8> for Operator)
 call add(g:txtfmtShortcuts, {'lhs': {'v': '<LocalLeader>r', 'o': '<F8>'}, 'rhs': 'fb cr'})
-" Same as previous, but with different key sequences in visual and select modes
-call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 's': '<F8>', 'o': '<F8>'}, 'rhs': 'fb cr'})
+" Same as previous, but using <F8> for both the operator and select mode invocation
+" Rationale: Some users may prefer different mappings in visual and select mode.
+call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 'so': '<F8>'}, 'rhs': 'fb cr'})
 " .
 " .
 ```
@@ -283,10 +287,10 @@ let s:txtfmtShortcuts = [
 
 
 
-**Note:** If you wish to use the default maps, but with different map leaders, you can use global or buf-local Dictionary option `txtfmtShortcutLeaders{}` to change the leading portion of the default maps. The keys of `txtfmtShortcutLeaders{}` are used as Vim "magic" regular expressions anchored to the start of the map lhs; the corresponding values are used as replacement strings. Swapping the leaders used by the default foreground and background color maps is as simple as this:
+**Note:** If you wish to use the default maps, but with different map leaders, you can use global or buf-local Dictionary option `txtfmtDefaultShortcutLeaders{}` to change the leading portion of the default maps. The keys of `txtfmtDefaultShortcutLeaders{}` are used as Vim "magic" regular expressions anchored to the start of the map lhs; the corresponding values are used as replacement strings. Swapping the leaders used by the default foreground and background color maps is as simple as this:
 
 ```vim
-let g:txtfmtShortcutLeaders = {',': '_', '_': ','}
+let g:txtfmtDefaultShortcutLeaders = {',': '_', '_': ','}
 ```
 
 
@@ -294,7 +298,7 @@ let g:txtfmtShortcutLeaders = {',': '_', '_': ','}
 But Vim's pattern syntax can be used to accomplish more complicated remappings: e.g. the following setting could be used to change backslash maps to the corresponding "metafied" form (e.g., `\b` =>`<Meta-b>`):
 
 ```vim
-let g:txtfmtShortcutLeaders = {'\\\(.\)': '<m-\1>'}
+let g:txtfmtDefaultShortcutLeaders = {'\\\(.\)': '<m-\1>'}
 ```
 
 **Note:** The substitutions performed are strictly textual; thus, when a key may be specified in multiple ways (e.g., `<bslash> or `\\`), you must select the form used by the default maps.

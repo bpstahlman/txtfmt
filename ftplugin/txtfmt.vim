@@ -4320,10 +4320,10 @@ fu! s:Highlight_visual(...)
 endfu
 
 " Wrapper used with 'opfunc' when lambdas are not supported.
-if !has('lambda') || 1
+if !has('lambda')
 fu! s:Highlight_operator_wrapper(mode)
-	" Note: b:active_shortcut_spec is set by map before executing g@
-	return s:Highlight_operator(a:mode, b:txtfmt_active_shortcut_spec)
+	" Note: s:active_shortcut_spec is set by map before executing g@
+	return s:Highlight_operator(a:mode, s:txtfmt_active_shortcut_spec)
 endfu
 endif
 
@@ -4934,6 +4934,10 @@ fu! s:Undef_map(lhs, rhs, mode)
 		let unmap_cmd = 'ounmap'
 	elseif a:mode=='v'
 		let unmap_cmd = 'vunmap'
+	elseif a:mode=='x'
+		let unmap_cmd = 'xunmap'
+	elseif a:mode=='s'
+		let unmap_cmd = 'sunmap'
 	else
 		echoerr 'Internal error - unsupported mapmode passed to Undef_map()'
 		return 1
@@ -4957,7 +4961,7 @@ fu! s:Undef_map(lhs, rhs, mode)
 		\.unmap_cmd." <buffer> ".a:lhs."| endif")
 endfu
 " >>>
-" Function: s:Def_map() <<<
+" Function: s:Def_map2() <<<
 " Purpose: Define both the level 1 and level 2 map as appropriate.
 " Inputs:
 " mode 	    - single char, used as input to maparg, mapcheck, etc...
@@ -4978,16 +4982,17 @@ endfu
 " 0			- success
 " nonzero	- error
 " NOTE: Function will echoerr to user
-fu! s:Def_map(mode, lhs1, lhs2, rhs2, ...)
+fu! s:Def_map2(mode, lhs1, lhs2, rhs2, ...)
+	" Make sure <...> key notation works in mappings.
+	let save_cpo = &cpo
+	set nocp
+	try
 	" Determine whether 2nd level uses map or noremap.
 	let noremap = a:0 ? !!a:1 : 1
 	if a:mode !~ '^[niov]$'
-		echoerr 'Internal error - unsupported mapmode passed to Def_map()'
+		echoerr 'Internal error - unsupported mapmode passed to Def_map2()'
 		return 1
 	endif
-	" Construct the 1st/2nd level :map commands.
-	let l:cmd1 = a:mode . 'map'
-	let l:cmd2 = a:mode . (noremap ? 'nore' : '') . 'map'
 	" Do first map level <<<
 	" FIXME: I'm thinking the 1st level maps *we* create (ie, not the ones
 	" user has created) should also be reflected in undo_ftplugin.
@@ -5003,75 +5008,29 @@ fu! s:Def_map(mode, lhs1, lhs2, rhs2, ...)
 		" and the default one we plan to add...
 		let oldarg = maparg(a:lhs1, a:mode)
 		let oldchk = mapcheck(a:lhs1, a:mode)
-		" Check for conflicts and ambiguities, decoding applicable portions of
-		" mapwarn option character flag string into more immediately useful
-		" variables, to avoid messy ternaries in the subsequent logic.
-		" Note: Create only the variables that will be used.
-		if oldarg != ''
-			" Map conflict
-			let l:problem = 'c'
-			if b:txtfmt_cfg_mapwarn =~ 'M'
-				let l:msg_or_err = 'm'
-			elseif b:txtfmt_cfg_mapwarn =~ 'E'
-				let l:msg_or_err = 'e'
-			endif
-			if exists('l:msg_or_err')
-				let l:once_only = b:txtfmt_cfg_mapwarn =~ 'O'
-			endif
-			let l:create = b:txtfmt_cfg_mapwarn =~ 'C'
-			let l:old_rhs = oldarg
-		elseif oldchk != ''
-			" Map ambiguity
-			let l:problem = 'a'
-			if b:txtfmt_cfg_mapwarn =~ 'm'
-				let l:msg_or_err = 'm'
-			elseif b:txtfmt_cfg_mapwarn =~ 'e'
-				let l:msg_or_err = 'e'
-			endif
-			if exists('l:msg_or_err')
-				let l:once_only = b:txtfmt_cfg_mapwarn =~ 'o'
-			endif
-			let l:create = b:txtfmt_cfg_mapwarn =~ 'c'
-			let l:old_rhs = oldchk
-		endif
-		if exists('l:problem')
-			" There's an ambiguity or conflict
-			if exists('l:msg_or_err')
-				" We need to warn unless warning is precluded by 'once-only'
-				" mechanism
-				if !l:once_only || !s:Mapwarn_check(a:lhs1, l:old_rhs, a:mode, l:once_only)
-					let l:warnstr = 'Level 1 map '
-						\.(l:problem == 'a' ? 'ambiguity:' : 'conflict: ')
-						\.a:lhs1.' already mapped to '.l:old_rhs
-					if l:msg_or_err == 'm'
-						echomsg l:warnstr
-					else
-						echoerr l:warnstr
-					endif
-				endif
-			endif
-		endif
 		" Do the map for buffer unless map creation is precluded by conflict
 		" or ambiguity in absence of the 'create' flag.
-		" Note: Do not use <unique> attribute, since that would cause Vim to
-		" display error, due to the original mapping.
-		if !exists('l:problem') || l:create
-			exe cmd1.' <buffer> '.a:lhs1.' '.a:lhs2
+		" Note: Do not use <unique> attribute, since that would cause an error if
+		" we're overriding.
+		if s:Check_map_lhs(a:mode, a:lhs1)
+			exe a:mode . 'map <buffer> '.a:lhs1.' '.a:lhs2
 			" Create undo action for the map just created
 			call s:Undef_map(a:lhs1, a:lhs2, a:mode)
 		endif
-	else
-		"echomsg "Skipping 1st level"
 	endif
 	" >>>
 	" Do second map level <<<
 	" Assumption: Second-level mappings have long <Scriptname><...> names,
 	" preceded by <Plug>. It is safe to assume user hasn't mapped one to
 	" something else...
-	exe cmd2.' <silent> <buffer> '.a:lhs2.' '.a:rhs2
+	exe a:mode . (noremap ? 'nore' : '') . 'map'
+				\ .' <silent> <buffer> '.a:lhs2.' '.a:rhs2
 	" Create undo action for the map just created
 	call s:Undef_map(a:lhs2, a:rhs2, a:mode)
 	" >>>
+	catch
+		let &cpo = save_cpo
+	endtry
 	" Success
 	return 0
 endfu
@@ -5994,6 +5953,15 @@ fu! s:Parse_user_shortcut_string(sc)
 	" $1=(MODES:LHS)+
 	" $2=LHS
 	" $3=SPEC
+	" Note: There aren't many compelling use cases for multiple mode chars in a
+	" single LHS definition; however, I've decided to support it because I can
+	" think of a couple of use cases and it doesn't really hurt anything.
+	" Valid (albeit uncommon) use cases:
+	"   1) xo:LHS1 s:LHS2 RHS
+	"      Explanation: Obviates need to specify LHS1 more than once.
+	"   2) vo:LHS RHS
+	"      Explanation: For the user who prefers explicit syntax as a means of
+	"      documentation.
 	let sc = trim(a:sc)
 	if empty(sc)
 		" Design Decision: Empty shortcut entry isn't an error.
@@ -6001,7 +5969,8 @@ fu! s:Parse_user_shortcut_string(sc)
 		" able to disable an entry simply by making it empty.
 		return {}
 	endif
-	let re_modes = '\%([xsvo]\+:\)'
+	" Note: Allow whitespace after the colon for readability.
+	let re_modes = '\%([xsvo]\+:\s*\)'
 	let re_lhs = '\%(\S\+\)'
 	let re_mlhs = re_modes . re_lhs
 	let re = '^\s*\%(\(\%(' . re_mlhs . '\)\%(\s\+' . re_mlhs . '\)*\)\|\(' . re_lhs . '\)\)\s\+\(.*\S\)\s*$'
@@ -6041,9 +6010,8 @@ endfu
 " Function: s:Parse_user_shortcut_dict() <<<
 fu! s:Parse_user_shortcut_dict(sc)
 	" Formats:
-	"   --OBSOLETE-- {lhs: [{modes: <modes>, lhs: <lhs>}, ...], rhs: <rhs>}
-	"   {lhs: <lhs>, rhs: <rhs>}
-	" | {lhs: {<modes>: <lhs>, ...}, rhs: <rhs>}
+	"   {'lhs': LHS, 'rhs': RHS}
+	" | {'lhs': {MODES: LHS, ...}, 'rhs': RHS}
 	" Make sure rhs is a string.
 	if type(a:sc.rhs) != type("")
 		return {'err': "Expected shortcut map rhs to be of type string: " . string(a:sc.rhs)}
@@ -6094,80 +6062,89 @@ fu! s:Parse_user_shortcut(sc)
 	endif
 endfu
 " >>>
-" Function: s:Def_shortcut() <<<
-fu! s:Def_shortcut(mode, lhs, rhs)
+" Function: s:Check_map_lhs() <<<
+" Return true iff a map from 'lhs' in 'mode' should be created, displaying
+" warnings/errors for map conficts/ambiguities in accordance with txtfmtMapwarn
+" option setting.
+fu! s:Check_map_lhs(lhs, mode)
+	" Make sure there's no conflict or ambiguity between an existing map
+	" and the default one we plan to add...
+	let oldarg = maparg(a:lhs, a:mode)
+	let oldchk = mapcheck(a:lhs, a:mode)
+	" Check for conflicts and ambiguities, decoding applicable portions of
+	" mapwarn option character flag string into more immediately useful
+	" variables, to avoid messy ternaries in the subsequent logic.
+	" Note: Create only the variables that will be used.
+	" TODO: Refactor this logic into a function that returns an object
+	" representing the result, so it can be used by both Def_map2() and
+	" Def_map1().
+	if oldarg != ''
+		" Map conflict
+		let l:problem = 'c'
+		if b:txtfmt_cfg_mapwarn =~ 'M'
+			let l:msg_or_err = 'm'
+		elseif b:txtfmt_cfg_mapwarn =~ 'E'
+			let l:msg_or_err = 'e'
+		endif
+		if exists('l:msg_or_err')
+			let l:once_only = b:txtfmt_cfg_mapwarn =~ 'O'
+		endif
+		let l:create = b:txtfmt_cfg_mapwarn =~ 'C'
+		let l:old_rhs = oldarg
+	elseif oldchk != ''
+		" Map ambiguity
+		let l:problem = 'a'
+		if b:txtfmt_cfg_mapwarn =~ 'm'
+			let l:msg_or_err = 'm'
+		elseif b:txtfmt_cfg_mapwarn =~ 'e'
+			let l:msg_or_err = 'e'
+		endif
+		if exists('l:msg_or_err')
+			let l:once_only = b:txtfmt_cfg_mapwarn =~ 'o'
+		endif
+		let l:create = b:txtfmt_cfg_mapwarn =~ 'c'
+		let l:old_rhs = oldchk
+	endif
+	if exists('l:problem')
+		" There's an ambiguity or conflict
+		if exists('l:msg_or_err')
+			" We need to warn unless warning is precluded by 'once-only'
+			" mechanism
+			if !l:once_only || !s:Mapwarn_check(a:lhs, l:old_rhs, a:mode, l:once_only)
+				let l:warnstr = 'Level 1 map '
+					\.(l:problem == 'a' ? 'ambiguity:' : 'conflict: ')
+					\.a:lhs.' already mapped to '.l:old_rhs
+				if l:msg_or_err == 'm'
+					echomsg l:warnstr
+				else
+					echoerr l:warnstr
+				endif
+			endif
+		endif
+	endif
+	" Return true iff map should be created.
+	return !exists('l:problem') || l:create
+endfu
+" >>>
+" Function: s:Def_map1() <<<
+" Define the single-level map corresponding to the inputs, handling any
+" conflicts or ambiguities in accordance with option txtfmtMapwarn.
+fu! s:Def_map1(mode, lhs, rhs)
 	" Make sure <...> key notation works in mappings.
 	let save_cpo = &cpo
 	set nocp
 	try
 		if a:mode !~ '^[xsvn]$'
-			echoerr 'Internal error - unsupported mapmode passed to Def_shortcut()'
+			echoerr 'Internal error - unsupported mapmode passed to Def_map1()'
 			return 1
-		endif
-		" Construct the :map command.
-		let l:cmd = a:mode . 'map'
-		" Make sure there's no conflict or ambiguity between an existing map
-		" and the default one we plan to add...
-		let oldarg = maparg(a:lhs, a:mode)
-		let oldchk = mapcheck(a:lhs, a:mode)
-		" Check for conflicts and ambiguities, decoding applicable portions of
-		" mapwarn option character flag string into more immediately useful
-		" variables, to avoid messy ternaries in the subsequent logic.
-		" Note: Create only the variables that will be used.
-		" TODO: Refactor this logic into a function that returns an object
-		" representing the result, so it can be used by both Def_map() and
-		" Def_shortcut().
-		if oldarg != ''
-			" Map conflict
-			let l:problem = 'c'
-			if b:txtfmt_cfg_mapwarn =~ 'M'
-				let l:msg_or_err = 'm'
-			elseif b:txtfmt_cfg_mapwarn =~ 'E'
-				let l:msg_or_err = 'e'
-			endif
-			if exists('l:msg_or_err')
-				let l:once_only = b:txtfmt_cfg_mapwarn =~ 'O'
-			endif
-			let l:create = b:txtfmt_cfg_mapwarn =~ 'C'
-			let l:old_rhs = oldarg
-		elseif oldchk != ''
-			" Map ambiguity
-			let l:problem = 'a'
-			if b:txtfmt_cfg_mapwarn =~ 'm'
-				let l:msg_or_err = 'm'
-			elseif b:txtfmt_cfg_mapwarn =~ 'e'
-				let l:msg_or_err = 'e'
-			endif
-			if exists('l:msg_or_err')
-				let l:once_only = b:txtfmt_cfg_mapwarn =~ 'o'
-			endif
-			let l:create = b:txtfmt_cfg_mapwarn =~ 'c'
-			let l:old_rhs = oldchk
-		endif
-		if exists('l:problem')
-			" There's an ambiguity or conflict
-			if exists('l:msg_or_err')
-				" We need to warn unless warning is precluded by 'once-only'
-				" mechanism
-				if !l:once_only || !s:Mapwarn_check(a:lhs, l:old_rhs, a:mode, l:once_only)
-					let l:warnstr = 'Level 1 map '
-						\.(l:problem == 'a' ? 'ambiguity:' : 'conflict: ')
-						\.a:lhs.' already mapped to '.l:old_rhs
-					if l:msg_or_err == 'm'
-						echomsg l:warnstr
-					else
-						echoerr l:warnstr
-					endif
-				endif
-			endif
 		endif
 		" Do the map for buffer unless map creation is precluded by conflict
 		" or ambiguity in absence of the 'create' flag.
 		" Note: Do not use <unique> attribute, since that would cause an error if
 		" we're overriding.
-		if !exists('l:problem') || l:create
-			echomsg cmd.' <buffer> '.a:lhs.' '.a:rhs
-			exe cmd.' <buffer> '.a:lhs.' '.a:rhs
+		if s:Check_map_lhs(a:mode, a:lhs)
+			" Construct the :map command.
+			exe a:mode . 'map <buffer> '.a:lhs.' '.a:rhs
 			" Create undo action for the map just created
 			call s:Undef_map(a:lhs, a:rhs, a:mode)
 		endif
@@ -6176,17 +6153,31 @@ fu! s:Def_shortcut(mode, lhs, rhs)
 	endtry
 endfu
 " >>>
-" Function: s:Translate_shortcut_leader() <<<
-fu! s:Translate_shortcut_leader(lhs)
+" Function: s:Remap_shortcut_leader() <<<
+" Return a copy of the input map lhs with its leading portion remapped (if
+" appropriate) in accordance with option txtfmtDefaultShortcutLeaders{}.
+" Note: The translation performed is strictly textual and case-sensitive.
+" I've considered performing canonicalization on special key notations (e.g.,
+" "<Bslash>" => "<bslash>", "\t" => "<tab>"), but the value of this
+" canonicalization seems rather limited: since the map lhs's being translated
+" are all statically defined in canonical form by the plugin, the only value in
+" canonicalization would be in giving the user some leeway in specifying the
+" pattern(s). But a user setting txtfmtDefaultShortcutLeaders{} will be looking
+" at the default entries in the documentation (which mentions the textual nature
+" of the substitutions), so getting it right shouldn't be difficult.
+" Consequently, though canonicalization might be worth doing eventually, it's
+" not high priority...
+fu! s:Remap_shortcut_leader(lhs)
 	" Merge buf-local and global translation objects, with buf-local taking precedence.
-	let tr = get(g:, 'txtfmtShortcutLeaders', {})->extend(get(b:, 'txtfmtShortcutLeaders', {}))
+	let tr = get(g:, 'txtfmtDefaultShortcutLeaders', {})->extend(get(b:, 'txtfmtDefaultShortcutLeaders', {}))
 	let lhs = a:lhs
-	" Guarantee: These are internally created and a leading < is *always* the
-	" start of special key notation.
+	" Guarantee: Because these maps are internally created, we can guarantee
+	" that a leading < is *always* the start of special key notation.
 	" Check against each key in the translation mapping.
 	" TODO: Consider building tr in canonicalized form to obviate need for loop.
-	for [k, v] in items(tr)
-		let translated_lhs = substitute(lhs, '^\%(' . k . '\)', v, '')
+	for [patt, repl] in items(tr)
+		" Anchor pattern at start of lhs.
+		let translated_lhs = substitute(lhs, '^\%(' . patt . '\)', repl, '')
 		if translated_lhs != lhs
 			" Translation was performed.
 			return translated_lhs
@@ -6195,44 +6186,50 @@ fu! s:Translate_shortcut_leader(lhs)
 	return lhs
 endfu
 " >>>
-" Function: s:Do_user_automaps() <<<
+" Function: s:Do_shortcut_maps() <<<
 " Purpose: Process global list containing user-defined auto map presets.
-fu! s:Do_user_automaps()
+fu! s:Do_shortcut_maps()
+	" By default, builtin (default) shortcuts are not defined, but user can
+	" enable with global or buf-local option (with the latter taking
+	" precedence over the former).
+	let enable_default_shortcuts = get(b:, 'txtfmtEnableDefaultShortcuts', get(g:, 'txtfmtEnableDefaultShortcuts', 0))
 	" Loop over static defaults (if applicable), global, then buf-local instance of txtfmtShortcuts.
 	" Rationale: Globals override defaults, buf-locals override globals.
-	" FIXME: Integrate this option...
-	let b:txtfmt_cfg_create_default_shortcuts = 1
-	for scope in b:txtfmt_cfg_create_default_shortcuts ? [s:, g:, b:] : [g:, b:]
+	for scope in enable_default_shortcuts ? [s:, g:, b:] : [g:, b:]
 		" Maintain existence hash used to detect (presumably unintentional) overrides.
 		let maps = {}
 		let scope_prefix = scope is s: ? 's' : scope is g: ? 'g' : scope is b: ? 'b' : ''
-		let i = 0
+		" Increment at start of loop to facilitate use of 'continue'.
+		let i = -1
 		for s in get(scope, 'txtfmtShortcuts', [])
+			let i += 1
 			" Validate and canonicalize the shortcut definition.
 			let m = s:Parse_user_shortcut(s)
 			if m->has_key('err')
+				echohl WarningMsg
 				echoerr 'Ignoring malformed user-defined shortcut specified by '
-					\.(scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
-					\."\rError:" . m.err
-					\."\r:help txtfmt-auto-map-shortcuts"
-				return
+				echoerr "" . (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
+				echoerr "Error:" . m.err
+				echoerr ":help txtfmt-auto-map-shortcuts"
+				echohl None
 			elseif empty(m)
 				" TODO: Should we respect the warning/error options used for
 				" legacy user-maps here?
 				echomsg 'Skipping empty user-defined shortcut at list index ' . i
 			else
 				" Parse the spec for validation purposes.
-				" TODO: Consider whether there are advantages of storing the
-				" parsed representation in buf or script-local data structure,
-				" passing only a key to the map function at map execution time.
-				let pspecs = s:Parse_fmt_clr_transformer(m.rhs)
-				if empty(pspecs)
-					" TODO: Don't repeat all this: use some sort of template.
-					echoerr 'Ignoring the following user-defined shortcut:'
-					echoerr (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
-					echoerr "Reason: Invalid highlighting spec: " . m.rhs
-					echoerr ":help txtfmt-auto-map-shortcuts"
-				endif
+				try
+					let pspecs = s:Parse_fmt_clr_transformer(m.rhs)
+				catch
+					" TODO: Consider creating a warning function...
+					echohl WarningMsg
+					echomsg 'Ignoring the following user-defined shortcut:'
+					echomsg (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
+					echomsg "Reason: Highlighting spec `" . m.rhs . "' is invalid: " . string(v:exception)
+					echomsg ":help txtfmt-auto-map-shortcuts"
+					echohl None
+					continue
+				endtry
 				" Create a string representing the spec suitable for wrapping
 				" within '...' in function call: basically, the original string
 				" with any single quotes (shouldn't really have any) doubled.
@@ -6241,26 +6238,28 @@ fu! s:Do_user_automaps()
 				" Define maps in appropriate mode(s).
 				for [modes, lhs] in items(m.lhs)
 					if scope is s:
-						" Canonicalize lhs and perform any requested map leader translations.
-						let lhs = s:Translate_shortcut_leader(lhs)
+						" Canonicalize lhs and perform any requested map leader remap.
+						let lhs = s:Remap_shortcut_leader(lhs)
 					endif
 					for mode in modes->split('\zs')
 						let map_mode = mode
 						if mode =~ '[vxs]'
 							let rhs = ":<C-U>call <SID>Highlight_visual('" . escaped_rhs . "')<cr>"
 						else " mode == 'o' (creates operator map)
-							let map_mode = 'n' " define mode used in the map command
+							" Terminology: Mode char of 'o' denotes a Txtfmt
+							" operator, which is implemented as a Vim normal
+							" mode map: hence, the distinction between mode and
+							" map_mode here.
+							let map_mode = 'n'
 							if has('lambda')
 								let rhs = ':set opfunc={mode\ ->\ <SID>Highlight_operator(mode,\ '''
 											\ . escape(escaped_rhs, ' \') . "')}<cr>g@"
 							else
 								" User is using very old (pre-8) version of Vim.
-								" No lambdas, so pass the spec to wrapper via buf-local var.
+								" No lambdas, so pass the spec to wrapper via script-local var.
 								" Note: This is obviously not thread-safe, but
 								" user maps are inherently single-threaded...
-								" TODO: Consider using script-local var in lieu
-								" of buf-local.
-								let rhs = ":let b:txtfmt_active_shortcut_spec = '" . escaped_rhs . "'"
+								let rhs = ":let s:txtfmt_active_shortcut_spec = '" . escaped_rhs . "'"
 									\."\<c-v>|set opfunc=<SID>Highlight_operator_wrapper<cr>g@"
 							endif
 						endif
@@ -6275,11 +6274,10 @@ fu! s:Do_user_automaps()
 						endif
 						let maps[k] = rhs
 						" Create the map (and corresponding undo).
-						call s:Def_shortcut(map_mode, lhs, rhs)
+						call s:Def_map1(map_mode, lhs, rhs)
 					endfor
 				endfor
 			endif
-			let i += 1
 		endfor
 	endfor
 endfu
@@ -6482,7 +6480,7 @@ fu! s:Do_config()
 	call s:Do_user_maps()
 	" >>>
 	" Process any user-defined shortcut (preset) auto maps <<<
-	call s:Do_user_automaps()
+	call s:Do_shortcut_maps()
 	" >>>
 endfu
 " >>>
@@ -6686,162 +6684,162 @@ endif
 " AlignCtrl g ^call
 " '<,'>Align
 " >>>
-call s:Def_map('n', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'b', 0)<CR>")
-call s:Def_map('n', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'f', 0)<CR>")
-call s:Def_map('n', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'b', 0)<CR>")
-call s:Def_map('n', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'f', 0)<CR>")
-call s:Def_map('n', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'b', 0)<CR>")
-call s:Def_map('n', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'f', 0)<CR>")
-call s:Def_map('n', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'b', 0)<CR>")
-call s:Def_map('n', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'f', 0)<CR>")
-call s:Def_map('n', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'b', 0)<CR>")
-call s:Def_map('n', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'f', 0)<CR>")
-call s:Def_map('n', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'b', 0)<CR>")
-call s:Def_map('n', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'f', 0)<CR>")
-call s:Def_map('n', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'b', 0)<CR>")
-call s:Def_map('n', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'f', 0)<CR>")
-call s:Def_map('n', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'b', 0)<CR>")
-call s:Def_map('n', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'f', 0)<CR>")
-call s:Def_map('n', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'b', 0)<CR>")
-call s:Def_map('n', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'f', 0)<CR>")
-call s:Def_map('n', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'b', 0)<CR>")
-call s:Def_map('n', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'f', 0)<CR>")
-call s:Def_map('n', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'b', 0)<CR>")
-call s:Def_map('n', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'f', 0)<CR>")
-call s:Def_map('n', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'b', 0)<CR>")
-call s:Def_map('n', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'f', 0)<CR>")
+call s:Def_map2('n', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'b', 0)<CR>")
+call s:Def_map2('n', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'f', 0)<CR>")
+call s:Def_map2('n', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'b', 0)<CR>")
+call s:Def_map2('n', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'f', 0)<CR>")
+call s:Def_map2('n', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'b', 0)<CR>")
+call s:Def_map2('n', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'f', 0)<CR>")
+call s:Def_map2('n', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'b', 0)<CR>")
+call s:Def_map2('n', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'f', 0)<CR>")
+call s:Def_map2('n', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'b', 0)<CR>")
+call s:Def_map2('n', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'f', 0)<CR>")
+call s:Def_map2('n', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'b', 0)<CR>")
+call s:Def_map2('n', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'f', 0)<CR>")
+call s:Def_map2('n', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'b', 0)<CR>")
+call s:Def_map2('n', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'f', 0)<CR>")
+call s:Def_map2('n', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'b', 0)<CR>")
+call s:Def_map2('n', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'f', 0)<CR>")
+call s:Def_map2('n', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'b', 0)<CR>")
+call s:Def_map2('n', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'f', 0)<CR>")
+call s:Def_map2('n', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'b', 0)<CR>")
+call s:Def_map2('n', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'f', 0)<CR>")
+call s:Def_map2('n', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'b', 0)<CR>")
+call s:Def_map2('n', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'f', 0)<CR>")
+call s:Def_map2('n', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'b', 0)<CR>")
+call s:Def_map2('n', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'f', 0)<CR>")
 " >>>
 " visual mode jump 'to' token mappings <<<
-call s:Def_map('v', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'b', 0)<CR>")
-call s:Def_map('v', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'f', 0)<CR>")
-call s:Def_map('v', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'b', 0)<CR>")
-call s:Def_map('v', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'f', 0)<CR>")
-call s:Def_map('v', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'b', 0)<CR>")
-call s:Def_map('v', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'f', 0)<CR>")
-call s:Def_map('v', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'b', 0)<CR>")
-call s:Def_map('v', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'f', 0)<CR>")
-call s:Def_map('v', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'b', 0)<CR>")
-call s:Def_map('v', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'f', 0)<CR>")
-call s:Def_map('v', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'b', 0)<CR>")
-call s:Def_map('v', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'f', 0)<CR>")
-call s:Def_map('v', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'b', 0)<CR>")
-call s:Def_map('v', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'f', 0)<CR>")
-call s:Def_map('v', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'b', 0)<CR>")
-call s:Def_map('v', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'f', 0)<CR>")
-call s:Def_map('v', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'b', 0)<CR>")
-call s:Def_map('v', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'f', 0)<CR>")
-call s:Def_map('v', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'b', 0)<CR>")
-call s:Def_map('v', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'f', 0)<CR>")
-call s:Def_map('v', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'b', 0)<CR>")
-call s:Def_map('v', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'f', 0)<CR>")
-call s:Def_map('v', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'b', 0)<CR>")
-call s:Def_map('v', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'f', 0)<CR>")
+call s:Def_map2('v', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'b', 0)<CR>")
+call s:Def_map2('v', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'f', 0)<CR>")
+call s:Def_map2('v', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'b', 0)<CR>")
+call s:Def_map2('v', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'f', 0)<CR>")
+call s:Def_map2('v', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'b', 0)<CR>")
+call s:Def_map2('v', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'f', 0)<CR>")
+call s:Def_map2('v', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'b', 0)<CR>")
+call s:Def_map2('v', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'f', 0)<CR>")
+call s:Def_map2('v', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'b', 0)<CR>")
+call s:Def_map2('v', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'f', 0)<CR>")
+call s:Def_map2('v', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'b', 0)<CR>")
+call s:Def_map2('v', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'f', 0)<CR>")
+call s:Def_map2('v', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'b', 0)<CR>")
+call s:Def_map2('v', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'f', 0)<CR>")
+call s:Def_map2('v', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'b', 0)<CR>")
+call s:Def_map2('v', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'f', 0)<CR>")
+call s:Def_map2('v', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'b', 0)<CR>")
+call s:Def_map2('v', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'f', 0)<CR>")
+call s:Def_map2('v', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'b', 0)<CR>")
+call s:Def_map2('v', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'f', 0)<CR>")
+call s:Def_map2('v', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'b', 0)<CR>")
+call s:Def_map2('v', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'f', 0)<CR>")
+call s:Def_map2('v', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'b', 0)<CR>")
+call s:Def_map2('v', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'f', 0)<CR>")
 " >>>
 " operator-pending mode jump 'to' token mappings <<<
 " Note: 'v' can be used with these to toggle inclusive/exclusive
-call s:Def_map('o', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'b', 0)<CR>")
-call s:Def_map('o', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'f', 0)<CR>")
-call s:Def_map('o', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'b', 0)<CR>")
-call s:Def_map('o', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'f', 0)<CR>")
-call s:Def_map('o', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'b', 0)<CR>")
-call s:Def_map('o', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'f', 0)<CR>")
-call s:Def_map('o', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'b', 0)<CR>")
-call s:Def_map('o', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'f', 0)<CR>")
-call s:Def_map('o', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'b', 0)<CR>")
-call s:Def_map('o', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'f', 0)<CR>")
-call s:Def_map('o', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'b', 0)<CR>")
-call s:Def_map('o', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 0)<CR>")
-call s:Def_map('o', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'b', 0)<CR>")
-call s:Def_map('o', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'f', 0)<CR>")
-call s:Def_map('o', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 0)<CR>")
-call s:Def_map('o', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 0)<CR>")
-call s:Def_map('o', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 0)<CR>")
-call s:Def_map('o', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 0)<CR>")
-call s:Def_map('o', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 0)<CR>")
-call s:Def_map('o', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 0)<CR>")
-call s:Def_map('o', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'b', 0)<CR>")
-call s:Def_map('o', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'f', 0)<CR>")
-call s:Def_map('o', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 0)<CR>")
-call s:Def_map('o', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 0)<CR>")
+call s:Def_map2('o', '[bf', '<Plug>TxtfmtBckToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'b', 0)<CR>")
+call s:Def_map2('o', ']bf', '<Plug>TxtfmtFwdToFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'f', 0)<CR>")
+call s:Def_map2('o', '[bc', '<Plug>TxtfmtBckToClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'b', 0)<CR>")
+call s:Def_map2('o', ']bc', '<Plug>TxtfmtFwdToClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'f', 0)<CR>")
+call s:Def_map2('o', '[bk', '<Plug>TxtfmtBckToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'b', 0)<CR>")
+call s:Def_map2('o', ']bk', '<Plug>TxtfmtFwdToBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'f', 0)<CR>")
+call s:Def_map2('o', '[ba', '<Plug>TxtfmtBckToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'b', 0)<CR>")
+call s:Def_map2('o', ']ba', '<Plug>TxtfmtFwdToAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'f', 0)<CR>")
+call s:Def_map2('o', '[f' , '<Plug>TxtfmtBckToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'b', 0)<CR>")
+call s:Def_map2('o', ']f' , '<Plug>TxtfmtFwdToFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'f', 0)<CR>")
+call s:Def_map2('o', '[c' , '<Plug>TxtfmtBckToClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'b', 0)<CR>")
+call s:Def_map2('o', ']c' , '<Plug>TxtfmtFwdToClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 0)<CR>")
+call s:Def_map2('o', '[k' , '<Plug>TxtfmtBckToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'b', 0)<CR>")
+call s:Def_map2('o', ']k' , '<Plug>TxtfmtFwdToBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'f', 0)<CR>")
+call s:Def_map2('o', '[a' , '<Plug>TxtfmtBckToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 0)<CR>")
+call s:Def_map2('o', ']a' , '<Plug>TxtfmtFwdToAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 0)<CR>")
+call s:Def_map2('o', '[ef', '<Plug>TxtfmtBckToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 0)<CR>")
+call s:Def_map2('o', ']ef', '<Plug>TxtfmtFwdToFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 0)<CR>")
+call s:Def_map2('o', '[ec', '<Plug>TxtfmtBckToClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 0)<CR>")
+call s:Def_map2('o', ']ec', '<Plug>TxtfmtFwdToClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 0)<CR>")
+call s:Def_map2('o', '[ek', '<Plug>TxtfmtBckToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'b', 0)<CR>")
+call s:Def_map2('o', ']ek', '<Plug>TxtfmtFwdToBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'f', 0)<CR>")
+call s:Def_map2('o', '[ea', '<Plug>TxtfmtBckToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 0)<CR>")
+call s:Def_map2('o', ']ea', '<Plug>TxtfmtFwdToAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 0)<CR>")
 " >>>
 " normal mode jump 'till' token mappings <<<
-call s:Def_map('n', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'b', 1)<CR>")
-call s:Def_map('n', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'f', 1)<CR>")
-call s:Def_map('n', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'b', 1)<CR>")
-call s:Def_map('n', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'f', 1)<CR>")
-call s:Def_map('n', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'b', 1)<CR>")
-call s:Def_map('n', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'f', 1)<CR>")
-call s:Def_map('n', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'b', 1)<CR>")
-call s:Def_map('n', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'f', 1)<CR>")
-call s:Def_map('n', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'b', 1)<CR>")
-call s:Def_map('n', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'f', 1)<CR>")
-call s:Def_map('n', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'b', 1)<CR>")
-call s:Def_map('n', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'f', 1)<CR>")
-call s:Def_map('n', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'b', 1)<CR>")
-call s:Def_map('n', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'f', 1)<CR>")
-call s:Def_map('n', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'b', 1)<CR>")
-call s:Def_map('n', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'f', 1)<CR>")
-call s:Def_map('n', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'b', 1)<CR>")
-call s:Def_map('n', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'f', 1)<CR>")
-call s:Def_map('n', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'b', 1)<CR>")
-call s:Def_map('n', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'f', 1)<CR>")
-call s:Def_map('n', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'b', 1)<CR>")
-call s:Def_map('n', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'f', 1)<CR>")
-call s:Def_map('n', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'b', 1)<CR>")
-call s:Def_map('n', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'f', 1)<CR>")
+call s:Def_map2('n', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'b', 1)<CR>")
+call s:Def_map2('n', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bf', 'f', 1)<CR>")
+call s:Def_map2('n', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'b', 1)<CR>")
+call s:Def_map2('n', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bc', 'f', 1)<CR>")
+call s:Def_map2('n', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'b', 1)<CR>")
+call s:Def_map2('n', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'bk', 'f', 1)<CR>")
+call s:Def_map2('n', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'b', 1)<CR>")
+call s:Def_map2('n', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('n', 'ba', 'f', 1)<CR>")
+call s:Def_map2('n', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'b', 1)<CR>")
+call s:Def_map2('n', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'f' , 'f', 1)<CR>")
+call s:Def_map2('n', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'b', 1)<CR>")
+call s:Def_map2('n', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'c' , 'f', 1)<CR>")
+call s:Def_map2('n', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'b', 1)<CR>")
+call s:Def_map2('n', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'k' , 'f', 1)<CR>")
+call s:Def_map2('n', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'b', 1)<CR>")
+call s:Def_map2('n', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('n', 'a' , 'f', 1)<CR>")
+call s:Def_map2('n', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'b', 1)<CR>")
+call s:Def_map2('n', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ef', 'f', 1)<CR>")
+call s:Def_map2('n', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'b', 1)<CR>")
+call s:Def_map2('n', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ec', 'f', 1)<CR>")
+call s:Def_map2('n', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'b', 1)<CR>")
+call s:Def_map2('n', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ek', 'f', 1)<CR>")
+call s:Def_map2('n', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'b', 1)<CR>")
+call s:Def_map2('n', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('n', 'ea', 'f', 1)<CR>")
 " >>>
 " visual mode jump 'till' token mappings <<<
-call s:Def_map('v', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'b', 1)<CR>")
-call s:Def_map('v', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'f', 1)<CR>")
-call s:Def_map('v', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'b', 1)<CR>")
-call s:Def_map('v', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'f', 1)<CR>")
-call s:Def_map('v', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'b', 1)<CR>")
-call s:Def_map('v', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'f', 1)<CR>")
-call s:Def_map('v', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'b', 1)<CR>")
-call s:Def_map('v', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'f', 1)<CR>")
-call s:Def_map('v', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'b', 1)<CR>")
-call s:Def_map('v', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'f', 1)<CR>")
-call s:Def_map('v', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'b', 1)<CR>")
-call s:Def_map('v', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'f', 1)<CR>")
-call s:Def_map('v', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'b', 1)<CR>")
-call s:Def_map('v', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'f', 1)<CR>")
-call s:Def_map('v', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'b', 1)<CR>")
-call s:Def_map('v', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'f', 1)<CR>")
-call s:Def_map('v', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'b', 1)<CR>")
-call s:Def_map('v', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'f', 1)<CR>")
-call s:Def_map('v', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'b', 1)<CR>")
-call s:Def_map('v', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'f', 1)<CR>")
-call s:Def_map('v', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'b', 1)<CR>")
-call s:Def_map('v', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'f', 1)<CR>")
-call s:Def_map('v', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'b', 1)<CR>")
-call s:Def_map('v', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'f', 1)<CR>")
+call s:Def_map2('v', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'b', 1)<CR>")
+call s:Def_map2('v', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bf', 'f', 1)<CR>")
+call s:Def_map2('v', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'b', 1)<CR>")
+call s:Def_map2('v', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bc', 'f', 1)<CR>")
+call s:Def_map2('v', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'b', 1)<CR>")
+call s:Def_map2('v', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'bk', 'f', 1)<CR>")
+call s:Def_map2('v', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'b', 1)<CR>")
+call s:Def_map2('v', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('v', 'ba', 'f', 1)<CR>")
+call s:Def_map2('v', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'b', 1)<CR>")
+call s:Def_map2('v', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'f' , 'f', 1)<CR>")
+call s:Def_map2('v', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'b', 1)<CR>")
+call s:Def_map2('v', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'c' , 'f', 1)<CR>")
+call s:Def_map2('v', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'b', 1)<CR>")
+call s:Def_map2('v', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'k' , 'f', 1)<CR>")
+call s:Def_map2('v', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'b', 1)<CR>")
+call s:Def_map2('v', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('v', 'a' , 'f', 1)<CR>")
+call s:Def_map2('v', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'b', 1)<CR>")
+call s:Def_map2('v', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ef', 'f', 1)<CR>")
+call s:Def_map2('v', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'b', 1)<CR>")
+call s:Def_map2('v', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ec', 'f', 1)<CR>")
+call s:Def_map2('v', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'b', 1)<CR>")
+call s:Def_map2('v', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ek', 'f', 1)<CR>")
+call s:Def_map2('v', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'b', 1)<CR>")
+call s:Def_map2('v', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('v', 'ea', 'f', 1)<CR>")
 " >>>
 " operator-pending mode jump 'till' token mappings <<<
 " Note: 'v' can be used with these to toggle inclusive/exclusive
-call s:Def_map('o', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'b', 1)<CR>")
-call s:Def_map('o', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'f', 1)<CR>")
-call s:Def_map('o', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'b', 1)<CR>")
-call s:Def_map('o', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'f', 1)<CR>")
-call s:Def_map('o', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'b', 1)<CR>")
-call s:Def_map('o', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'f', 1)<CR>")
-call s:Def_map('o', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'b', 1)<CR>")
-call s:Def_map('o', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'f', 1)<CR>")
-call s:Def_map('o', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'b', 1)<CR>")
-call s:Def_map('o', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'f', 1)<CR>")
-call s:Def_map('o', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'b', 1)<CR>")
-call s:Def_map('o', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 1)<CR>")
-call s:Def_map('o', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'b', 1)<CR>")
-call s:Def_map('o', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'f', 1)<CR>")
-call s:Def_map('o', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 1)<CR>")
-call s:Def_map('o', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 1)<CR>")
-call s:Def_map('o', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 1)<CR>")
-call s:Def_map('o', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 1)<CR>")
-call s:Def_map('o', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 1)<CR>")
-call s:Def_map('o', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 1)<CR>")
-call s:Def_map('o', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'b', 1)<CR>")
-call s:Def_map('o', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'f', 1)<CR>")
-call s:Def_map('o', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 1)<CR>")
-call s:Def_map('o', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 1)<CR>")
+call s:Def_map2('o', '[tbf', '<Plug>TxtfmtBckTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'b', 1)<CR>")
+call s:Def_map2('o', ']tbf', '<Plug>TxtfmtFwdTillFmtBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bf', 'f', 1)<CR>")
+call s:Def_map2('o', '[tbc', '<Plug>TxtfmtBckTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'b', 1)<CR>")
+call s:Def_map2('o', ']tbc', '<Plug>TxtfmtFwdTillClrBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bc', 'f', 1)<CR>")
+call s:Def_map2('o', '[tbk', '<Plug>TxtfmtBckTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'b', 1)<CR>")
+call s:Def_map2('o', ']tbk', '<Plug>TxtfmtFwdTillBgcBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'bk', 'f', 1)<CR>")
+call s:Def_map2('o', '[tba', '<Plug>TxtfmtBckTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'b', 1)<CR>")
+call s:Def_map2('o', ']tba', '<Plug>TxtfmtFwdTillAnyBegTok', ":<C-U>call <SID>Jump_to_tok('o', 'ba', 'f', 1)<CR>")
+call s:Def_map2('o', '[tf' , '<Plug>TxtfmtBckTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'b', 1)<CR>")
+call s:Def_map2('o', ']tf' , '<Plug>TxtfmtFwdTillFmtTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'f' , 'f', 1)<CR>")
+call s:Def_map2('o', '[tc' , '<Plug>TxtfmtBckTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'b', 1)<CR>")
+call s:Def_map2('o', ']tc' , '<Plug>TxtfmtFwdTillClrTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'c' , 'f', 1)<CR>")
+call s:Def_map2('o', '[tk' , '<Plug>TxtfmtBckTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'b', 1)<CR>")
+call s:Def_map2('o', ']tk' , '<Plug>TxtfmtFwdTillBgcTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'k' , 'f', 1)<CR>")
+call s:Def_map2('o', '[ta' , '<Plug>TxtfmtBckTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'b', 1)<CR>")
+call s:Def_map2('o', ']ta' , '<Plug>TxtfmtFwdTillAnyTok'   , ":<C-U>call <SID>Jump_to_tok('o', 'a' , 'f', 1)<CR>")
+call s:Def_map2('o', '[tef', '<Plug>TxtfmtBckTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'b', 1)<CR>")
+call s:Def_map2('o', ']tef', '<Plug>TxtfmtFwdTillFmtEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ef', 'f', 1)<CR>")
+call s:Def_map2('o', '[tec', '<Plug>TxtfmtBckTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'b', 1)<CR>")
+call s:Def_map2('o', ']tec', '<Plug>TxtfmtFwdTillClrEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ec', 'f', 1)<CR>")
+call s:Def_map2('o', '[tek', '<Plug>TxtfmtBckTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'b', 1)<CR>")
+call s:Def_map2('o', ']tek', '<Plug>TxtfmtFwdTillBgcEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ek', 'f', 1)<CR>")
+call s:Def_map2('o', '[tea', '<Plug>TxtfmtBckTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'b', 1)<CR>")
+call s:Def_map2('o', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jump_to_tok('o', 'ea', 'f', 1)<CR>")
 " >>>
 " normal mode insert token mappings <<<
 " These mappings may be used from normal mode to insert special tokens.
@@ -6851,51 +6849,51 @@ call s:Def_map('o', ']tea', '<Plug>TxtfmtFwdTillAnyEndTok', ":<C-U>call <SID>Jum
 " inserting the token, then hitting <Esc>.
 " TODO - This one is redundant to the \vi one - use the latter instead for
 " notational consistency?
-call s:Def_map('n', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_n',
+call s:Def_map2('n', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_n',
 			\":<C-U>call <SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
 " Start in normal / End in insert
-call s:Def_map('n', '<LocalLeader>i', '<Plug>TxtfmtInsertTok_i',
+call s:Def_map2('n', '<LocalLeader>i', '<Plug>TxtfmtInsertTok_i',
 			\":<C-U>call <SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>I', '<Plug>TxtfmtInsertTok_I',
+call s:Def_map2('n', '<LocalLeader>I', '<Plug>TxtfmtInsertTok_I',
 			\":<C-U>call <SID>Insert_tokstr('', 'I', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>a', '<Plug>TxtfmtInsertTok_a',
+call s:Def_map2('n', '<LocalLeader>a', '<Plug>TxtfmtInsertTok_a',
 			\":<C-U>call <SID>Insert_tokstr('', 'a', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>A', '<Plug>TxtfmtInsertTok_A',
+call s:Def_map2('n', '<LocalLeader>A', '<Plug>TxtfmtInsertTok_A',
 			\":<C-U>call <SID>Insert_tokstr('', 'A', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>o', '<Plug>TxtfmtInsertTok_o',
+call s:Def_map2('n', '<LocalLeader>o', '<Plug>TxtfmtInsertTok_o',
 			\":<C-U>call <SID>Insert_tokstr('', 'o', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>O', '<Plug>TxtfmtInsertTok_O',
+call s:Def_map2('n', '<LocalLeader>O', '<Plug>TxtfmtInsertTok_O',
 			\":<C-U>call <SID>Insert_tokstr('', 'O', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>s', '<Plug>TxtfmtInsertTok_s',
+call s:Def_map2('n', '<LocalLeader>s', '<Plug>TxtfmtInsertTok_s',
 			\":<C-U>call <SID>Insert_tokstr('', 's', 0, 0)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
 " Start in normal / End in normal
-call s:Def_map('n', '<LocalLeader>vi', '<Plug>TxtfmtInsertTok_vi',
+call s:Def_map2('n', '<LocalLeader>vi', '<Plug>TxtfmtInsertTok_vi',
 			\":<C-U>call <SID>Insert_tokstr('', 'i', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>vI', '<Plug>TxtfmtInsertTok_vI',
+call s:Def_map2('n', '<LocalLeader>vI', '<Plug>TxtfmtInsertTok_vI',
 			\":<C-U>call <SID>Insert_tokstr('', 'I', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>va', '<Plug>TxtfmtInsertTok_va',
+call s:Def_map2('n', '<LocalLeader>va', '<Plug>TxtfmtInsertTok_va',
 			\":<C-U>call <SID>Insert_tokstr('', 'a', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>vA', '<Plug>TxtfmtInsertTok_vA',
+call s:Def_map2('n', '<LocalLeader>vA', '<Plug>TxtfmtInsertTok_vA',
 			\":<C-U>call <SID>Insert_tokstr('', 'A', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>vo', '<Plug>TxtfmtInsertTok_vo',
+call s:Def_map2('n', '<LocalLeader>vo', '<Plug>TxtfmtInsertTok_vo',
 			\":<C-U>call <SID>Insert_tokstr('', 'o', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>vO', '<Plug>TxtfmtInsertTok_vO',
+call s:Def_map2('n', '<LocalLeader>vO', '<Plug>TxtfmtInsertTok_vO',
 			\":<C-U>call <SID>Insert_tokstr('', 'O', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
-call s:Def_map('n', '<LocalLeader>vs', '<Plug>TxtfmtInsertTok_vs',
+call s:Def_map2('n', '<LocalLeader>vs', '<Plug>TxtfmtInsertTok_vs',
 			\":<C-U>call <SID>Insert_tokstr('', 's', 0, 1)<CR>"
 			\.":call <SID>Adjust_cursor()<CR>")
 " >>>
@@ -6903,7 +6901,7 @@ call s:Def_map('n', '<LocalLeader>vs', '<Plug>TxtfmtInsertTok_vs',
 " NOTE: Default is to use something that wouldn't be typed as text for the
 " insert mode map. User may wish to remap this one to a Function key or
 " something else entirely. I find <C-\><C-\> very easy to type...
-call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
+call s:Def_map2('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 			\"<C-R>=<SID>Insert_tokstr('', 'i', 0, 0)<CR>"
 			\."<C-R>=<SID>Adjust_cursor()<CR>")
 " >>>
@@ -6923,15 +6921,15 @@ call s:Def_map('i', '<C-\><C-\>', '<Plug>TxtfmtInsertTok_i',
 " feedkeys().
 " visual mode mappings <<<
 " Note: The following will work for either visual or select mode
-call s:Def_map('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
+call s:Def_map2('v', '<LocalLeader>h', '<Plug>TxtfmtVmapHighlight',
 			\":<C-U>call <SID>Highlight_visual()<CR>")
-call s:Def_map('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
+call s:Def_map2('v', '<LocalLeader>d', '<Plug>TxtfmtVmapDelete',
 			\":<C-U>call <SID>Delete_visual()<CR>")
 " >>>
 " operator mappings <<<
-call s:Def_map('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
+call s:Def_map2('n', '<LocalLeader>h', '<Plug>TxtfmtOperatorHighlight',
 			\":set opfunc=<SID>Highlight_operator<CR>g@")
-call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
+call s:Def_map2('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 			\":set opfunc=<SID>Delete_operator<CR>g@")
 " >>>
 " >>>
@@ -6939,12 +6937,12 @@ call s:Def_map('n', '<LocalLeader>d', '<Plug>TxtfmtOperatorDelete',
 " Note: No special shift logic if leading indent is highlighted like text.
 if b:txtfmt_cfg_leadingindent != 'none'
 " normal mode shift mappings <<<
-call s:Def_map('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
+call s:Def_map2('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftLeft")'
 			\: '') . '<cr>')
-call s:Def_map('n', '>>', '<Plug>TxtfmtShiftRight',
+call s:Def_map2('n', '>>', '<Plug>TxtfmtShiftRight',
 			\":<C-U>call <SID>Lineshift('n', 0)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftRight")'
@@ -6952,12 +6950,12 @@ call s:Def_map('n', '>>', '<Plug>TxtfmtShiftRight',
 " >>>
 " visual mode shift mappings <<<
 " FIXME: Decide whether to define a separate Vmap-specific plug map.
-call s:Def_map('v', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
+call s:Def_map2('v', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":<C-U>call <SID>Lineshift('V', 1)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftLeft")'
 			\: '') . '<cr>')
-call s:Def_map('v', '>', '<Plug>TxtfmtOperatorShiftRight',
+call s:Def_map2('v', '>', '<Plug>TxtfmtOperatorShiftRight',
 			\":<C-U>call <SID>Lineshift('V', 0)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftRight")'
@@ -6965,18 +6963,18 @@ call s:Def_map('v', '>', '<Plug>TxtfmtOperatorShiftRight',
 " >>>
 " shift operator mappings <<<
 " TODO: Any way to make this work with vim-repeat's dot operator?
-call s:Def_map('n', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
+call s:Def_map2('n', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":set opfunc=<SID>Shift_left_operator<CR>g@")
-call s:Def_map('n', '>', '<Plug>TxtfmtOperatorShiftRight',
+call s:Def_map2('n', '>', '<Plug>TxtfmtOperatorShiftRight',
 			\":set opfunc=<SID>Shift_right_operator<CR>g@")
 " >>>
 " insert mode indent/dedent mappings <<<
-call s:Def_map('i', '<C-T>', '<Plug>TxtfmtIndent',
+call s:Def_map2('i', '<C-T>', '<Plug>TxtfmtIndent',
 			\"<Esc>:<C-U>call <SID>Indent(0)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtIndent)")'
 			\: '') . '<cr>')
-call s:Def_map('i', '<C-D>', '<Plug>TxtfmtDedent',
+call s:Def_map2('i', '<C-D>', '<Plug>TxtfmtDedent',
 			\"<Esc>:<C-U>call <SID>Indent(1)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtDedent)")'
@@ -6993,14 +6991,14 @@ call s:Def_map('i', '<C-D>', '<Plug>TxtfmtDedent',
 " Solution: Create normal mode maps that trigger the insert mode maps, and
 " install the former with repeat#set() after execution of the latter.
 if s:have_repeat
-	call s:Def_map('n', '', '<Plug>(TxtfmtIndent)', 'i<Plug>TxtfmtIndent<Esc>', 0)
-	call s:Def_map('n', '', '<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 0)
+	call s:Def_map2('n', '', '<Plug>(TxtfmtIndent)', 'i<Plug>TxtfmtIndent<Esc>', 0)
+	call s:Def_map2('n', '', '<Plug>(TxtfmtDedent)', 'i<Plug>TxtfmtDedent<Esc>', 0)
 endif
 " >>>
 endif
 " >>>
 " normal mode get token info mapping <<<
-call s:Def_map('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
+call s:Def_map2('n', '<LocalLeader>ga', '<Plug>TxtfmtGetTokInfo',
 			\":<C-U>echo <SID>GetTokInfo()<CR>")
 " >>>
 " NOTES <<<
