@@ -4,7 +4,7 @@
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
 " Last Change: 2023 Apr 19
-" Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
+" Maintainer:	Brett Pershing Stahlman <brettstahlman@gmail.net>
 " License:	This file is placed in the public domain.
 
 " Script-level constants <<<
@@ -28,20 +28,23 @@ let s:SYNC_DIST_BYTES = 2500
 let s:cfg_color_name_compat = 0
 
 " Define the default shortcut maps.
+" Note: Would prefer '\', ',' and '_' as leaders, but \i conflicts with a manual
+" map.
+" TODO: Also considered use of Meta keys, but I think this may be frowned on in Vim...
 let s:txtfmtShortcuts = [
 			\ '-f f-',
 			\ '-c c-',
 			\ '-k k-',
 			\ '-- f- c- k-',
-			\ '\b fb',
-			\ '\i fi',
-			\ '\u fu',
-			\ ',r cr',
-			\ ',g cg',
-			\ ',b cb',
-			\ '_r kr',
-			\ '_g kg',
-			\ '_b kb',
+			\ ',b fb',
+			\ ',i fi',
+			\ ',u fu',
+			\ '_r cr',
+			\ '_g cg',
+			\ '_b cb',
+			\ '_R kr',
+			\ '_G kg',
+			\ '_B kb',
 \]
 " >>>
 " Function: s:Add_undo() <<<
@@ -133,7 +136,28 @@ endif
 " said he would fix this in distributed version, but everyone will still have
 " the old for awhile...
 " >>>
-" Script-local functions <<<
+" Function: s:Msg() <<<
+" Echo the messages provided as args to the user (and the message history), each
+" on a separate line, with highlighting appropriate to the message level.
+" Note: echomsg doesn't support embedded newlines; hence, the need for a list.
+fu! s:Msg(level, ...)
+	if a:level == 'error'
+		echohl ErrorMsg
+	elseif a:level == 'warning'
+		echohl WarningMsg
+	elseif a:level == 'info'
+	else
+		echohl None
+	endif
+	try
+		for line in a:000
+			echomsg line
+		endfor
+	finally
+		echohl None
+	endtry
+endfu
+" >>>
 " Function: s:SID() <<<
 " Purpose: Returns the SID number of this script. (help <SNR>)
 " Note: This function is taken directly from the Vim help.
@@ -979,7 +1003,6 @@ fu! s:Retab(l1, l2, bang, ts)
 	call s:Restore_toks_after_shift(toks)
 endfu
 
-" >>>
 " >>>
 " Function: s:Is_cursor_on_char() <<<
 " TODO: Perhaps move elsewhere...
@@ -4879,6 +4902,8 @@ endfu
 "        v=visual, i=insert, o=operator-pending, etc...)
 " add  - flag indicating whether the conflict indicated by lhs, rhs and mode
 "        should be added to the data structures searched by this function
+" TODO: This mechanism should be rewritten to use modern VimL data structures.
+" Also, consider whether it would make sense to use buf-local structures for <buffer> maps.
 fu! s:Mapwarn_check(lhs, rhs, mode, add)
 	let found = 0
 	let i = 0
@@ -6066,7 +6091,7 @@ endfu
 " Return true iff a map from 'lhs' in 'mode' should be created, displaying
 " warnings/errors for map conficts/ambiguities in accordance with txtfmtMapwarn
 " option setting.
-fu! s:Check_map_lhs(lhs, mode)
+fu! s:Check_map_lhs(mode, lhs)
 	" Make sure there's no conflict or ambiguity between an existing map
 	" and the default one we plan to add...
 	let oldarg = maparg(a:lhs, a:mode)
@@ -6114,10 +6139,10 @@ fu! s:Check_map_lhs(lhs, mode)
 				let l:warnstr = 'Level 1 map '
 					\.(l:problem == 'a' ? 'ambiguity:' : 'conflict: ')
 					\.a:lhs.' already mapped to '.l:old_rhs
-				if l:msg_or_err == 'm'
-					echomsg l:warnstr
+				if msg_or_err == 'm'
+					call s:Msg('warning', l:warnstr)
 				else
-					echoerr l:warnstr
+					call s:Msg('error', l:warnstr)
 				endif
 			endif
 		endif
@@ -6187,7 +6212,13 @@ fu! s:Remap_shortcut_leader(lhs)
 endfu
 " >>>
 " Function: s:Do_shortcut_maps() <<<
-" Purpose: Process global list containing user-defined auto map presets.
+" Purpose: Create any auto map shortcuts defined in script-local (defaults),
+" global and buf-local lists.
+" Logic: Maps are defined in the following order: script-local, global,
+" buf-local, with later definitions overriding earlier ones (possibly with
+" warnings to user, as determined by the txtfmtMapwarn option). The script-local
+" default maps are defined if and only if the txtfmtEnableDefaultShortcuts
+" option is set.
 fu! s:Do_shortcut_maps()
 	" By default, builtin (default) shortcuts are not defined, but user can
 	" enable with global or buf-local option (with the latter taking
@@ -6206,28 +6237,26 @@ fu! s:Do_shortcut_maps()
 			" Validate and canonicalize the shortcut definition.
 			let m = s:Parse_user_shortcut(s)
 			if m->has_key('err')
-				echohl WarningMsg
-				echoerr 'Ignoring malformed user-defined shortcut specified by '
-				echoerr "" . (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
-				echoerr "Error:" . m.err
-				echoerr ":help txtfmt-auto-map-shortcuts"
-				echohl None
+				call s:Msg('warning'
+					\, 'Ignoring malformed user-defined shortcut specified by '
+					\, (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
+					\, "Error:" . m.err
+					\, ":help txtfmt-auto-map-shortcuts")
 			elseif empty(m)
 				" TODO: Should we respect the warning/error options used for
 				" legacy user-maps here?
-				echomsg 'Skipping empty user-defined shortcut at list index ' . i
+				call s:Msg('warning', 'Skipping empty user-defined shortcut at list index ' . i)
 			else
 				" Parse the spec for validation purposes.
 				try
 					let pspecs = s:Parse_fmt_clr_transformer(m.rhs)
 				catch
 					" TODO: Consider creating a warning function...
-					echohl WarningMsg
-					echomsg 'Ignoring the following user-defined shortcut:'
-					echomsg (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
-					echomsg "Reason: Highlighting spec `" . m.rhs . "' is invalid: " . string(v:exception)
-					echomsg ":help txtfmt-auto-map-shortcuts"
-					echohl None
+					call s:Msg('warning'
+						\, 'Ignoring the following user-defined shortcut:'
+						\, (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
+						\, "Reason: Highlighting spec `" . m.rhs . "' is invalid: " . string(v:exception)
+						\, ":help txtfmt-auto-map-shortcuts")
 					continue
 				endtry
 				" Create a string representing the spec suitable for wrapping
@@ -6244,7 +6273,7 @@ fu! s:Do_shortcut_maps()
 					for mode in modes->split('\zs')
 						let map_mode = mode
 						if mode =~ '[vxs]'
-							let rhs = ":<C-U>call <SID>Highlight_visual('" . escaped_rhs . "')<cr>"
+							let rhs = ":<C-U>call <SID>Highlight_visual('" . escaped_rhs . "')<CR>"
 						else " mode == 'o' (creates operator map)
 							" Terminology: Mode char of 'o' denotes a Txtfmt
 							" operator, which is implemented as a Vim normal
@@ -6253,14 +6282,14 @@ fu! s:Do_shortcut_maps()
 							let map_mode = 'n'
 							if has('lambda')
 								let rhs = ':set opfunc={mode\ ->\ <SID>Highlight_operator(mode,\ '''
-											\ . escape(escaped_rhs, ' \') . "')}<cr>g@"
+											\ . escape(escaped_rhs, ' \') . "')}<CR>g@"
 							else
 								" User is using very old (pre-8) version of Vim.
 								" No lambdas, so pass the spec to wrapper via script-local var.
 								" Note: This is obviously not thread-safe, but
 								" user maps are inherently single-threaded...
 								let rhs = ":let s:txtfmt_active_shortcut_spec = '" . escaped_rhs . "'"
-									\."\<c-v>|set opfunc=<SID>Highlight_operator_wrapper<cr>g@"
+									\."\<c-v>|set opfunc=<SID>Highlight_operator_wrapper<CR>g@"
 							endif
 						endif
 						let k = scope_prefix . ':' . mode . ':' . lhs
@@ -6941,12 +6970,12 @@ call s:Def_map2('n', '<lt><lt>', '<Plug>TxtfmtShiftLeft',
 			\":<C-U>call <SID>Lineshift('n', 1)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftLeft")'
-			\: '') . '<cr>')
+			\: '') . '<CR>')
 call s:Def_map2('n', '>>', '<Plug>TxtfmtShiftRight',
 			\":<C-U>call <SID>Lineshift('n', 0)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtShiftRight")'
-			\: '') . '<cr>')
+			\: '') . '<CR>')
 " >>>
 " visual mode shift mappings <<<
 " FIXME: Decide whether to define a separate Vmap-specific plug map.
@@ -6954,12 +6983,12 @@ call s:Def_map2('v', '<lt>', '<Plug>TxtfmtOperatorShiftLeft',
 			\":<C-U>call <SID>Lineshift('V', 1)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftLeft")'
-			\: '') . '<cr>')
+			\: '') . '<CR>')
 call s:Def_map2('v', '>', '<Plug>TxtfmtOperatorShiftRight',
 			\":<C-U>call <SID>Lineshift('V', 0)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Plug>TxtfmtOperatorShiftRight")'
-			\: '') . '<cr>')
+			\: '') . '<CR>')
 " >>>
 " shift operator mappings <<<
 " TODO: Any way to make this work with vim-repeat's dot operator?
@@ -6973,12 +7002,12 @@ call s:Def_map2('i', '<C-T>', '<Plug>TxtfmtIndent',
 			\"<Esc>:<C-U>call <SID>Indent(0)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtIndent)")'
-			\: '') . '<cr>')
+			\: '') . '<CR>')
 call s:Def_map2('i', '<C-D>', '<Plug>TxtfmtDedent',
 			\"<Esc>:<C-U>call <SID>Indent(1)"
 			\.(s:have_repeat
 			\? '<Bar>silent! call repeat#set("\<lt>Esc>\<lt>Plug>(TxtfmtDedent)")'
-			\: '') . '<cr>')
+			\: '') . '<CR>')
 
 " Kludge to allow vim-repeat to work with insert-mode <C-T> and <C-D>.
 " Background: Builtin <C-T> and <C-D> work with builtin `.', so our overrides

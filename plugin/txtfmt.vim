@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2018 Nov 23
-" Maintainer:	Brett Pershing Stahlman <brettstahlman@comcast.net>
+" Last Change: 2023 Apr 20
+" Maintainer:	Brett Pershing Stahlman <brettstahlman@gmail.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "4.1a"
+let g:Txtfmt_Version = "4.3"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()

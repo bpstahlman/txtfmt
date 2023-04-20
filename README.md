@@ -266,20 +266,20 @@ If you set `g:txtfmtEnableDefaultShortcuts` (or its buf-local counterpart) to 1,
 
 
 ```vim
-let s:txtfmtShortcuts = [
-            \ '-f f-',
-            \ '-c c-',
-            \ '-k k-',
-            \ '-- f- c- k-',
-            \ '\b fb',
-            \ '\i fi',
-            \ '\u fu',
-            \ ',r cr',
-            \ ',g cg',
-            \ ',b cb',
-            \ '_r kr',
-            \ '_g kg',
-            \ '_b kb',
+let g:txtfmtShortcuts = [
+			\ '-f f-',
+			\ '-c c-',
+			\ '-k k-',
+			\ '-- f- c- k-',
+			\ ',b fb',
+			\ ',i fi',
+			\ ',u fu',
+			\ '_r cr',
+			\ '_g cg',
+			\ '_b cb',
+			\ '_R kr',
+			\ '_G kg',
+			\ '_B kb',
 \]
 ```
 
@@ -287,7 +287,7 @@ let s:txtfmtShortcuts = [
 
 
 
-**Note:** If you wish to use the default maps, but with different map leaders, you can use global or buf-local Dictionary option `txtfmtDefaultShortcutLeaders{}` to change the leading portion of the default maps. The keys of `txtfmtDefaultShortcutLeaders{}` are used as Vim "magic" regular expressions anchored to the start of the map lhs; the corresponding values are used as replacement strings. Swapping the leaders used by the default foreground and background color maps is as simple as this:
+**Note:** If you wish to use the default maps, but with different map leaders, you can use global or buf-local Dictionary option `txtfmtDefaultShortcutLeaders{}` to change the leading portion of the default maps. The keys of `txtfmtDefaultShortcutLeaders{}` are used as Vim "magic" regular expressions anchored to the start of the map lhs; the corresponding values are used as replacement strings. Swapping the leaders used by the default format and color maps is as simple as this:
 
 ```vim
 let g:txtfmtDefaultShortcutLeaders = {',': '_', '_': ','}
@@ -295,13 +295,13 @@ let g:txtfmtDefaultShortcutLeaders = {',': '_', '_': ','}
 
 
 
-But Vim's pattern syntax can be used to accomplish more complicated remappings: e.g. the following setting could be used to change backslash maps to the corresponding "metafied" form (e.g., `\b` =>`<Meta-b>`):
+But Vim's pattern syntax can be used to accomplish more complicated remappings: e.g. the following setting could be used to change comma maps to the corresponding "metafied" form (e.g., `,b` =>`<M-b>`):
 
 ```vim
-let g:txtfmtDefaultShortcutLeaders = {'\\\(.\)': '<m-\1>'}
+let g:txtfmtDefaultShortcutLeaders = {',\(.\)': '<M-\1>'}
 ```
 
-**Note:** The substitutions performed are strictly textual; thus, when a key may be specified in multiple ways (e.g., `<bslash> or `\\`), you must select the form used by the default maps.
+**Note:** The substitutions performed are strictly textual; thus, when a key may be specified in multiple ways (e.g., `<Bslash> or `\\`), you must select the form used by the default maps.
 
 # Manual Maps
 
