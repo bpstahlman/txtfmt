@@ -243,7 +243,7 @@ The following Vim script snippet illustrates the use of both string and Dictiona
 
 
 
-## Shortcut Map Configuration
+## Shortcut Map Configuration Examples
 
 ```vim
 " Define some Txtfmt shortcut maps
@@ -256,7 +256,7 @@ call add(g:txtfmtShortcuts, '\u fbu')
 " bold-italic with green background (,b for Visual and Operator)
 " Note the use of Dictionary syntax.
 call add(g:txtfmtShortcuts, {'lhs': ',b', 'rhs': 'fbi kg'})
-" italic with red background and blue foreground' (\i for Visual, ,i for Operator)
+" blue italic with red background (\i for Visual, ,i for Operator)
 call add(g:txtfmtShortcuts, 'v:\i o:,i fi kr cb')
 " red italic-underline (<LocalLeader>r for Visual, <F8> for Operator)
 " Note: Use of 'x' disables mapping in select mode regardless of txtfmtShortcutsWorkInSelect.
@@ -264,33 +264,32 @@ call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 'o': '<F8>'}, 'rhs':
 " bold-italic with green background (<C-g> for Visual/Select, _g for Operator)
 " Note: Use of 'v' enables mapping in select mode regardless of txtfmtShortcutsWorkInSelect.
 call add(g:txtfmtShortcuts, {'lhs': {'v': '<C-g>', 'o': '_g'}, 'rhs': 'fbi kg'})
-" .
-" .
+
 
 ```
 
 
 
-## Shortcut Map Sample Descriptions
+## Shortcut Map Mode Logic
 
 The following table provides examples to show how the combination of the `txtfmtShortcutsWorkInSelect` option and the mode syntax determines the type of maps created:
 
-| List Entry                                         | 'txtfmtShortcutsWorkInSelect' | Modes                                              |
-| -------------------------------------------------- | ----------------------------- | -------------------------------------------------- |
-| `'\b fbi'`                                         | 0                             | Visual/Operator                                    |
-| `'\b fbi'`                                         | 1                             | Visual/Select/Operator                             |
-| `{'lhs': '\b', 'rhs': 'fbi'}`                      | 0                             | Visual/Operator                                    |
+| List Entry                                         | 'txtfmtShortcutsWorkInSelect' | Modes                  |
+| -------------------------------------------------- | ----------------------------- | ---------------------- |
+| `'\b fbi'`                                         | 0                             | Visual/Operator        |
+| `'\b fbi'`                                         | 1                             | Visual/Select/Operator |
+| `{'lhs': '\b', 'rhs': 'fbi'}`                      | 0                             | Visual/Operator        |
 | `{'lhs': '\b', 'rhs': 'fbi'}`                      | 1                             | Visual/Select/Operator |
-| `'v:\b o:,b fbi'`                                  | N/A                           | Visual/Select/Operator                             |
-| `'x:<Space>r fbi cr'`                              | N/A                           | Visual only                                        |
-| `{'lhs': {'v': '<M-b>', 'o': ',b'}, 'rhs': 'fbi'}` | N/A                           | Visual/Select/Operator                             |
-| `{'lhs': {'x': '<M-b>', 'o': ',b'}, 'rhs': 'fbi'}` | N/A                           | Visual/Operator                                    |
+| `'v:\b o:,b fbi'`                                  | N/A                           | Visual/Select/Operator |
+| `'x:<Space>r fbi cr'`                              | N/A                           | Visual only            |
+| `{'lhs': {'v': '<M-b>', 'o': ',b'}, 'rhs': 'fbi'}` | N/A                           | Visual/Select/Operator |
+| `{'lhs': {'x': '<M-b>', 'o': ',b'}, 'rhs': 'fbi'}` | N/A                           | Visual/Operator        |
 
 ### 
 
 ### Points to Note...
 
-- The rhs of a shortcut definition can contain anything you would enter at a Txtfmt prompt after executing a Visual or Operator auto map, including the _selector patterns_ discussed in [Selective (Pattern-Based) Highlighting](./README.md#selective-highlighting).
+- The rhs of a shortcut definition can contain _anything_ you would enter at a Txtfmt prompt after executing a Visual or Operator auto map, including the _selector patterns_ discussed in [Selective (Pattern-Based) Highlighting](./README.md#selective-highlighting).
 
 - String and Dictionary style entries may be freely intermixed throughout the `txtfmtShortcuts` list. The only caveat is that Dictionary style supports literal whitespace in the lhs key sequence, whereas string style requires the use of Vim's special key notation (e.g., `<Space>` for the space key). In any case, it's probably safest to use `<Space>` in both forms.
   
@@ -338,7 +337,7 @@ But Vim's pattern syntax can be used to accomplish more complicated remappings: 
 let g:txtfmtDefaultShortcutLeaders = {',\(.\)': '<M-\1>'}
 ```
 
-**Note:** The substitutions performed are strictly textual; thus, when a key may be specified in multiple ways (e.g., `<Bslash> or `\\`), you must select the form used by the default maps.
+**Note:** The substitutions performed are strictly textual; thus, when a key may be specified in multiple ways (e.g., `<Bslash> or \`), you must select the form used by the default maps.
 
 # Manual Maps
 
