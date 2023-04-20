@@ -206,10 +206,40 @@ For reasons described in the preceding section, the presence of highlighting tok
 
 # Shortcut Maps
 
-The only drawback to auto maps is that each highlighting operation requires the user to enter a highlighting spec. Although the highlighting specs are concise and intuitive, most users find themselves using a few "favorites" far more frequently than others. Having to enter the same specs over and over can be tedious and annoying. Shortcut maps allow such favorites to be assigned to keystroke mappings, thereby reducing the tedium and cognitive load experienced by the user.
-**Note:** Early versions of Txtfmt provided a feature known as "user-maps", which allowed Txtfmt manual maps (discussed in a later section) to be embedded in keystroke mappings. Although this feature is still supported for backwards compatibility, there is really no longer a reason to use it: shortcut maps are **_much_** easier to use and **_much_** more powerful.
+The only drawback to auto maps is that each highlighting operation requires the user to enter a highlighting spec. Although the highlighting specs are concise and intuitive, most users find themselves using a handful of "favorites" far more frequently than the rest. Having to enter the same specs over and over can be tedious and annoying. Shortcut maps allow a user's favorite highlighting operations to be assigned to keystroke mappings, thereby reducing the both tedium and cognitive load.
+**Note:** Early versions of Txtfmt provided a feature known as "user maps", which allowed Txtfmt manual maps (discussed in a later section) to be embedded in keystroke mappings. Although this feature is still supported for backwards compatibility, there is really no longer a reason to use it: shortcut maps are **_much_** easier to use and **_much_** more powerful.
 
-Shortcut maps are defined by adding entries to a List named `txtfmtShortcuts` defined at either global or buf-local scope. Each element in the list is either a string or a Dictionary that defines a single highlighting spec, along with one or more (potentially mode-specific) keystroke sequences used to trigger the highlighting action. The following Vim script snippet illustrates the use of both string and Dictionary syntax to define shortcuts. You could place something like this in your .vimrc; alternatively, you could change the `g:` prefix to `b:` and put the assignments in a function called from an autocommand. (This approach might be useful if you use Txtfmt in different types of files (denoted by file extension), and would like to define a different set of mappings for each file type.)
+Shortcut maps are defined by adding entries to List option `txtfmtShortcuts`, defined at either global or buf-local scope. Each element in the list is either a string or a Dictionary that binds a single highlighting spec to the keystroke sequence(s) used to trigger the corresponding Visual and Operator highlighting operation. The following list entry creates both a visual map and an operator, both bound to the key sequence `,b`, which applies makes the visually-selected or operated-on text red bold-underline:
+
+```vim
+',b fbu cr'
+```
+
+Note that this form uses a single map {lhs} (`,b`) for both a visual map and an operator. But it's also possible to specify different map left-hand-sides for the visual and operator commands: simply prefix the {lhs} with a letter indicating the desired mode. Here's how you could define the previous shortcut but with `<F8>` used instead of `,b` in visual mode:
+
+```vim
+'v:<F8> o:,b fbu cr'
+```
+
+**Note:** The prefix "o" reflects creation of a highlighting "operator", even though the map created is actually a Vim normal-mode map.
+
+
+
+### Visual vs Select mode
+
+Mode-specific shortcut key sequences will generally be useful only if you're planning to use shortcuts in _select-mode_, a mode in which typing printable key sequences such as `,b` or `\b` would ordinarily overwrite the selection. By default, Txtfmt uses `xmap` to define the visual shortcuts, to prevent key presses that would normally replace the selection from triggering a highlighting operation. If you wish to have Txtfmt default to using `vmap` to create visual mappings, simply set global or buf-local option `txtfmtShortcutsWorkInSelect` to 1. With this setting, shortcut definitions that don't use the mode-specific syntax will create a visual map that works in both visual-mode and select-mode. It's also possible to tailor the handling of select mode on a shortcut-by-shortcut basis through the use of mode prefixes. The following shortcut definition, for example, applies red foreground coloring using `<C-r>` in both visual and select modes, even if `txtfmtShortcutsWorkInSelect` is not set.
+
+```vim
+'vo: <C-r>'
+```
+
+
+
+Note that the value of option `txfmtShortcutsWorkInSelect` has no effect on this shortcut definition because the modes are specified explicitly. Besides handling of printable key sequences, visual and select-mode mappings differ in another significant way: visual-mode mappings end in normal mode, whereas select-mode mappings end in select-mode. Thus, if you wish to apply several visual-mode shortcuts in quick succession, you would need to use Vim's normal-mode `gv` to restore the visual selection between shortcuts. If you find this extra step annoying, you can set global or buf-local option `txtfmtShortcutsStayInVisual` to 1 to have Txtfmt create visual maps that re-enter visual mode after performing the highlighting. The tradeoff is that, although keeping the text selected makes it easier to apply multiple shortcuts to the same text, it also makes it harder to see the results of the highlighting operations until you ultimately hit `<Esc>` to terminate the visual selection.
+
+
+
+The following Vim script snippet illustrates the use of both string and Dictionary syntax to define shortcuts. You could place something like this in your .vimrc; alternatively, you could change the `g:` prefix to `b:` and put the assignments in a function called from an autocommand. (This approach might be useful if you use Txtfmt in different types of files (denoted by file extension), and would like to define a different set of mappings for each file type.)
 
 
 
@@ -219,35 +249,42 @@ Shortcut maps are defined by adding entries to a List named `txtfmtShortcuts` de
 " Define some Txtfmt shortcut maps
 " Note: Using call add(...) syntax makes it easier to comment individual entries
 let g:txtfmtShortcuts = []
-" bold (\b for both Visual and Operator auto maps)
-call add(g:txtfmtShortcuts, '\b fb')
-" bold-italic with green background (,bg for both Visual and Operator auto maps)
+
+" Note: Shortcuts that don't specify modes will get select mode mappings if and only if txtfmtShortcutsWorkInSelect=1.
+" bold-underline (\u for Visual and Operator)
+call add(g:txtfmtShortcuts, '\u fbu')
+" bold-italic with green background (,b for Visual and Operator)
 " Note the use of Dictionary syntax.
-call add(g:txtfmtShortcuts, {'lhs': ',bg', 'rhs': 'fbi kg'})
-" bold with red background and blue foreground' (\b for Visual, ,b for Operator)
-call add(g:txtfmtShortcuts, 'v:\b o:,b fb kr cb')
-" bold with red foreground (<LocalLeader>r for Visual, <F8> for Operator)
-call add(g:txtfmtShortcuts, {'lhs': {'v': '<LocalLeader>r', 'o': '<F8>'}, 'rhs': 'fb cr'})
-" Same as previous, but using <F8> for both the operator and select mode invocation
-" Rationale: Some users may prefer different mappings in visual and select mode.
-call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 'so': '<F8>'}, 'rhs': 'fb cr'})
+call add(g:txtfmtShortcuts, {'lhs': ',b', 'rhs': 'fbi kg'})
+" italic with red background and blue foreground' (\i for Visual, ,i for Operator)
+call add(g:txtfmtShortcuts, 'v:\i o:,i fi kr cb')
+" red italic-underline (<LocalLeader>r for Visual, <F8> for Operator)
+" Note: Use of 'x' disables mapping in select mode regardless of txtfmtShortcutsWorkInSelect.
+call add(g:txtfmtShortcuts, {'lhs': {'x': '<LocalLeader>r', 'o': '<F8>'}, 'rhs': 'fiu cr'})
+" bold-italic with green background (<C-g> for Visual/Select, _g for Operator)
+" Note: Use of 'v' enables mapping in select mode regardless of txtfmtShortcutsWorkInSelect.
+call add(g:txtfmtShortcuts, {'lhs': {'v': '<C-g>', 'o': '_g'}, 'rhs': 'fbi kg'})
 " .
 " .
+
 ```
 
 
 
 ## Shortcut Map Sample Descriptions
 
-The following table contains sample List entries, along with a description of the map(s) created:
+The following table provides examples to show how the combination of the `txtfmtShortcutsWorkInSelect` option and the mode syntax determines the type of maps created:
 
-| List Entry                                                   | Result                                                                                                                                  |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `'\b fbi'`                                                   | Create a "bold-italic" preset and use `\b` for both Visual and Operator maps                                                            |
-| `'v:\b o:,b fb'`                                             | Like the preceding, but use `\b` for the Visual map and `,b` for the Operator map                                                       |
-| `{'lhs': {'v': '\b', 'o': ',b'}, 'rhs': 'fbi'}`              | Like the preceding, but using Dictionary syntax                                                                                         |
-| `{'lhs': {'x': '\b', 's': '<F8>', 'o': ',b'}, 'rhs': 'fbi'}` | Like the preceding, but with different keystroke sequences forVisual and Select maps                                                    |
-| `'<LocalLeader>? fi/fb (cr \| kr)'`                          | Create a preset mapped to `<LocalLeader>?i` which adds the italic attribute to any bold region with red in its foreground or background |
+| List Entry                                         | 'txtfmtShortcutsWorkInSelect' | Modes                                              |
+| -------------------------------------------------- | ----------------------------- | -------------------------------------------------- |
+| `'\b fbi'`                                         | 0                             | Visual/Operator                                    |
+| `'\b fbi'`                                         | 1                             | Visual/Select/Operator                             |
+| `{'lhs': '\b', 'rhs': 'fbi'}`                      | 0                             | Visual/Operator                                    |
+| `{'lhs': '\b', 'rhs': 'fbi'}`                      | 1                             | Visual/Select/Operator |
+| `'v:\b o:,b fbi'`                                  | N/A                           | Visual/Select/Operator                             |
+| `'x:<Space>r fbi cr'`                              | N/A                           | Visual only                                        |
+| `{'lhs': {'v': '<M-b>', 'o': ',b'}, 'rhs': 'fbi'}` | N/A                           | Visual/Select/Operator                             |
+| `{'lhs': {'x': '<M-b>', 'o': ',b'}, 'rhs': 'fbi'}` | N/A                           | Visual/Operator                                    |
 
 ### 
 
@@ -255,7 +292,7 @@ The following table contains sample List entries, along with a description of th
 
 - The rhs of a shortcut definition can contain anything you would enter at a Txtfmt prompt after executing a Visual or Operator auto map, including the _selector patterns_ discussed in [Selective (Pattern-Based) Highlighting](./README.md#selective-highlighting).
 
-- String and Dictionary style entries may be freely intermixed throughout the `txtfmtShortcuts` list. The only caveat is that Dictionary style supports literal whitespace in the lhs key sequence, whereas string style requires the use of Vim's special key notation (e.g., `<space>` for the space key).
+- String and Dictionary style entries may be freely intermixed throughout the `txtfmtShortcuts` list. The only caveat is that Dictionary style supports literal whitespace in the lhs key sequence, whereas string style requires the use of Vim's special key notation (e.g., `<Space>` for the space key). In any case, it's probably safest to use `<Space>` in both forms.
   
   
 
@@ -267,19 +304,19 @@ If you set `g:txtfmtEnableDefaultShortcuts` (or its buf-local counterpart) to 1,
 
 ```vim
 let g:txtfmtShortcuts = [
-			\ '-f f-',
-			\ '-c c-',
-			\ '-k k-',
-			\ '-- f- c- k-',
-			\ ',b fb',
-			\ ',i fi',
-			\ ',u fu',
-			\ '_r cr',
-			\ '_g cg',
-			\ '_b cb',
-			\ '_R kr',
-			\ '_G kg',
-			\ '_B kb',
+            \ '-f f-',
+            \ '-c c-',
+            \ '-k k-',
+            \ '-- f- c- k-',
+            \ ',b fb',
+            \ ',i fi',
+            \ ',u fu',
+            \ '_r cr',
+            \ '_g cg',
+            \ '_b cb',
+            \ '_R kr',
+            \ '_G kg',
+            \ '_B kb',
 \]
 ```
 
