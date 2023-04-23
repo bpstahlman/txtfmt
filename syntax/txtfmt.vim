@@ -444,7 +444,19 @@ endfu
 " >>>
 " Achieve clr->bgc->sqc->fmt order required for highlight command.
 " Assumption: a and b will always be different.
+fu! s:Sort_rgn_idxs(a, b) dict
+        if ri[a:a].name == 'clr'
+                return -1
+        elseif ri[a:a].name == 'fmt'
+                return 1
+        elseif ri[a:a].name == 'bgc'
+                return ri[a:b].name == 'clr' ? 1 : -1
+        elseif ri[a:a].name == 'sqc'
+                return ri[a:b].name == 'fmt' ? -1 : 1
+        endif
+endfu
 fu! s:Sort_rgn_types(a, b)
+	echomsg a:a a:b type(a:a)
 	" Assumption: Elements to be sorted are either fmt/clr/bgc/... strings or
 	" dicts with 'name' key containing such strings.
 	let [a, b] = type(a:a) == 1 ? [a:a, a:b] : [a:a.name, a:b.name]
@@ -856,8 +868,9 @@ fu! s:Define_syntax()
 	let num_rgn_typs = len(rgn_info)
 	" >>>
 	" TEMP DEBUG ONLY
-	redir >~/tmp/syn.cmd
-	set nomore
+	" !!!! Remove this redir!!!!!
+	"redir >~/tmp/syn.cmd
+	"set nomore
 	" Loop over 'order' <<<
 	" Note: iord determines current 'order' (i.e., total # of rgn types involved
 	" in each region)
@@ -930,8 +943,11 @@ fu! s:Define_syntax()
 			" Note: Must supply rgn_info within a dict.
 			" TODO: Consider refactoring so that the sort function is a true
 			" dict function (on actual dict).
-			let sidxs = sort(range(iord + 1),
-				\function('s:Sort_rgn_types'), {'rgn_info': rgn_info})
+			"echomsg "rgn_info: " . string(rgn_info)
+			" FIXME: Rework this to make it work with the new form of
+			" Sort_rgn_types (non-dict function).
+			"let sidxs = sort(range(iord + 1),
+			"	\function('s:Sort_rgn_idxs'), rgn_info)
 ">>>>>>> ed76c4a (Backing up initial work on new colored undercurl feature.)
 
 			" Build templates for current 'order' <<<
@@ -993,6 +1009,7 @@ fu! s:Define_syntax()
 				" FIXME_COMBINATIONS: Given that we're inserting element into
 				" already-sorted list, this approach may be overkill. Revisit
 				" if efficiency matters.
+				echomsg "rgns[:]=" . string(rgns[:])
 				let objs = sort(map(rgns[:],
 					\ '{"name": v:val, "idx": "offs[" . v:key . "]"}')
 					\ + [{'name': orgn, 'idx': "'all'"}],
@@ -1131,13 +1148,12 @@ fu! s:Define_syntax()
 			call hi_xb.add('hi ', 1)
 			call hi_xb.add(rgn_name_xb)
 			for idx in range(iord + 1)
-				let sidx = sidxs[idx]
-				call hi_xb.add(eq_{rgns[sidx]}, 1)
+				call hi_xb.add(eq_{rgns[idx]}, 1)
 				" FIXME_SQUIGGLE: Need to set fmt undercurl attribute. Figure
 				" out what the previous sentence means; also, figure out why
 				" the idx->sidx translation is needed. (Comment added while
 				" fixing rebase conflict after a long hiatus.)
-				call hi_xb.add('b:txtfmt_{rgns[' . sidx . ']}{offs[' . sidx . ']} ')
+				call hi_xb.add('b:txtfmt_{rgns[' . idx . ']}{offs[' . idx . ']} ')
 			endfor
 			let rgn2_xb = s:Make_exe_builder()
 			if iord < num_rgn_typs - 1
