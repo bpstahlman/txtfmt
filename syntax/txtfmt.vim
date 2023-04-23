@@ -456,7 +456,6 @@ fu! s:Sort_rgn_idxs(a, b) dict
         endif
 endfu
 fu! s:Sort_rgn_types(a, b)
-	echomsg a:a a:b type(a:a)
 	" Assumption: Elements to be sorted are either fmt/clr/bgc/... strings or
 	" dicts with 'name' key containing such strings.
 	let [a, b] = type(a:a) == 1 ? [a:a, a:b] : [a:a.name, a:b.name]
@@ -697,7 +696,7 @@ fu! s:Define_syntax()
 	" Note: Currently, this cluster (to which bgc-specific groups may be added
 	" later) is used only in 'noconceal' case: in 'conceal' case, it contains
 	" only Tf_tok, which is currently used in lieu of the cluster.
-	echo 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
+	"echo 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
 	exe 'syn cluster Tf'.cui.'_tok contains=Tf_tok'
 	" Note: Omit 'contained', since Tf_tok is permitted at top level. But in
 	" the 'noconceal' case, use containedin=ALLBUT,<tok-cluster> to prevent a
@@ -931,24 +930,6 @@ fu! s:Define_syntax()
 			" cterm=bold really means bold, and not bright color; note that
 			" bright colors can be achieved other ways (e.g., color # above 8)
 			" in terminals that support them.
-"<<<<<<< HEAD
-"=======
-" FIXME REBASE!!!! This commented segment is from the old undercurl branch.
-" The sidxs array wasn't used in the refactored syntax engine, but I'm keeping
-" it here (after rebase of colored_undercurl onto master) till I've had a
-" chance to analyze its usage...
-			" Note: dict attribute is used simply to allow us to pass data to
-			" the sort function (since VimL has no closures). Alternatively,
-			" could make a singleton object.
-			" Note: Must supply rgn_info within a dict.
-			" TODO: Consider refactoring so that the sort function is a true
-			" dict function (on actual dict).
-			"echomsg "rgn_info: " . string(rgn_info)
-			" FIXME: Rework this to make it work with the new form of
-			" Sort_rgn_types (non-dict function).
-			"let sidxs = sort(range(iord + 1),
-			"	\function('s:Sort_rgn_idxs'), rgn_info)
-">>>>>>> ed76c4a (Backing up initial work on new colored undercurl feature.)
 
 			" Build templates for current 'order' <<<
 			" Description of lors, sors, hors
@@ -1009,7 +990,6 @@ fu! s:Define_syntax()
 				" FIXME_COMBINATIONS: Given that we're inserting element into
 				" already-sorted list, this approach may be overkill. Revisit
 				" if efficiency matters.
-				echomsg "rgns[:]=" . string(rgns[:])
 				let objs = sort(map(rgns[:],
 					\ '{"name": v:val, "idx": "offs[" . v:key . "]"}')
 					\ + [{'name': orgn, 'idx': "'all'"}],
@@ -1149,10 +1129,10 @@ fu! s:Define_syntax()
 			call hi_xb.add(rgn_name_xb)
 			for idx in range(iord + 1)
 				call hi_xb.add(eq_{rgns[idx]}, 1)
-				" FIXME_SQUIGGLE: Need to set fmt undercurl attribute. Figure
-				" out what the previous sentence means; also, figure out why
-				" the idx->sidx translation is needed. (Comment added while
-				" fixing rebase conflict after a long hiatus.)
+				" FIXME_SQUIGGLE: Need to set fmt undercurl attribute.
+				" TODO_SQUIGGLE: Figure out what the FIXME above means. I
+				" think it may be OBE since the syntax refactor, but be sure
+				" before deleting.
 				call hi_xb.add('b:txtfmt_{rgns[' . idx . ']}{offs[' . idx . ']} ')
 			endfor
 			let rgn2_xb = s:Make_exe_builder()
@@ -1212,10 +1192,10 @@ fu! s:Define_syntax()
 				"let profs['subst'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define regions.
-				echo eval(rgn1_estr)
+				"echo eval(rgn1_estr)
 				exe eval(rgn1_estr)
 				if iord < num_rgn_typs - 1
-					echo eval(rgn2_estr)
+					"echo eval(rgn2_estr)
 					exe eval(rgn2_estr)
 				endif
 				"let profs['syn-region'] += str2float(reltimestr(reltime(ts2)))
@@ -1232,7 +1212,7 @@ fu! s:Define_syntax()
 				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
 				" Define highlighting.
-				echo eval(hi_estr)
+				"echo eval(hi_estr)
 				exe eval(hi_estr)
 				"let profs['build-highlight'] += str2float(reltimestr(reltime(ts2)))
 				"let profs['tpl-processing'] += str2float(reltimestr(reltime(ts1)))
@@ -1317,9 +1297,9 @@ fu! s:Define_syntax()
 		" even later, after surrounding regions have changed).
 		" Note: The outer esc pair must match only at top-level (or nested in
 		" non-txtfmt group): hence, unlike Tf_esc, it lacks 'contained' attr.
-		echo 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
+		"echo 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
 		exe 'syn match Tf_outer_esc /'.re_esc_pair.'/he=s+'.esc_off.containedin_def.conceal
-		echo 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
+		"echo 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 		exe 'syn match Tf_esc /'.re_esc_pair.'/he=s+'.esc_off.' contained'.conceal
 		" Define highlighting for the outer and inner escape tokens
 		" Design Decision: In 'noconceal' case, these groups are needed to
@@ -1329,9 +1309,9 @@ fu! s:Define_syntax()
 		" that escapes be visible in that case; hence, I link the escape
 		" groups to Tf_conceal only in 'noconceal' case.
 		if !b:txtfmt_cfg_conceal
-			echo 'hi link Tf_outer_esc Tf_conceal'
+			"echo 'hi link Tf_outer_esc Tf_conceal'
 			hi link Tf_outer_esc Tf_conceal
-			echo 'hi link Tf_esc Tf_conceal'
+			"echo 'hi link Tf_esc Tf_conceal'
 			hi link Tf_esc Tf_conceal
 		endif
 		" bgc-specific esc concealment groups are needed in both 'conceal' and
@@ -1345,18 +1325,18 @@ fu! s:Define_syntax()
 		" Note: To understand why we create regions for bgc but not (eg)
 		" underline, undercurl, etc., see rationale near creation of
 		" bgc-specific token concealment regions.
-		echo 'syn cluster Tf'.cui.'_esc add=Tf_esc'
+		"echo 'syn cluster Tf'.cui.'_esc add=Tf_esc'
 		exe 'syn cluster Tf'.cui.'_esc add=Tf_esc'
 		let pi = 1
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
-			echo 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off
+			"echo 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off
 				\ .' contained'.conceal
 			exe 'syn match Tf'.cui.'_esc_'.i.' /'.re_esc_pair.'/he=s+'.esc_off
 				\ .' contained'.conceal
-			echo 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
+			"echo 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
 			exe 'hi Tf'.cui.'_esc_'.i.' '.eq_bgc.b:txtfmt_bgc{i}.eq_clr.b:txtfmt_bgc{i}
-			echo 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
+			"echo 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
 			exe 'syn cluster Tf'.cui.'_esc add=Tf'.cui.'_esc_'.i
 			let pi = pi + 1
 		endwhile
