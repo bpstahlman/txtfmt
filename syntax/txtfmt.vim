@@ -652,11 +652,13 @@ fu! s:Define_syntax()
 		let eq_bgc = ' guibg='
 		let eq_sqc = ' guisp='
 		let eq_fmt = ' gui='
+		let eq_sqf = ' gui='
 	else
 		let eq_clr = ' ctermfg='
 		let eq_bgc = ' ctermbg='
 		let eq_sqc = ' ctermsp='
 		let eq_fmt = ' cterm='
+		let eq_sqf = ' cterm='
 	endif
 
 	" Note: Originally, the skip patterns were assigned to region-specific
@@ -843,10 +845,13 @@ fu! s:Define_syntax()
 			\ ? [{'name': 'sqc', 'abbrev': 'sq', 'max': b:txtfmt_cfg_numsqcolors, 'offs': []}]
 			\ : [])
 			\ + [{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}]
-		" For color elements (all but final element of rgn_info), build a list
+			\ + (sqc_enabled
+			\ ? [{'name': 'sqf', 'max': b:txtfmt_num_extra_formats, 'offs': []}]
+			\ : [])
+		" For color elements (all but final 2 elements of rgn_info), build a list
 		" mapping 0-based indices to actual color numbers (as used in txtfmtColor
 		" and txtfmtBgColor).
-		for ri in rgn_info[:-2]
+		for ri in rgn_info[:-3]
 			let i = 1
 			while i <= b:txtfmt_cfg_num{ri.abbrev}colors
 				call add(ri.offs, b:txtfmt_cfg_{ri.abbrev}color{i})
@@ -1065,6 +1070,7 @@ fu! s:Define_syntax()
 			" combination is needed in both end and start patterns, so go
 			" ahead and cache xb for it now.
 			let rgn_stoks_atom_xb = s:Make_exe_builder()
+			" FIXME_SQUIGGLE: Probably rework this, possibly to calculate token value with function.
 			call rgn_stoks_atom_xb.add_list(map(range(iord + 1),
 				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
 			" Add the end pattern.
@@ -1175,11 +1181,11 @@ fu! s:Define_syntax()
 			" in current 'order'.
 			let jdxs = repeat([1], iord + 1)
 			" Initialize offs[] with first used non-default index for each rgn
-			" type (1 for fmt, first used color number for color rgns).
+			" type (1 for fmt, 0 for sqf, first used color number for color rgns).
 			" TODO_COMBINATIONS: Consider testing for offs member instead of
 			" checking name.
 			let offs = map(range(iord + 1), 'rgn_objs[v:val].name == "fmt"'
-				\.' ? 1 : rgn_objs[v:val].offs[0]')
+				\.' ? 1 : rgn_objs[v:val].name == "sqf" ? 0 : rgn_objs[v:val].offs[0]')
 			" Count down
 			let i = iord
 			" Evaluate templates in loop over all permutations of indices for
@@ -1232,7 +1238,9 @@ fu! s:Define_syntax()
 					if jdxs[i] > rgn_objs[i].max
 						let jdxs[i] = 1
 						let offs[i] = rgn_objs[i].name == "fmt"
-							\? 1 : rgn_objs[i].offs[0]
+							\? 1 : 
+							\rgn_objs[i].name == "sqf"
+							\? 0 : rgn_objs[i].offs[0]
 						" Keep going leftward unless we're done
 						let i -= 1
 						if i < 0
@@ -1241,7 +1249,7 @@ fu! s:Define_syntax()
 						endif
 					else
 						" j hasn't rolled over
-						if rgn_objs[i].name == "fmt"
+						if rgn_objs[i].name =~ 'fmt\|sqf'
 							let offs[i] += 1
 						else
 							let offs[i] = rgn_objs[i].offs[jdxs[i] - 1]

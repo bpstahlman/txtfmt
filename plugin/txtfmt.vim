@@ -174,12 +174,17 @@ let b:txtfmt_const_formats_def_{'u'}     = 'X'
 " N = 2 ^ {num_attributes} + 9
 " --background colors--
 " N = 2 ^ {num_attributes} + 9 + 9
+" --special colors--
+" N = 2 ^ {num_attributes} + 9 + 9 + 9
 " Important Note: The numbers are not dependent upon the number of active fg
 " and bg colors, since we always reserve 8 colors.
 
 " Note: The inputs to this function are denormalized by design. (Consider that
 " it would be sufficient to accept tokrange suffix, but some callers use the
 " function in a way that would make it inconvenient to supply suffix.)
+" TODO_SQUIGGLE: Change sqcolor (and "sq" generally) to reflect the fact that
+" it's no longer just squiggle, but also strikethrough. For now, "sq" just
+" means special...
 fu! s:Get_tokrange_size(bgcolor, sqcolor, longformats, undercurl)
 	" Determine 'effective' longformats flag, which depends on a:bgcolor and
 	" the 'pack' option.
@@ -187,7 +192,9 @@ fu! s:Get_tokrange_size(bgcolor, sqcolor, longformats, undercurl)
 	" is enabled.
 	let longformats = a:longformats || a:bgcolor && !b:txtfmt_cfg_pack
 	if a:sqcolor
-		return 9 + (longformats ? 64 : 8) + 9 + 9
+		" Consider all attributes: those in the primary formats region, as
+		" well as the overflow.
+		return 9 + (longformats ? 128 : 32) + 9 + 9
 	elseif a:bgcolor
 		return 9 + (longformats ? 64 : 8) + 9
 	elseif longformats
@@ -1852,9 +1859,39 @@ fu! s:Define_fmtclr_vars()
 	let b:txtfmt_fmt{5}  = 'underline,italic'
 	let b:txtfmt_fmt{6}  = 'bold,italic'
 	let b:txtfmt_fmt{7}  = 'underline,bold,italic'
+	let b:txtfmt_num_formats = 8
 	if !b:txtfmt_cfg_longformats
-		" short formats
-		let b:txtfmt_num_formats = 8
+		if b:txtfmt_cfg_sqcolor
+			" extended extended formats
+			" Treat strikethrough as most significant bit.
+			let b:txtfmt_sqf{0}  = 'undercurl'
+			let b:txtfmt_sqf{1}  = 'undercurl,underline'
+			let b:txtfmt_sqf{2}  = 'undercurl,bold'
+			let b:txtfmt_sqf{3}  = 'undercurl,underline,bold'
+			let b:txtfmt_sqf{4}  = 'undercurl,italic'
+			let b:txtfmt_sqf{5}  = 'undercurl,underline,italic'
+			let b:txtfmt_sqf{6}  = 'undercurl,bold,italic'
+			let b:txtfmt_sqf{7}  = 'undercurl,underline,bold,italic'
+			let b:txtfmt_sqf{8}  = 'strikethrough'
+			let b:txtfmt_sqf{9}  = 'strikethrough,underline'
+			let b:txtfmt_sqf{10} = 'strikethrough,bold'
+			let b:txtfmt_sqf{11} = 'strikethrough,underline,bold'
+			let b:txtfmt_sqf{12} = 'strikethrough,italic'
+			let b:txtfmt_sqf{13} = 'strikethrough,underline,italic'
+			let b:txtfmt_sqf{14} = 'strikethrough,bold,italic'
+			let b:txtfmt_sqf{15} = 'strikethrough,underline,bold,italic'
+			let b:txtfmt_sqf{16} = 'undercurl,strikethrough'
+			let b:txtfmt_sqf{17} = 'undercurl,strikethrough,underline'
+			let b:txtfmt_sqf{18} = 'undercurl,strikethrough,bold'
+			let b:txtfmt_sqf{19} = 'undercurl,strikethrough,underline,bold'
+			let b:txtfmt_sqf{20} = 'undercurl,strikethrough,italic'
+			let b:txtfmt_sqf{21} = 'undercurl,strikethrough,underline,italic'
+			let b:txtfmt_sqf{22} = 'undercurl,strikethrough,bold,italic'
+			let b:txtfmt_sqf{23} = 'undercurl,strikethrough,underline,bold,italic'
+			" FIXME_SQUIGGLE: For sake of consistency with colors, this and
+			" txtfmt_num_formats should probably contain "cfg".
+			let b:txtfmt_num_extra_formats = 24
+		endif
 	else
 		" long formats
 		let b:txtfmt_fmt{8}  = 'standout'
@@ -1919,6 +1956,11 @@ fu! s:Define_fmtclr_vars()
 			let b:txtfmt_fmt{62} = 'bold,italic,standout,reverse,undercurl'
 			let b:txtfmt_fmt{63} = 'underline,bold,italic,standout,reverse,undercurl'
 			let b:txtfmt_num_formats = 64
+			if b:txtfmt_cfg_sqcolor
+				" FIXME_SQUIGGLE: Add another 64 in case of "XXL", but also
+				" probably rework this function to be data-driven.
+				let b:txtfmt_num_extra_formats = 64
+			endif
 		endif
 	endif
 	" >>>
@@ -1973,14 +2015,22 @@ fu! s:Define_fmtclr_vars()
 		let b:txtfmt_bgc_last_tok = -1
 	endif
 	" Squiggle color
+	" Note: Differentiating between sqc (color) and sqf (formats) to simplify.
 	if b:txtfmt_cfg_sqcolor
 		let b:txtfmt_sqc_first_tok = b:txtfmt_cfg_starttok +
 			\ s:Get_tokrange_size(1, 0, lf_reserved, lf_reserved)
 		let b:txtfmt_sqc_last_tok = b:txtfmt_sqc_first_tok + b:txtfmt_num_colors - 1
 		let b:txtfmt_last_tok = b:txtfmt_sqc_last_tok
+		let b:txtfmt_sqf_first_tok = b:txtfmt_cfg_starttok +
+			\ s:Get_tokrange_size(1, 1, lf_reserved, lf_reserved)
+			\ - b:txtfmt_num_extra_formats
+		let b:txtfmt_sqf_last_tok =
+			\ b:txtfmt_sqf_first_tok + b:txtfmt_num_extra_formats
 	else
 		let b:txtfmt_sqc_first_tok = -1
 		let b:txtfmt_sqc_last_tok = -1
+		let b:txtfmt_sqf_first_tok = -1
+		let b:txtfmt_sqf_last_tok = -1
 	endif
 
 endfu
@@ -2077,21 +2127,33 @@ fu! s:Define_fmtclr_regexes()
 		let b:txtfmt_re_BGC_etok_atom = nr2char(b:txtfmt_bgc_first_tok)
 	endif
 	if sqc
+		" Extra format region tokens
+		let b:txtfmt_re_sqf_tok_atom = nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok)
+		let b:txtfmt_re_sqf_stok_atom = nr2char(b:txtfmt_sqf_first_tok + 1).'-'.nr2char(b:txtfmt_sqf_last_tok)
+		let b:txtfmt_re_sqf_etok_atom = nr2char(b:txtfmt_sqf_first_tok)
+
+		" FIXME: Analyze how these uppercase component versions are used. I'm
+		" seeing significant overlap with the lowercase version, and I'm not
+		" even sure the uppercase versions are used.
 		let b:txtfmt_re_SQC_tok_atom = nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok)
 		let b:txtfmt_re_SQC_stok_atom = nr2char(b:txtfmt_sqc_first_tok + 1).'-'.nr2char(b:txtfmt_sqc_last_tok)
 		let b:txtfmt_re_SQC_etok_atom = nr2char(b:txtfmt_sqc_first_tok)
+		let b:txtfmt_re_SQF_tok_atom = nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok)
+		let b:txtfmt_re_SQF_stok_atom = nr2char(b:txtfmt_sqf_first_tok + 1).'-'.nr2char(b:txtfmt_sqf_last_tok)
+		let b:txtfmt_re_SQF_etok_atom = nr2char(b:txtfmt_sqf_first_tok)
 	endif
 	" Combined regions
 	let b:txtfmt_re_any_tok_atom =
 				\(clr ? b:txtfmt_re_clr_tok_atom : '')
-				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\.b:txtfmt_re_fmt_tok_atom
 				\.(bgc ? b:txtfmt_re_bgc_tok_atom : '')
 				\.(sqc ? b:txtfmt_re_sqc_tok_atom : '')
+				\.(sqc ? b:txtfmt_re_sqf_tok_atom : '')
 	" TODO: Perhaps get rid of dependence upon b:txtfmt_clr_last_tok?
 	" TODO: Refactor to use newly-created CLR and BGC atoms
 	let b:txtfmt_re_ANY_tok_atom =
 				\(clr ? nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok) : '')
-				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\.b:txtfmt_re_fmt_tok_atom
 				\.(bgc ? nr2char(b:txtfmt_bgc_first_tok).'-'.nr2char(b:txtfmt_bgc_last_tok) : '')
 				\.(sqc ? nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok) : '')
 	let b:txtfmt_re_any_stok_atom =
