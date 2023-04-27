@@ -613,6 +613,17 @@ fu! s:Map_rgn_types(fn_or_expr)
 	return ret
 endfu
 " >>>
+" Function: s:Offset_to_char() <<<
+fu! s:Offset_to_char(rgn, off)
+	if a:rgn == 'fmt' && b:txtfmt_cfg_sqcolor && a:off > 8
+		" Need to handle discontiguous region.
+		let ch = b:txtfmt_sqf_first_tok + a:off - 8
+	else
+		let ch = b:txtfmt_{a:rgn}_first_tok + a:off
+	endif
+	return nr2char(ch)
+endfu
+" >>>
 " Function: s:Define_syntax() <<<
 fu! s:Define_syntax()
 	" Cache some useful vars <<<
@@ -1065,8 +1076,14 @@ fu! s:Define_syntax()
 			" combination is needed in both end and start patterns, so go
 			" ahead and cache xb for it now.
 			let rgn_stoks_atom_xb = s:Make_exe_builder()
+			" FIXME_SQUIGGLE: Is there a simpler way to invoke
+			" s:Offset_to_char? Need to look at the possible ways to invoke
+			" add_list() on the builder... In particular, I'm wondering if
+			" there's an unnecessary layer of eval here. Just patterning after
+			" old call for now...
 			call rgn_stoks_atom_xb.add_list(map(range(iord + 1),
-				\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
+				\ '"s:Offset_to_char(''" . rgns[v:val] . "'', offs[" . v:val . "])"'), "")
+				"\ '"nr2char(b:txtfmt_" . rgns[v:val] . "_first_tok + offs[" . v:val . "])"'), "")
 			" Add the end pattern.
 			" Note: At start of end pattern, we need a negative character
 			" class preventing match of start tokens represented in current

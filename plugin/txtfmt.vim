@@ -1853,8 +1853,40 @@ fu! s:Define_fmtclr_vars()
 	let b:txtfmt_fmt{6}  = 'bold,italic'
 	let b:txtfmt_fmt{7}  = 'underline,bold,italic'
 	if !b:txtfmt_cfg_longformats
-		" short formats
-		let b:txtfmt_num_formats = 8
+		" FIXME_SQUIGGLE: Rename this...
+		if b:txtfmt_cfg_sqcolor
+			" extended formats
+			" Treat strikethrough as most significant bit.
+			let b:txtfmt_fmt{8}   = 'undercurl'
+			let b:txtfmt_fmt{9}   = 'underline,undercurl'
+			let b:txtfmt_fmt{10}  = 'bold,undercurl'
+			let b:txtfmt_fmt{11}  = 'underline,bold,undercurl'
+			let b:txtfmt_fmt{12}  = 'italic,undercurl'
+			let b:txtfmt_fmt{13}  = 'underline,italic,undercurl'
+			let b:txtfmt_fmt{14}  = 'bold,italic,undercurl'
+			let b:txtfmt_fmt{15}  = 'underline,bold,italic,undercurl'
+			let b:txtfmt_fmt{16}  = 'strikethrough'
+			let b:txtfmt_fmt{17}  = 'underline,strikethrough'
+			let b:txtfmt_fmt{18}  = 'bold,strikethrough'
+			let b:txtfmt_fmt{19}  = 'underline,bold,strikethrough'
+			let b:txtfmt_fmt{20}  = 'italic,strikethrough'
+			let b:txtfmt_fmt{21}  = 'underline,italic,strikethrough'
+			let b:txtfmt_fmt{22}  = 'bold,italic,strikethrough'
+			let b:txtfmt_fmt{23}  = 'underline,bold,italic,strikethrough'
+			let b:txtfmt_fmt{24}  = 'undercurl,strikethrough'
+			let b:txtfmt_fmt{25}  = 'underline,undercurl,strikethrough'
+			let b:txtfmt_fmt{26}  = 'bold,undercurl,strikethrough'
+			let b:txtfmt_fmt{27}  = 'underline,bold,undercurl,strikethrough'
+			let b:txtfmt_fmt{28}  = 'italic,undercurl,strikethrough'
+			let b:txtfmt_fmt{29}  = 'underline,italic,undercurl,strikethrough'
+			let b:txtfmt_fmt{30}  = 'bold,italic,undercurl,strikethrough'
+			let b:txtfmt_fmt{31}  = 'underline,bold,italic,undercurl,strikethrough'
+
+			let b:txtfmt_num_formats = 32
+		else
+			" short formats
+			let b:txtfmt_num_formats = 8
+		endif
 	else
 		" long formats
 		let b:txtfmt_fmt{8}  = 'standout'
@@ -1977,10 +2009,15 @@ fu! s:Define_fmtclr_vars()
 		let b:txtfmt_sqc_first_tok = b:txtfmt_cfg_starttok +
 			\ s:Get_tokrange_size(1, 0, lf_reserved, lf_reserved)
 		let b:txtfmt_sqc_last_tok = b:txtfmt_sqc_first_tok + b:txtfmt_num_colors - 1
-		let b:txtfmt_last_tok = b:txtfmt_sqc_last_tok
+		let b:txtfmt_sqf_first_tok = b:txtfmt_sqc_last_tok + 1
+		" Note: 24 combinations of ubi involving strikethrough and undercurl.
+		let b:txtfmt_sqf_last_tok = b:txtfmt_sqf_first_tok + 24 - 1
+		let b:txtfmt_last_tok = b:txtfmt_sqf_last_tok
 	else
 		let b:txtfmt_sqc_first_tok = -1
 		let b:txtfmt_sqc_last_tok = -1
+		let b:txtfmt_sqf_first_tok = -1
+		let b:txtfmt_sqf_last_tok = -1
 	endif
 
 endfu
@@ -2064,6 +2101,7 @@ fu! s:Define_fmtclr_regexes()
 	let b:txtfmt_re_fmt_tok_atom = nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
 	let b:txtfmt_re_fmt_stok_atom = nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
 	let b:txtfmt_re_fmt_etok_atom = nr2char(b:txtfmt_fmt_first_tok)
+	let b:txtfmt_re_sqf_etok_atom = nr2char(b:txtfmt_sqf_first_tok)
 	" Color regions that include inactive colors
 	" FIXME_SQUIGGLE: No reason not to parameterize the following.
 	if clr
@@ -2092,16 +2130,19 @@ fu! s:Define_fmtclr_regexes()
 	let b:txtfmt_re_ANY_tok_atom =
 				\(clr ? nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok) : '')
 				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\.(sqc ? nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
 				\.(bgc ? nr2char(b:txtfmt_bgc_first_tok).'-'.nr2char(b:txtfmt_bgc_last_tok) : '')
 				\.(sqc ? nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok) : '')
 	let b:txtfmt_re_any_stok_atom =
 				\(clr ? b:txtfmt_re_clr_stok_atom : '')
 				\.nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\.(sqc ? nr2char(b:txtfmt_sqf_first_tok + 1).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
 				\.(bgc ? b:txtfmt_re_bgc_stok_atom : '')
 				\.(sqc ? b:txtfmt_re_sqc_stok_atom : '')
 	let b:txtfmt_re_any_etok_atom =
 				\(clr ? b:txtfmt_re_clr_etok_atom : '')
 				\.b:txtfmt_re_fmt_etok_atom
+				\.(sqc ? b:txtfmt_re_sqf_etok_atom : '')
 				\.(bgc ? b:txtfmt_re_bgc_etok_atom : '')
 				\.(sqc ? b:txtfmt_re_sqc_etok_atom : '')
 
