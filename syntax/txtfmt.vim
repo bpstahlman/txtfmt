@@ -1212,8 +1212,10 @@ fu! s:Define_syntax()
 				" rebase conflict fix...
 				"exe eval(cls_estr)
 				for cls_estr in cls_estrs
+					"echo eval(cls_estr)
 					exe eval(cls_estr)
 				endfor
+				"echo eval(cls_all_estr)
 				exe eval(cls_all_estr)
 				"let profs['build-clusters'] += str2float(reltimestr(reltime(ts2)))
 				"let ts2 = reltime()
