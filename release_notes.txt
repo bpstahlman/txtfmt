@@ -1,2 +1,3 @@
-Version 4.2.1
-Bugfix: Fixed bug capable of generating error after a highlighting operation on a region beginning at the start of a line.
+Version 5.0
+** New Feature: "Shortcut Maps"
+Define "shortcut" key sequences for your favorite highlighting operations.
