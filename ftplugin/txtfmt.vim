@@ -3,7 +3,7 @@
 " File: This is the txtfmt ftplugin file, which contains mappings and
 " functions for working with the txtfmt color/formatting tokens.
 " Creation:	2004 Nov 06
-" Last Change: 2023 Apr 19
+" Last Change: 2023 May 06
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@gmail.net>
 " License:	This file is placed in the public domain.
 
@@ -5969,155 +5969,6 @@ fu! s:Do_user_maps()
 	endwhile
 endfu
 " >>>
-" Function: s:Get_shortcut_flags() <<<
-fu! s:Get_shortcut_flags()
-	return {
-		\ 'workInSelect': get(b:, 'txtfmtShortcutsWorkInSelect',
-			\ get (g:, 'txtfmtShortcutsWorkInSelect', 0)),
-		\ 'stayInVisual': get(b:, 'txtfmtShortcutsStayInVisual',
-			\ get (g:, 'txtfmtShortcutsStayInVisual', 0))
-	\ }
-endfu
-" >>>
-" Function: s:Parse_user_shortcut_string() <<<
-" Inputs: A string with one of the following formats:
-"   (MODES:LHS)+ SPEC
-" | LHS SPEC
-" Return: A Dict with the following format:
-"   {'lhs': LHS, 'rhs': RHS}
-" | {'lhs': {MODES: LHS, ...}, 'rhs': RHS}
-" Note: There are really only two valid use case for multiple mode chars in
-" a single LHS:
-" 1. disabling select-mode map for a single shortcut when 
-"    txtfmtShortcutsWorkInSelect=1: e.g., 'xo: \b fb'
-" 2. desire to use mode-specific syntax for aesthetic reasons, even when
-"    Visual and Operator maps use same lhs: e.g., 'vo: \b fb'
-" Constraint: It makes no sense to allow 'v' with 'x', so disallow it.
-" Note: By default, shortcuts are defined with xmap, and thus, work only in
-" visual mode; option txtfmtShortcutsWorkInSelect causes vmap to be used
-" instead, but regardless of the setting of that option, it's always
-" possible to specify each shortcut's behavior explicitly using
-" mode-specific syntax.
-fu! s:Parse_user_shortcut_string(sc)
-	" In the following regex:
-	" $1=(MODES:LHS)+
-	" $2=LHS
-	" $3=SPEC
-	let sc = trim(a:sc)
-	if empty(sc)
-		" Special Case: Empty shortcut entry isn't an error.
-		" Rationale: Depending on how user defines list, he may appreciate being
-		" able to disable an entry simply by making it empty.
-		return {}
-	endif
-	" Note: Allow whitespace after the colon for readability.
-	" Guarantee: [xvo]+: can never be part of a highlight spec (because of the
-	" `:', if for no other reason).
-	let re_modes = '\%([xvo]\+:\s*\)'
-	let re_lhs = '\%(\S\+\)'
-	let re_mlhs = re_modes . re_lhs
-	let re = '^\s*\%(\(\%(' . re_mlhs . '\)\%(\s\+' . re_mlhs . '\)*\)'
-				\ . '\|\(' . re_lhs . '\)\)\s\+\(.*\S\)\s*$'
-	" Validate the format and split into components.
-	let m = matchlist(a:sc, re)
-	if empty(m)
-		return {'err': 'Invalid shortcut map definition'}
-	endif
-	" Should a shortcut with no modes specified use vmap (workInSelect=1) or xmap?
-	let workInSelect = s:Get_shortcut_flags().workInSelect
-	if empty(m[1])
-		" Single LHS for *all* modes
-		let ret = {'lhs': {
-					\ (workInSelect ? 'v' : 'x') . 'o': m[2]},
-					\ 'rhs': m[3]}
-	else
-		" Multiple mode-specific LHS: e.g.,
-		" x:\b o:<C-i> fbi
-		" ==> {'lhs': {'x': '\b'}, {'o': '<C-i>'}], rhs: 'fbi'}
-		let ret = {'lhs': {}, 'rhs': m[3]}
-		" Loop over all MODES:LHS segments.
-		for mlhs in split(m[1])
-			" Split the mode prefix from the lhs.
-			let idx = stridx(mlhs, ':')
-			" Canonicalize the modes.
-			let modes = mlhs[:idx-1]->split('\zs')->sort()->uniq()->join('')
-			let lhs = mlhs[idx+1:]
-			" Enforce mutual exclusivity of 'v' and 'x'.
-			if modes =~ '.*x\&.*v'
-				return {'err': "Shortcut map mode cannot contain both 'v' and 'x'"}
-			endif
-			" Add an entry to the returned object for the current mode-specific lhs.
-			let ret.lhs[modes] = lhs
-		endfor
-	endif
-	return ret
-endfu
-" >>>
-" Function: s:Parse_user_shortcut_dict() <<<
-" Input: A dict with one of the following formats:
-"   {'lhs': LHS, 'rhs': RHS}
-" | {'lhs': {MODES: LHS, ...}, 'rhs': RHS}
-" Return: Same as s:Parse_user_shortcut_string()
-" TODO: There's a lot of redundancy in the validation performed by this function
-" and s:Parse_user_shortcut_string(). Consider refactoring to minimize
-" duplication...
-fu! s:Parse_user_shortcut_dict(sc)
-	" Make sure rhs is a string.
-	if type(a:sc.rhs) != type("")
-		return {'err': "Expected shortcut map rhs to be of type string: " . string(a:sc.rhs)}
-	endif
-	if empty(a:sc)
-		" Design Decision: Empty element not treated as error.
-		return {}
-	endif
-	let ret = {'lhs': {}, 'rhs': a:sc.rhs}
-	" Should a shortcut with no modes specified use vmap (workInSelect=1) or xmap?
-	let workInSelect = s:Get_shortcut_flags().workInSelect
-	if type(a:sc.lhs) == type("")
-		" Single lhs for all modes
-		let ret.lhs = {(workInSelect ? 'v' : 'x') . 'o': a:sc.lhs}
-	elseif type(a:sc.lhs) == type({})
-		" Multiple, mode-specific lhs's.
-		for [modes, lhs] in items(a:sc.lhs)
-			" Canonicalize the mode string.
-			let modes = substitute(modes, '\s', '', 'g')->split('\zs')->sort()->uniq()->join('')
-			" Validate the mode string.
-			if modes !~ '[xvo]\+'
-				return {'err': "Shortcut map mode string contains invalid characters: " . modes}
-			elseif modes =~ '.*x\&.*v'
-				return {'err': "Shortcut map mode string cannot contain both 'v' and 'x'"}
-			elseif modes->empty()
-				return {'err': "Shortcut map mode string is empty"}
-			endif
-			" Make sure lhs is a string.
-			if type(lhs) != type("")
-				return {'err': "Expected shortcut map lhs to be of type string, got type " . type(lhs)}
-			elseif lhs->empty()
-				return {'err': "shortcut map lhs is empty"}
-			endif
-			" Add an entry to the returned object for the current mode-specific lhs.
-			let ret.lhs[modes] = lhs
-		endfor
-	else
-		" Invalid lhs type!
-		return {'err': "Expected shortcut map lhs to be of type string or dictionary, got type " . type(a:sc.lhs)}
-	endif
-	return ret
-endfu
-" >>>
-" Function: s:Parse_user_shortcut() <<<
-fu! s:Parse_user_shortcut(sc)
-	if type(a:sc) == type("")
-		let ret = s:Parse_user_shortcut_string(a:sc)
-	elseif type(a:sc) == type({})
-		let ret = s:Parse_user_shortcut_dict(a:sc)
-	else
-		return {'err':
-			\ "Expected shortcut map entry to be of type string or dictionary, got type " . type(a:sc)}
-	endif
-	return ret
-endfu
-" >>>
 " Function: s:Check_map_lhs() <<<
 " Return true iff a map from 'lhs' in 'mode' should be created, displaying
 " warnings/errors for map conficts/ambiguities in accordance with txtfmtMapwarn
@@ -6232,14 +6083,231 @@ fu! s:Remap_shortcut_leader(lhs)
 	" Check against each key in the translation mapping.
 	" TODO: Consider building tr in canonicalized form to obviate need for loop.
 	for [patt, repl] in items(tr)
-		" Anchor pattern at start of lhs.
-		let translated_lhs = substitute(lhs, '^\%(' . patt . '\)', repl, '')
+		" Anchor pattern at start of lhs and treat pattern as "very magic".
+		let translated_lhs = substitute(lhs, '^\v%(' . patt . ')', repl, '')
 		if translated_lhs != lhs
 			" Translation was performed.
 			return translated_lhs
 		endif
 	endfor
 	return lhs
+endfu
+" >>>
+" Function: s:Get_shortcut_flags() <<<
+fu! s:Get_shortcut_flags()
+	return {
+		\ 'workInSelect': get(b:, 'txtfmtShortcutsWorkInSelect',
+			\ get (g:, 'txtfmtShortcutsWorkInSelect', 0)),
+		\ 'stayInVisual': get(b:, 'txtfmtShortcutsStayInVisual',
+			\ get (g:, 'txtfmtShortcutsStayInVisual', 0))
+	\ }
+endfu
+" >>>
+" Function: s:Parse_user_shortcut_modes() <<<
+" Input: The mode string (possibly empty) excluding the trailing `:' but
+" including any stayInVisual +/- flags, the lhs and a dict containing the
+" global/buf-local flags. Empty mode string implies defaults.
+" Return: A dict corresponding to a single lhs
+" See Parse_user_shortcut_string for format descriptions.
+" Note: The flags in the returned dict represent only the *overrides* of the
+" global/buf-local options: global/buf-local defaults will be taken into account
+" at higher level.
+fu! s:Parse_user_shortcut_modes(modes, lhs, optFlags)
+	" Validate and parse the mode string, deferring mode validation until after
+	" overall form of string has been validated.
+	" Note: Trailing `:' is stripped by caller.
+	let re_modes = '\%(\([xvosncitl]*\)\([-+]\?\)\)'
+	" Design Decision: Allow whitespace around both modes and lhs if caller
+	" allows it. (Currently, it's allowed after the `:' in modestring only, but
+	" validation of the overall form is the responsibility of caller(s).)
+	let [modes, lhs] = [trim(a:modes), trim(a:lhs)]
+	let m = matchlist(modes, re_modes)
+	" Check for invalid format.
+	if empty(m)
+		throw "Invalid shortcut map mode string: expected `[xvo]*[-+]?:', got `" . modes . ":'"
+	endif
+	" We have a valid mode string.
+	let [_, modes, flag; rest] = m
+	" Check for valid format with unsupported modes.
+	if modes !~ '^[xvo]*$'
+		throw "Unsupported mode(s) in shortcut map mode string: " . substitute(modes, '[xvo]', '', 'g')
+	endif
+	" Note: flags dict reflects only the mode-specific flag *overrides*.
+	let flags = {}
+	" Process any trailing +/- as stayInVisual flag.
+	if !flag->empty()
+		let flags.stayInVisual = flag == '+' ? 1 : 0
+	endif
+	if modes->empty()
+		" Omitted modes implies defaults.
+		let modes = (a:optFlags.workInSelect ? 'v' : 'x') . 'o'
+	else
+		" Canonicalize the mode string.
+		let modes = modes->split('\zs')->sort()->uniq()->join('')
+		" Perform additional validation on mode string.
+		if modes =~ '.*x\&.*v'
+			throw "Shortcut map mode string cannot contain both 'v' and 'x'"
+		endif
+		if flags->has_key('stayInVisual') && modes !~ '[xv]'
+			call s:Msg('warning', "Ignoring useless 'stayInVisual' flag in mode string `"
+				\ . modes . flag . "'")
+		endif
+	endif
+	" Make sure lhs is a string.
+	if type(lhs) != type("")
+		throw "Expected shortcut map lhs to be of type string, got type " . type(lhs)
+	elseif lhs->empty()
+		throw "shortcut map lhs is empty"
+	endif
+	" Return entry for a single lhs.
+	return {'modes': modes, 'lhs': lhs, 'flags': flags}
+endfu
+" >>>
+" Function: s:Parse_user_shortcut_string() <<<
+" Inputs: A string with one of the following formats:
+"   ([xvo]*[-+]?:LHS)+ SPEC
+" | LHS SPEC
+" Note: The keys in the lhs dict can be empty (indicating default modes).
+" Return: A Dict with the following format:
+"   {'lhs': [{'modes': MODES, 'lhs': LHS, 'flags': FLAGS}, ...], 'rhs': RHS}
+" Note: There are really only two valid use cases for multiple mode chars in a
+" single LHS:
+" 1. disabling select-mode map for a single shortcut when 
+"    txtfmtShortcutsWorkInSelect=1: e.g., 'xo: \b fb'
+" 2. desire to use mode-specific syntax for aesthetic reasons, even when
+"    Visual and Operator maps use same lhs: e.g., 'vo: \b fb'
+" Constraint: It makes no sense to allow 'v' with either 'x' or 's', so disallow
+" it.
+" Note: By default, shortcuts are defined with xmap, and thus, work only in
+" visual mode; option txtfmtShortcutsWorkInSelect causes vmap to be used
+" instead, but regardless of the setting of that option, it's always
+" possible to specify each shortcut's behavior explicitly using
+" mode-specific syntax.
+" Disambiguation Note: With the simple, non-mode-specific syntax, the
+" prohibition on whitespace in LHS prevents ambiguity. With the mode-specific
+" syntax, ambiguity is prevented by the requirement of a `:' in each mode
+" prefix, coupled with the impossibility (or at least, extreme improbability) of
+" `:` in a highlighting spec. It's actually theoretically possible to have a
+" colon in a custom color string, but a user who does something that silly will
+" just have to disambiguate some other way: e.g., using Dictionary syntax or by
+" ensuring the highlighting spec contains no whitespace.
+" Rationale: Since a highlighting spec is always preceded by whitespace, a colon
+" within a highlighting spec that appears as an unbroken sequence of
+" non-whitespace characters could never be interpreted as part of a
+" mode-specific lhs component, as backtracking would always give it back to be
+" matched as part of rhs.
+" Example: Multiple mode-specific LHS:
+"   x+:\b o:<C-i> fbi
+"   ==> {'lhs': [{'modes': 'x', 'lhs': '\b', 'flags': {'stayInVisual': 1}},
+"                {'modes': 'o', 'lhs': '<C-i>', 'flags': {}}],
+"        'rhs': 'fbi'}
+fu! s:Parse_user_shortcut_string(sc)
+	let sc = trim(a:sc)
+	if empty(sc)
+		" Special Case: Empty shortcut entry isn't an error.
+		" Rationale: Depending on how user defines list, he may appreciate being
+		" able to disable an entry simply by making it empty.
+		return {}
+	endif
+	" In the following regex:
+	" $1=([xvo]*[-+]?:LHS)+
+	" $2=LHS
+	" $3=SPEC
+	" Note: Allow whitespace after the colon for readability.
+	" Rationale: Non-whitespace must follow the *colon* before rhs.
+	" Note: Explicit mode-specific syntax should be used to disambiguate a lhs
+	" containing a `:'.
+	" Note: To help user debug invalid shortcut definitions, leave detection of
+	" invalid mode chars to Parse_user_shortcut_modes().
+	let re_modes = '\%([xvosncitl]*[-+]\?:\s*\)'
+	let re_lhs = '\%(\S\+\)'
+	let re_mlhs = re_modes . re_lhs
+	let re = '^\s*\%(\(\%(' . re_mlhs . '\)\%(\s\+' . re_mlhs . '\)*\)'
+				\ . '\|\(' . re_lhs . '\)\)\s\+\(.*\S\)\s*$'
+	" Validate the format and split into components.
+	let m = matchlist(sc, re)
+	if empty(m)
+		throw 'Invalid shortcut map definition'
+	endif
+	" Get relevant global/buf-local flags.
+	let flags = s:Get_shortcut_flags()
+	if empty(m[1])
+		" Single LHS for *all* modes
+		let ret = {'lhs': [s:Parse_user_shortcut_modes('', m[2], flags)],
+					\ 'rhs': m[3]}
+	else
+		" Multiple LHS will be appended in loop.
+		let ret = {'lhs': [], 'rhs': m[3]}
+		" Strip off and process the LHS segments in loop.
+		let [sidx, idx] = [0, 0]
+		let lhs_seq = m[1]
+		while idx >= 0
+			" FIXME: Anchor at start and trim whitespace.
+			let idx = matchend(lhs_seq, '^\s*' . re_mlhs, sidx)
+			if idx >= 0
+				let mlhs = lhs_seq[sidx:idx-1]
+				let sidx = idx
+				" Split the mode prefix from the LHS.
+				let idx = stridx(mlhs, ':')
+				" Permit whitespace following the `:'
+				let [modes, lhs] = [mlhs[:idx-1], mlhs[idx+1:]]
+				" Add an entry to the returned object for the current mode-specific lhs.
+				call add(ret.lhs, s:Parse_user_shortcut_modes(modes, lhs, flags))
+			endif
+		endwhile
+	endif
+	return ret
+endfu
+" >>>
+" Function: s:Parse_user_shortcut_dict() <<<
+" Input: A dict with one of the following formats:
+"   {'lhs': LHS, 'rhs': RHS}
+" | {'lhs': {[xvo]*[-+]?: LHS, ...}, 'rhs': RHS}
+" Note: The keys in the lhs dict can be empty (indicating default modes).
+" Return: Same as s:Parse_user_shortcut_string()
+fu! s:Parse_user_shortcut_dict(sc)
+	if empty(a:sc)
+		" Design Decision: Empty element not treated as error.
+		return {}
+	endif
+	" Make sure rhs is a string.
+	if !has_key(a:sc, 'rhs')
+		throw "Shortcut map dict missing key 'rhs'"
+	endif
+	if type(a:sc.rhs) != type("")
+		throw "Expected shortcut map rhs to be of type string: " . string(a:sc.rhs)
+	endif
+	let ret = {'lhs': [], 'rhs': a:sc.rhs}
+	" Get relevant global/buf-local flags.
+	let flags = s:Get_shortcut_flags()
+	if !has_key(a:sc, 'lhs')
+		throw "Shortcut map dict missing key 'lhs'"
+	elseif type(a:sc.lhs) == type("")
+		" Single lhs for all modes
+		call add(ret.lhs, s:Parse_user_shortcut_modes('', a:sc.lhs, flags))
+	elseif type(a:sc.lhs) == type({})
+		" Multiple, mode-specific lhs's.
+		for [modes, lhs] in items(a:sc.lhs)
+			" Add an entry to the returned object for the current mode-specific lhs.
+			call add(ret.lhs, s:Parse_user_shortcut_modes(modes, lhs, flags))
+		endfor
+	else
+		" Invalid lhs type!
+		throw "Expected shortcut map lhs to be of type string or dictionary, got type " . type(a:sc.lhs)
+	endif
+	return ret
+endfu
+" >>>
+" Function: s:Parse_user_shortcut() <<<
+fu! s:Parse_user_shortcut(sc)
+	if type(a:sc) == type("")
+		let ret = s:Parse_user_shortcut_string(a:sc)
+	elseif type(a:sc) == type({})
+		let ret = s:Parse_user_shortcut_dict(a:sc)
+	else
+		throw "Expected shortcut map entry to be of type string or dictionary, got type " . type(a:sc)
+	endif
+	return ret
 endfu
 " >>>
 " Function: s:Do_shortcut_maps() <<<
@@ -6257,92 +6325,98 @@ fu! s:Do_shortcut_maps()
 	let enable_default_shortcuts =
 			\ get(b:, 'txtfmtEnableDefaultShortcuts',
 			\ get(g:, 'txtfmtEnableDefaultShortcuts', 0))
+	" Note: This global/buf-local flag may be overridden by mode-specific flags.
+	let globalStayInVisual = s:Get_shortcut_flags().stayInVisual
 	" Loop over static defaults (if applicable), global, then buf-local instance of txtfmtShortcuts.
 	" Rationale: Globals override defaults, buf-locals override globals.
 	for scope in enable_default_shortcuts ? [s:, g:, b:] : [g:, b:]
 		" Maintain existence hash used to detect (presumably unintentional) overrides.
 		let maps = {}
 		let scope_prefix = scope is s: ? 's' : scope is g: ? 'g' : scope is b: ? 'b' : ''
-		" Increment at start of loop to facilitate use of 'continue'.
+		" Increment at *start* of loop to facilitate use of 'continue'.
 		let i = -1
 		for s in get(scope, 'txtfmtShortcuts', [])
 			let i += 1
-			" Validate and canonicalize the shortcut definition.
-			let m = s:Parse_user_shortcut(s)
-			if m->has_key('err')
+			try
+				" Validate and canonicalize the shortcut definition.
+				let sc = s:Parse_user_shortcut(s)
+			catch
 				call s:Msg('warning'
 					\, 'Ignoring malformed user-defined shortcut specified by '
-					\, (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
-					\, "Error:" . m.err
+					\, (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . string(s)
+					\, "Exception at " . v:throwpoint . ": " . string(v:exception)
 					\, ":help txtfmt-auto-map-shortcuts")
+				continue
+			endtry
 			" Design Decision: Silently skip empty entries.
-			elseif !empty(m)
-				" Parse the spec for validation purposes.
+			if !empty(sc)
 				try
-					let pspecs = s:Parse_fmt_clr_transformer(m.rhs)
+					" Parse the spec for validation purposes.
+					let pspecs = s:Parse_fmt_clr_transformer(sc.rhs)
 				catch
-					" TODO: Consider creating a warning function...
 					call s:Msg('warning'
 						\, 'Ignoring the following user-defined shortcut:'
-						\, (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . s
-						\, "Reason: Highlighting spec `" . m.rhs . "' is invalid: " . string(v:exception)
+						\, (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . string(s)
+						\, "Exception at " . v:throwpoint . ": Highlighting spec `" . sc.rhs . "' is invalid: " . string(v:exception)
 						\, ":help txtfmt-auto-map-shortcuts")
 					continue
 				endtry
-				let stayInVisual = s:Get_shortcut_flags().stayInVisual
 				" Create a string representing the spec suitable for wrapping
 				" within '...' in function call: basically, the original string
 				" with any single quotes (shouldn't really have any) doubled.
-				let escaped_rhs = substitute(m.rhs, "'", "''", "g")
+				let escaped_rhs = substitute(sc.rhs, "'", "''", "g")
 				" Loop over the mode-specific lhs's, defining maps.
-				for [modes, lhs] in items(m.lhs)
-					if scope is s:
-						" Canonicalize lhs and perform any requested map leader remap.
-						let lhs = s:Remap_shortcut_leader(lhs)
-					endif
+				for lhs_entry in sc.lhs
+					" Perform any requested lhs remapping (default shortcut maps only).
+					let lhs = scope is s: ? s:Remap_shortcut_leader(lhs_entry.lhs) : lhs_entry.lhs
+					" Allow global/buf-local setting to be overridden by mode-specific flag.
+					let stayInVisual = get(lhs_entry.flags, 'stayInVisual', globalStayInVisual)
 					" Loop over modes in the mode string.
-					for mode in modes->split('\zs')
+					for mode in lhs_entry.modes->split('\zs')
 						let map_mode = mode
 						if mode =~ '[xv]'
 							" Create a Visual map.
 							let rhs = ":<C-U>call <SID>Highlight_visual('" . escaped_rhs . "')<CR>"
 							if mode =~ '[xv]' && stayInVisual
-								" Note: The gv on the end of the map is
-								" unnecessary but harmless when a vmap is
-								" executed in select-mode. It has to be done
-								" this way because maps created by vmap and smap
-								" behave completely differently in select-mode,
-								" such that creating a Txtfmt map with smap
-								" would be pointless.
+								" Note: The gv on the end of the map is unnecessary but harmless
+								" when a vmap is executed in select-mode. It has to be done this
+								" way because maps created by vmap and smap behave completely
+								" differently in select-mode, such that creating a Txtfmt map with
+								" smap would be pointless.
 								" :help Select-mode-mapping
 								let rhs .= 'gv'
 							endif
 						else " mode == 'o' (creates operator map)
-							" Terminology: Mode char of 'o' denotes a Txtfmt
-							" operator, which is implemented as a Vim normal
-							" mode map: hence, the distinction between mode and
-							" map_mode here.
+							" Terminology: Mode char of 'o' denotes a Txtfmt "operator", which is
+							" implemented as a Vim normal mode map: hence, the distinction between
+							" mode and map_mode here.
 							let map_mode = 'n'
 							if has('lambda')
 								let rhs = ':set opfunc={mode\ ->\ <SID>Highlight_operator(mode,\ '''
 											\ . escape(escaped_rhs, ' \') . "')}<CR>g@"
 							else
-								" User is using very old (pre-8) version of Vim.
-								" No lambdas, so pass the spec to wrapper via script-local var.
-								" Note: This is obviously not thread-safe, but
-								" user maps are inherently single-threaded...
+								" User is using very old (pre-8) version of Vim. No lambdas, so pass
+								" the spec to wrapper via script-local var.
+								" Note: This is obviously not thread-safe, but user maps are
+								" inherently single-threaded...
 								let rhs = ":let s:txtfmt_active_shortcut_spec = '" . escaped_rhs . "'"
 									\ . "\<C-V>|set opfunc=<SID>Highlight_operator_wrapper<CR>g@"
 							endif
 						endif
+						" Make sure we're not overriding a map already created at same scope.
+						" Rationale: This would almost certainly be a mistake, whereas buf-local
+						" overriding global or default isn't necessarily a mistake, and will be
+						" handled by conflict/ambiguity mechanism in Def_map1().
 						let k = scope_prefix . ':' . mode . ':' . lhs
 						if maps->has_key(k) && maps[k] != rhs
-							" Override at same scope is probably a mistake. Warn
-							" that it overrides an earlier one.
-							" TODO: Create a warn/err function...
-							echomsg 'The following user-defined shortcut redefines one defined earlier at the same scope:'
-							echomsg (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . '] = ' . map_mode . 'map ' . s
-							echomsg ":help txtfmt-auto-map-shortcuts"
+							let map_lhs_display = "  " . map_mode . 'map ' . lhs . " "
+							call s:Msg('warning'
+								\, 'The following user-defined shortcut specified by '
+								\. (scope is b: ? 'b:' : 'g:') . 'txtfmtShortcuts[' . i . ']...'
+								\, map_lhs_display . rhs
+								\, '...redefines the following:'
+								\, map_lhs_display . maps[k]
+								\, ":help txtfmt-auto-map-shortcuts")
 						endif
 						let maps[k] = rhs
 						" Create the map (and corresponding undo).

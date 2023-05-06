@@ -3,12 +3,12 @@
 " File: This is the global plugin file, which contains configuration code
 " needed by both the ftplugin and the syntax files.
 " Creation:	2004 Nov 06
-" Last Change: 2023 Apr 20
+" Last Change: 2023 May 06
 " Maintainer:	Brett Pershing Stahlman <brettstahlman@gmail.net>
 " License:	This file is placed in the public domain.
 
 " Note: The following line is required by a packaging script
-let g:Txtfmt_Version = "4.3"
+let g:Txtfmt_Version = "5"
 
 " Autocommands needed by refresh mechanism <<<
 au FileType * call s:Txtfmt_save_filetype()
@@ -870,7 +870,7 @@ fu! s:Translate_color_optstr(optstr)
 		elseif pst == 3
 			if tok == ':'
 				let pst = 4
-			elseif
+			elseif tok == ''
 				let s:err_str = "Expected ':', encountered end of color def string"
 				return ''
 			else
