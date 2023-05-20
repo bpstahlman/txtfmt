@@ -223,8 +223,12 @@ let b:txtfmt_re_number_atom = '\([1-9]\d*\|0x\x\+\)'
 
 " Map the single-char fmt spec types to their 3-char equivalents.
 " TODO: The abbrevs/names suffixes seem rather backwards...
-let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc', 'u': 'sqc'}
-let b:txtfmt_rgn_typ_names = {'fmt': 'f', 'clr': 'c', 'bgc': 'k', 'sqc': 'u'}
+" FIXME_SQUIGGLE: Consider changing sqc now that it also supports
+" strikethrough (and perhaps other attributes eventually).
+" Possibilities:
+" spc - special or special color
+let b:txtfmt_rgn_typ_abbrevs = {'f': 'fmt', 'c': 'clr', 'k': 'bgc', 's': 'sqc'}
+let b:txtfmt_rgn_typ_names = {'fmt': 'f', 'clr': 'c', 'bgc': 'k', 'sqc': 's'}
 
 " >>>
 " General utility functions <<<
@@ -1839,120 +1843,91 @@ fu! s:Process_clr_masks()
 	endwhile
 endfu
 " >>>
+" Function: s:Define_attrib_mask_vars() <<<
+" Define old-style list representing binary progression of attributes (e.g.,
+" format attributes).
+" Best illustrated with an example...
+" Arguments: ('b', 'txtfmt_fmt', ['u', 'b', 'i'], '-', '')
+" => let b:txtfmt_fmt0 = '-'
+"    let b:txtfmt_fmt1 = 'u'
+"    let b:txtfmt_fmt2 = 'b'
+"    let b:txtfmt_fmt2 = 'ub'
+"    let b:txtfmt_fmt2 = 'i'
+"    let b:txtfmt_fmt2 = 'ui'
+"    let b:txtfmt_fmt2 = 'bi'
+"    let b:txtfmt_fmt2 = 'ubi'
+" Note: Would make sep optional, but Vim7 doesn't support optional args.
+fu! s:Define_attrib_mask_vars(scope, var, attribs, zero_val, sep)
+	" The zero element is special.
+	let {a:scope}{':'}{a:var}{0} = a:zero_val
+	" Build the masks for all elements with at least 1 attribute.
+	for i in range(float2nr(pow(2, len(a:attribs))))
+		let bits = i
+		let bi = 0
+		" Build attribs list within loop for subsequent join.
+		let attribs = []
+		" Keep going till we've processed the most significant 1 bit.
+		while bits
+			if and(bits, 1)
+				call add(attribs, a:attribs[bi])
+			endif
+			" Advance to next most significant bit.
+			let bi += 1
+			let bits /= 2
+		endwhile
+		" Join the components.
+		let b:{a:var}{i} = attribs->join(a:sep)
+	endfor
+endfu
+" >>>
 " Function: s:Define_fmtclr_vars() <<<
 fu! s:Define_fmtclr_vars()
 	" Format definition array <<<
 	" NOTE: This array is used for rhs of syntax definitions, but also for display
 	" by ShowTokenMap.
-	let b:txtfmt_fmt{0}  = 'NONE'
-	let b:txtfmt_fmt{1}  = 'underline'
-	let b:txtfmt_fmt{2}  = 'bold'
-	let b:txtfmt_fmt{3}  = 'underline,bold'
-	let b:txtfmt_fmt{4}  = 'italic'
-	let b:txtfmt_fmt{5}  = 'underline,italic'
-	let b:txtfmt_fmt{6}  = 'bold,italic'
-	let b:txtfmt_fmt{7}  = 'underline,bold,italic'
+	let lattribs = ['underline', 'bold', 'italic']
+	let sattribs = ['u', 'b', 'i']
+	" Augment the base b:ubisrc_mask in subsequent conditionals as necessary.
+	let b:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4}
+	let b:txtfmt_num_ex_formats = 0
 	if !b:txtfmt_cfg_longformats
 		" FIXME_SQUIGGLE: Rename this...
+		let b:txtfmt_num_formats = 8
 		if b:txtfmt_cfg_sqcolor
 			" extended formats
 			" Treat strikethrough as most significant bit.
-			let b:txtfmt_fmt{8}   = 'undercurl'
-			let b:txtfmt_fmt{9}   = 'underline,undercurl'
-			let b:txtfmt_fmt{10}  = 'bold,undercurl'
-			let b:txtfmt_fmt{11}  = 'underline,bold,undercurl'
-			let b:txtfmt_fmt{12}  = 'italic,undercurl'
-			let b:txtfmt_fmt{13}  = 'underline,italic,undercurl'
-			let b:txtfmt_fmt{14}  = 'bold,italic,undercurl'
-			let b:txtfmt_fmt{15}  = 'underline,bold,italic,undercurl'
-			let b:txtfmt_fmt{16}  = 'strikethrough'
-			let b:txtfmt_fmt{17}  = 'underline,strikethrough'
-			let b:txtfmt_fmt{18}  = 'bold,strikethrough'
-			let b:txtfmt_fmt{19}  = 'underline,bold,strikethrough'
-			let b:txtfmt_fmt{20}  = 'italic,strikethrough'
-			let b:txtfmt_fmt{21}  = 'underline,italic,strikethrough'
-			let b:txtfmt_fmt{22}  = 'bold,italic,strikethrough'
-			let b:txtfmt_fmt{23}  = 'underline,bold,italic,strikethrough'
-			let b:txtfmt_fmt{24}  = 'undercurl,strikethrough'
-			let b:txtfmt_fmt{25}  = 'underline,undercurl,strikethrough'
-			let b:txtfmt_fmt{26}  = 'bold,undercurl,strikethrough'
-			let b:txtfmt_fmt{27}  = 'underline,bold,undercurl,strikethrough'
-			let b:txtfmt_fmt{28}  = 'italic,undercurl,strikethrough'
-			let b:txtfmt_fmt{29}  = 'underline,italic,undercurl,strikethrough'
-			let b:txtfmt_fmt{30}  = 'bold,italic,undercurl,strikethrough'
-			let b:txtfmt_fmt{31}  = 'underline,bold,italic,undercurl,strikethrough'
-
-			let b:txtfmt_num_formats = 32
-		else
-			" short formats
-			let b:txtfmt_num_formats = 8
+			call extend(lattribs, ['undercurl', 'strikethrough'])
+			call extend(sattribs, ['c', 'x'])
+			call extend(b:ubisrc_mask, {'c': 8, 'x': 16})
+			let b:txtfmt_num_ex_formats = 24
 		endif
 	else
 		" long formats
-		let b:txtfmt_fmt{8}  = 'standout'
-		let b:txtfmt_fmt{9}  = 'underline,standout'
-		let b:txtfmt_fmt{10} = 'bold,standout'
-		let b:txtfmt_fmt{11} = 'underline,bold,standout'
-		let b:txtfmt_fmt{12} = 'italic,standout'
-		let b:txtfmt_fmt{13} = 'underline,italic,standout'
-		let b:txtfmt_fmt{14} = 'bold,italic,standout'
-		let b:txtfmt_fmt{15} = 'underline,bold,italic,standout'
-		let b:txtfmt_fmt{16} = 'reverse'
-		let b:txtfmt_fmt{17} = 'underline,reverse'
-		let b:txtfmt_fmt{18} = 'bold,reverse'
-		let b:txtfmt_fmt{19} = 'underline,bold,reverse'
-		let b:txtfmt_fmt{20} = 'italic,reverse'
-		let b:txtfmt_fmt{21} = 'underline,italic,reverse'
-		let b:txtfmt_fmt{22} = 'bold,italic,reverse'
-		let b:txtfmt_fmt{23} = 'underline,bold,italic,reverse'
-		let b:txtfmt_fmt{24} = 'standout,reverse'
-		let b:txtfmt_fmt{25} = 'underline,standout,reverse'
-		let b:txtfmt_fmt{26} = 'bold,standout,reverse'
-		let b:txtfmt_fmt{27} = 'underline,bold,standout,reverse'
-		let b:txtfmt_fmt{28} = 'italic,standout,reverse'
-		let b:txtfmt_fmt{29} = 'underline,italic,standout,reverse'
-		let b:txtfmt_fmt{30} = 'bold,italic,standout,reverse'
-		let b:txtfmt_fmt{31} = 'underline,bold,italic,standout,reverse'
+		call extend(lattribs, ['standout', 'reverse'])
+		call extend(sattribs, ['s', 'r'])
+		call extend(b:ubisrc_mask, {'s': 8, 'r': 16})
 		" If using undercurl (introduced in Vim 7.0), there will be twice as
 		" many formats.
 		if !b:txtfmt_cfg_undercurl
 			let b:txtfmt_num_formats = 32
 		else
-			let b:txtfmt_fmt{32} = 'undercurl'
-			let b:txtfmt_fmt{33} = 'underline,undercurl'
-			let b:txtfmt_fmt{34} = 'bold,undercurl'
-			let b:txtfmt_fmt{35} = 'underline,bold,undercurl'
-			let b:txtfmt_fmt{36} = 'italic,undercurl'
-			let b:txtfmt_fmt{37} = 'underline,italic,undercurl'
-			let b:txtfmt_fmt{38} = 'bold,italic,undercurl'
-			let b:txtfmt_fmt{39} = 'underline,bold,italic,undercurl'
-			let b:txtfmt_fmt{40} = 'standout,undercurl'
-			let b:txtfmt_fmt{41} = 'underline,standout,undercurl'
-			let b:txtfmt_fmt{42} = 'bold,standout,undercurl'
-			let b:txtfmt_fmt{43} = 'underline,bold,standout,undercurl'
-			let b:txtfmt_fmt{44} = 'italic,standout,undercurl'
-			let b:txtfmt_fmt{45} = 'underline,italic,standout,undercurl'
-			let b:txtfmt_fmt{46} = 'bold,italic,standout,undercurl'
-			let b:txtfmt_fmt{47} = 'underline,bold,italic,standout,undercurl'
-			let b:txtfmt_fmt{48} = 'reverse,undercurl'
-			let b:txtfmt_fmt{49} = 'underline,reverse,undercurl'
-			let b:txtfmt_fmt{50} = 'bold,reverse,undercurl'
-			let b:txtfmt_fmt{51} = 'underline,bold,reverse,undercurl'
-			let b:txtfmt_fmt{52} = 'italic,reverse,undercurl'
-			let b:txtfmt_fmt{53} = 'underline,italic,reverse,undercurl'
-			let b:txtfmt_fmt{54} = 'bold,italic,reverse,undercurl'
-			let b:txtfmt_fmt{55} = 'underline,bold,italic,reverse,undercurl'
-			let b:txtfmt_fmt{56} = 'standout,reverse,undercurl'
-			let b:txtfmt_fmt{57} = 'underline,standout,reverse,undercurl'
-			let b:txtfmt_fmt{58} = 'bold,standout,reverse,undercurl'
-			let b:txtfmt_fmt{59} = 'underline,bold,standout,reverse,undercurl'
-			let b:txtfmt_fmt{60} = 'italic,standout,reverse,undercurl'
-			let b:txtfmt_fmt{61} = 'underline,italic,standout,reverse,undercurl'
-			let b:txtfmt_fmt{62} = 'bold,italic,standout,reverse,undercurl'
-			let b:txtfmt_fmt{63} = 'underline,bold,italic,standout,reverse,undercurl'
+			call add(lattribs, 'undercurl')
+			call add(sattribs, 'c')
+			call extend(b:ubisrc_mask, {'c': 32})
 			let b:txtfmt_num_formats = 64
 		endif
 	endif
+
+	" Define buf-local, old-style list b:txtfmt_fmt{1}, b:txtfmt_fmt{2}, ...
+	call s:Define_attrib_mask_vars('b', 'txtfmt_fmt', lattribs, 'NONE', ',')
+	" Define buf-local, old-style list b:ubisrc_fmt{1}, b:ubisrc_fmt{2}, ...
+	" For convenience, associate format indices with their respective
+	" '[u][b][i][s][r][c][x]' string, in canonical form. Note that canonical
+	" form may be used for display, but is also a valid (but not the only) fmt
+	" spec.
+	" FIXME_SQUIGGLE: Should probably change the name of ubisrc_fmt.
+	" Question: Do we need to have the unused ones defined?
+	call s:Define_attrib_mask_vars('b', 'ubisrc_fmt', sattribs, 'NONE', ',')
 	" >>>
 	" <<< Default color definition array
 	" These are the original defaults
@@ -2099,8 +2074,11 @@ fu! s:Define_fmtclr_regexes()
 	endfor
 	" Format region tokens
 	let b:txtfmt_re_fmt_tok_atom = nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\ . nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok)
 	let b:txtfmt_re_fmt_stok_atom = nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\ . nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) 
 	let b:txtfmt_re_fmt_etok_atom = nr2char(b:txtfmt_fmt_first_tok)
+	" FIXME_SQUIGGLE: Is this one needed?
 	let b:txtfmt_re_sqf_etok_atom = nr2char(b:txtfmt_sqf_first_tok)
 	" Color regions that include inactive colors
 	" FIXME_SQUIGGLE: No reason not to parameterize the following.
@@ -2122,19 +2100,20 @@ fu! s:Define_fmtclr_regexes()
 	" Combined regions
 	let b:txtfmt_re_any_tok_atom =
 				\(clr ? b:txtfmt_re_clr_tok_atom : '')
-				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\.b:txtfmt_re_fmt_tok_atom
 				\.(bgc ? b:txtfmt_re_bgc_tok_atom : '')
 				\.(sqc ? b:txtfmt_re_sqc_tok_atom : '')
 	" TODO: Perhaps get rid of dependence upon b:txtfmt_clr_last_tok?
 	" TODO: Refactor to use newly-created CLR and BGC atoms
 	let b:txtfmt_re_ANY_tok_atom =
 				\(clr ? nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok) : '')
-				\.nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
+				\.b:txtfmt_re_fmt_tok_atom
 				\.(sqc ? nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
 				\.(bgc ? nr2char(b:txtfmt_bgc_first_tok).'-'.nr2char(b:txtfmt_bgc_last_tok) : '')
 				\.(sqc ? nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok) : '')
 	let b:txtfmt_re_any_stok_atom =
 				\(clr ? b:txtfmt_re_clr_stok_atom : '')
+				\.b:txtfmt_re_fmt_stok_atom
 				\.nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
 				\.(sqc ? nr2char(b:txtfmt_sqf_first_tok + 1).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
 				\.(bgc ? b:txtfmt_re_bgc_stok_atom : '')
@@ -2719,75 +2698,6 @@ fu! s:Do_config_common()
 endfu
 " >>>
 call s:Do_config_common()
-" Define buffer-local constants <<<
-" For convenience, associate format indices with their respective
-" '[u][b][i][s][r][c]' string, in fiducial form. Note that fiducial form may
-" be used for display, but is also a valid (but not the only) fmt spec.
-let b:ubisrc_fmt0  = '-'
-let b:ubisrc_fmt1  = 'u'
-let b:ubisrc_fmt2  = 'b'
-let b:ubisrc_fmt3  = 'bu'
-let b:ubisrc_fmt4  = 'i'
-let b:ubisrc_fmt5  = 'iu'
-let b:ubisrc_fmt6  = 'ib'
-let b:ubisrc_fmt7  = 'ibu'
-let b:ubisrc_fmt8  = 's'
-let b:ubisrc_fmt9  = 'su'
-let b:ubisrc_fmt10 = 'sb'
-let b:ubisrc_fmt11 = 'sbu'
-let b:ubisrc_fmt12 = 'si'
-let b:ubisrc_fmt13 = 'siu'
-let b:ubisrc_fmt14 = 'sib'
-let b:ubisrc_fmt15 = 'sibu'
-let b:ubisrc_fmt16 = 'r'
-let b:ubisrc_fmt17 = 'ru'
-let b:ubisrc_fmt18 = 'rb'
-let b:ubisrc_fmt19 = 'rbu'
-let b:ubisrc_fmt20 = 'ri'
-let b:ubisrc_fmt21 = 'riu'
-let b:ubisrc_fmt22 = 'rib'
-let b:ubisrc_fmt23 = 'ribu'
-let b:ubisrc_fmt24 = 'rs'
-let b:ubisrc_fmt25 = 'rsu'
-let b:ubisrc_fmt26 = 'rsb'
-let b:ubisrc_fmt27 = 'rsbu'
-let b:ubisrc_fmt28 = 'rsi'
-let b:ubisrc_fmt29 = 'rsiu'
-let b:ubisrc_fmt30 = 'rsib'
-let b:ubisrc_fmt31 = 'rsibu'
-let b:ubisrc_fmt32 = 'c'
-let b:ubisrc_fmt33 = 'cu'
-let b:ubisrc_fmt34 = 'cb'
-let b:ubisrc_fmt35 = 'cbu'
-let b:ubisrc_fmt36 = 'ci'
-let b:ubisrc_fmt37 = 'ciu'
-let b:ubisrc_fmt38 = 'cib'
-let b:ubisrc_fmt39 = 'cibu'
-let b:ubisrc_fmt40 = 'cs'
-let b:ubisrc_fmt41 = 'csu'
-let b:ubisrc_fmt42 = 'csb'
-let b:ubisrc_fmt43 = 'csbu'
-let b:ubisrc_fmt44 = 'csi'
-let b:ubisrc_fmt45 = 'csiu'
-let b:ubisrc_fmt46 = 'csib'
-let b:ubisrc_fmt47 = 'csibu'
-let b:ubisrc_fmt48 = 'cr'
-let b:ubisrc_fmt49 = 'cru'
-let b:ubisrc_fmt50 = 'crb'
-let b:ubisrc_fmt51 = 'crbu'
-let b:ubisrc_fmt52 = 'cri'
-let b:ubisrc_fmt53 = 'criu'
-let b:ubisrc_fmt54 = 'crib'
-let b:ubisrc_fmt55 = 'cribu'
-let b:ubisrc_fmt56 = 'crs'
-let b:ubisrc_fmt57 = 'crsu'
-let b:ubisrc_fmt58 = 'crsb'
-let b:ubisrc_fmt59 = 'crsbu'
-let b:ubisrc_fmt60 = 'crsi'
-let b:ubisrc_fmt61 = 'crsiu'
-let b:ubisrc_fmt62 = 'crsib'
-let b:ubisrc_fmt63 = 'crsibu'
-" >>>
 else " if exists('b:txtfmt_do_common_config')
 " Function: s:Txtfmt_refresh() <<<
 " Purpose: Invoked by buffer-local command Refresh when user wishes to

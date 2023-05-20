@@ -12,8 +12,6 @@
 " TODO: This doesn't appear to be used any longer. Consider removal.
 let s:script_name = 'ftplugin'
 
-" Binary progression: ubisrc
-let s:ubisrc_mask = {'u': 1, 'b': 2, 'i': 4, 's': 8, 'r': 16, 'c': 32}
 let s:cfg_color_name_compat = 0
 
 " Number of bytes backwards to look when attempting sync for vmap operation.
@@ -26,6 +24,10 @@ let s:SYNC_DIST_BYTES = 2500
 " TODO: Need to go back and make Translate_fmt_clr_list handle this.
 " TODO: Is this the best place for this?
 let s:cfg_color_name_compat = 0
+
+" Facilitate conversion between short and long color rgn names.
+let s:clr_short_to_long = {'fg': 'clr', 'bg': 'bgc', 'sq': 'sqc'}
+let s:clr_long_to_short = {'clr': 'fg', 'bgc': 'bg', 'sqc': 'sq'}
 
 " >>>
 " Function: s:Add_undo() <<<
@@ -1318,7 +1320,7 @@ fu! s:Lookup_clr_namepat(typ, namepat)
 	elseif a:typ == 'k'
 		let fg_bg_or_sq = 'bg'
 		let clr_bgc_or_sqc = 'bgc'
-	elseif a:typ == 'u'
+	elseif a:typ == 's'
 		let fg_bg_or_sq = 'sq'
 		let clr_bgc_or_sqc = 'sqc'
 	else
@@ -1432,22 +1434,20 @@ fu! s:Translate_fmt_clr_spec(spec)
 	" We have a non-default (but not necessarily valid) spec.
 	if t ==? 'f'
 		" fmt string
-		" Since not default fmt request, spec must match [ubi[sr[c]]]
+		" Since not default fmt request, spec must match [ubi[sr[c]]]|[ubi[cx]]
 		if s =~ '[^'.b:ubisrc_fmt{b:txtfmt_num_formats-1}.']'
 			" s contains illegal (but not necessarily invalid) char
-			if s !~ '[^ubisrc]'
+			if s !~ '[^ubisrcx]'
 				" Illegal (but not invalid) char
-				" User has mistakenly used s, r or c with one of the
-				" 'short' formats or c with a version of Vim that doesn't
-				" support undercurl. Give an appropriate warning.
-				if !b:txtfmt_cfg_longformats
-					let s:err_str = "Only 'u', 'b' and 'i' attributes are permitted when one of the 'short' formats is in effect"
-				else
-					" Long formats are in use; hence, we can get here only
-					" if user attempted to use undercurl in version of Vim
-					" that doesn't support it.
-					let s:err_str = "Undercurl attribute supported only in Vim 7 or later"
-				endif
+				" User has mistakenly used one of the following...
+				" 1) s, r or c with one of the non-long formats
+				" 2) c with a version of Vim that doesn't support undercurl.
+				" 3) x with anything but XX
+				" Give an appropriate warning.
+				" FIXME_SQUIGGLE: Do we need a test/warning for undercurl in
+				" pre-Vim7? I'm thinking no one is still using it...
+				let s:err_str = "Current configuration supports only the following format attributes: "
+					\ . b:ubisrc_fmt{b:txtfmt_num_formats-1}
 			else
 				let s:err_str = 'Invalid chars in fmt spec after "f"'
 			endif
@@ -1455,15 +1455,14 @@ fu! s:Translate_fmt_clr_spec(spec)
 		else
 			" Spec contains only legal (active) and valid fmt attrs.
 			" Convert the attr chars to a binary val used to get token.
-			" TODO: Perhaps use Vim's or() function now that it's available.
 			let mask = 0
 			" Loop over individual chars.
 			for atom in split(s, '\zs')
-				let mask = or(mask, s:ubisrc_mask[atom])
+				let mask = or(mask, b:ubisrc_mask[atom])
 			endfor
 			return nr2char(b:txtfmt_fmt_first_tok + mask)
 		endif
-	elseif t ==? 'c' || t ==? 'k' || t ==? 'u'
+	elseif t ==? 'c' || t ==? 'k' || t ==? 's'
 		" Assumption: Type has already been validated.
 		" clr, bgc or sqc string
 		" Since not default clr/bgc/sqc request, spec must match color pattern.
@@ -1712,16 +1711,16 @@ fu! s:Parse_fmt_clr_transformer(specs)
 	" component can be caused only by comma; accordingly, the \ze\S is
 	" superfluous.
 	let re_sep = '\s*,\s*\|\s\+'
-	let fckus = split(specs, re_sep, 1)
-	" Loop over the f/c/k/u components
-	for spec in fckus
+	let fcks = split(specs, re_sep, 1)
+	" Loop over the f/c/k/s components
+	for spec in fcks
 		if empty(spec)
 			throw "Parse_fmt_clr_transformer: empty fmt/clr/bgc/sqc components not permitted"
 		endif
 		" Extract token type and remainder of spec
 		let [t, spec] = [spec[0], spec[1:]]
 		" Validate the type
-		if t !~ '[fcku]'
+		if t !~ '[fcks]'
 			throw "Invalid type specifier in fmt/clr transformer spec: `" . t . "'"
 		endif
 		if has_key(rgns, b:txtfmt_rgn_typ_abbrevs[t])
@@ -1750,7 +1749,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				" TODO: Does this make sense, or should the -- be treated as
 				" error? (Consider that someone might think of -- as +.)
 				if attrs !~ '^[' . (additive ? '-+' : '')
-					\. b:ubisrc_fmt{b:txtfmt_num_formats-1} . ']\+$'
+					\. b:ubisrc_fmt{b:txtfmt_num_formats+b:txtfmt_num_ex_formats-1} . ']\+$'
 					throw "Invalid fmt transformer spec: `f" . spec . "'"
 				endif
 				" Initialize mask(s) to be built in loop.
@@ -1765,11 +1764,11 @@ fu! s:Parse_fmt_clr_transformer(specs)
 						let op = '-'
 					else
 						" Check for conflict.
-						if additive && and(masks[op == '+' ? '-' : '+'], s:ubisrc_mask[atom])
+						if additive && and(masks[op == '+' ? '-' : '+'], b:ubisrc_mask[atom])
 							throw "Ambiguous use of fmt attr " . atom
 							\ . " in both add/sub parts of spec: `f" . spec . "'"
 						endif
-						let masks[op] = or(masks[op], s:ubisrc_mask[atom])
+						let masks[op] = or(masks[op], b:ubisrc_mask[atom])
 					endif
 				endfor
 				if additive
@@ -1780,10 +1779,10 @@ fu! s:Parse_fmt_clr_transformer(specs)
 					let rgns.fmt = masks['=']
 				endif
 			endif
-		elseif t =~ '[cku]' " Assumption: t is always single char
+		elseif t =~ '[cks]' " Assumption: t is always single char
 			" FIXME_SQUIGGLE: Create parameterized mechanisms for dealing with
 			" some of this, to avoid spewing it around the codebase.
-			if t == 'k' && !b:txtfmt_cfg_bgcolor || t == 'u' && !b:txtfmt_cfg_sqcolor
+			if t == 'k' && !b:txtfmt_cfg_bgcolor || t == 's' && !b:txtfmt_cfg_sqcolor
 				throw "Use of `" . t . "' invalid when "
 					\ . (t == 'k' ? "background" : "undercurl")
 					\ . " colors are disabled"
@@ -1793,7 +1792,7 @@ fu! s:Parse_fmt_clr_transformer(specs)
 				" Return to default.
 				let clr_num = 0
 			else
-				" Strip optional `=' after c/k.
+				" Strip optional `=' after c/k/s.
 				let spec = substitute(spec, '^=', '', '')
 				let clr_num = s:Lookup_clr_namepat(t, spec)
 				if clr_num <= 0
@@ -1921,10 +1920,10 @@ fu! s:Parse_fmt_clr_transformer_obsolete(specs)
 					" util.
 					let mask = 0
 					for atom in split(cmask, '\zs')
-						if and(mask_prev, s:ubisrc_mask[atom])
+						if and(mask_prev, b:ubisrc_mask[atom])
 							throw "Conflict in fmt/clr transformer spec: attempt to both add and remove the same attribute: `" . atom . "'"
 						endif
-						let mask = or(mask, s:ubisrc_mask[atom])
+						let mask = or(mask, b:ubisrc_mask[atom])
 					endfor
 					call add(masks, mask)
 					" Save for conflict testing on next iteration.
@@ -2007,8 +2006,13 @@ fu! s:Get_tok_info(c)
 	" FIXME_SQUIGGLE: Determine whether the end of range checks are strictly
 	" necessary, given that we're working backwards from end, and regions
 	" generally butt up against subsequent region (except for formats when
-	" 'pack' option is unset).
-	if b:txtfmt_cfg_sqcolor && c_nr >= b:txtfmt_sqc_first_tok && c_nr < b:txtfmt_sqc_first_tok + b:txtfmt_num_colors
+	" 'pack' option is unset). Hmm... Pack option would negate the
+	" simplification.
+	" FIXME_SQUIGGLE: If we're not going to use "*_last_tok" for tests like
+	" this, what's it for? Consider eliminating...
+	if b:txtfmt_cfg_sqcolor && c_nr >= b:txtfmt_sqf_first_tok && c_nr < b:txtfmt_sqf_first_tok + b:txtfmt_num_ex_formats
+		let ret.rgn = 'fmt'
+	elseif b:txtfmt_cfg_sqcolor && c_nr >= b:txtfmt_sqc_first_tok && c_nr < b:txtfmt_sqc_first_tok + b:txtfmt_num_colors
 		let ret.rgn = 'sqc'
 	elseif b:txtfmt_cfg_bgcolor && c_nr >= b:txtfmt_bgc_first_tok && c_nr < b:txtfmt_bgc_first_tok + b:txtfmt_num_colors
 		let ret.rgn = 'bgc'
@@ -2019,12 +2023,16 @@ fu! s:Get_tok_info(c)
 	endif
 	if !empty(ret)
 		if ret.rgn == 'fmt'
-			let ret.idx = c_nr - b:txtfmt_fmt_first_tok
+			if c_nr >= b:txtfmt_sqf_first_tok
+				" Account for discontinuity in fmt ranges.
+				let ret.idx = b:txtfmt_num_formats + c_nr - b:txtfmt_sqf_first_tok
+			else
+				let ret.idx = c_nr - b:txtfmt_fmt_first_tok
+			endif
 		else
+			" One of the 3 types of color
 			let idx = c_nr - b:txtfmt_{ret.rgn}_first_tok
-			" FIXME_SQUIGGLE: Parameterize this more cleanly: e.g., function to
-			" convert between clr<->fg, bgc<->bg, etc...
-			if idx == 0 || b:txtfmt_cfg_{ret.rgn == 'clr' ? 'fg' : ret.rgn == 'bgc' ? 'bg' : 'sq'}colormask[idx - 1] == '1'
+			if idx == 0 || b:txtfmt_cfg_{s:clr_long_to_short[ret.rgn]}colormask[idx - 1] == '1'
 				let ret.idx = idx
 			else
 				" Inactive color! Convention is to indicate with neg. index
@@ -2093,7 +2101,7 @@ fu! s:Get_effective_pos(tok)
 	let pos = copy(a:tok.pos)
 	if a:tok.action == 'a'
 		" Get the token so we can determine its length.
-		let tokstr = s:Tok_nr_to_char(a:tok.rgn, a:tok.idx)
+		let tokstr = nr2char(s:Tok_nr_to_charidx(a:tok.rgn, a:tok.idx))
 		" Effective position is after the token.
 		let pos[1] += len(tokstr)
 	endif
@@ -2661,7 +2669,7 @@ fu! s:Get_hlable_patt(tok_info)
 		else
 			" Check specific fmt attributes.
 			let ws_hlable_fmt_mask = or(or(or(
-				\s:ubisrc_mask['u'], s:ubisrc_mask['s']), s:ubisrc_mask['r']), s:ubisrc_mask['c'])
+				\b:ubisrc_mask['u'], b:ubisrc_mask['s']), b:ubisrc_mask['r']), b:ubisrc_mask['c'])
 			let ws_hlable = and(idx, ws_hlable_fmt_mask)
 		endif
 		let re_extra = (ws_hlable  ? '' : '\&\S')
@@ -3549,6 +3557,7 @@ fu! s:Vmap_cmp_tok(t_a, t_b)
 		" (TODO - which way?)
 		return -1
 	else
+		echomsg 'a: ' . string(a:t_a) . '  b: ' . string(a:t_b)
 		throw printf("Internal error: mutually-exclusive actions %s, %s at position [%d, %d].",
 			\act_a, act_b, a:t_a.pos[0], a:t_a.pos[1])
 	endif
@@ -3670,11 +3679,18 @@ fu! s:Vmap_rev_and_merge(mtoks, toks, opt)
 	return mtoks_ret
 endfu
 " >>>
-" Function: s:Tok_nr_to_char() <<<
+" Function: s:Tok_nr_to_charidx() <<<
 " Return the actual tok char corresponding to inputs.
 " TODO: Move somewhere else and perhaps use within Translate_fmt_clr_spec.
-fu! s:Tok_nr_to_char(rgn, idx)
-	return nr2char(b:txtfmt_{a:rgn}_first_tok + a:idx)
+" FIXME_SQUIGGLE: Need to account for discontinuities.
+fu! s:Tok_nr_to_charidx(rgn, idx)
+	if a:rgn == 'fmt'
+		return a:idx >= b:txtfmt_num_formats
+			\ ? b:txtfmt_sqf_first_tok + a:idx - b:txtfmt_num_formats
+			\ : b:txtfmt_fmt_first_tok + a:idx
+	else
+		return b:txtfmt_{a:rgn}_first_tok + a:idx
+	endif
 endfu
 " >>>
 " Function: s:Get_pos_past_rgn() <<<
@@ -3873,7 +3889,7 @@ fu! s:Vmap_apply_changes(toks, opt)
 			" Note: pos could be just past end of line, in which case we simply
 			" position at end.
 			call cursor(tok.pos)
-			let tokstr = s:Tok_nr_to_char(tok.rgn, tok.idx)
+			let tokstr = nr2char(s:Tok_nr_to_charidx(tok.rgn, tok.idx))
 			" Insert/replace using appropriate normal mode command.
 			" TODO: Perhaps change r to s to obviate need for conversion.
 			exe 'normal! ' . (tok.action == 'r' ? 's' : tok.action) . "\<C-R>\<C-O>=l:tokstr\<CR>"
@@ -4559,7 +4575,7 @@ fu! s:Sel_parser_try_fterm(ps)
 			" in loop below... (Probably wait till I've refactored for latest
 			" format change.)
 			for attr in split(m[2], '\zs')
-				let term.mask = or(term.mask, s:ubisrc_mask[attr])
+				let term.mask = or(term.mask, b:ubisrc_mask[attr])
 			endfor
 		endif
 		return term
@@ -5184,18 +5200,18 @@ endfu
 " not, get rid of it.
 "=== [FG] COLORS ===
 "char-nr   description        clr-pattern                                clr-def
-"180       no color           -
-"181       Color0             ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000  #000000
-"182       Color1             ^blu\\%[e]$,c:DarkBlue,g:#0000FF           #0000FF
-"183       Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
+" 180      no color           -
+" 181      Color0             ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000  #000000
+" 182      Color1             ^blu\\%[e]$,c:DarkBlue,g:#0000FF           #0000FF
+" 183      Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
 ".
 ".
 "=== FORMAT ===
 "char-nr   description        spec
-"189       no format          -
-"190       italic             i
-"191       bold               b
-"192       bold,italic        bi
+" 189      no format          -
+" 190      italic             i
+" 191      bold               b
+" 192      bold,italic        bi
 ".
 ".
 ".
@@ -5212,7 +5228,7 @@ endfu
 " .
 " Important Note: The subsequent lines will be output if and only if
 " colored undercurl is enabled.
-"=== UNDERCURL COLORS ===
+"=== SPECIAL COLORS (e.g., undercurl, strikethrough) ===
 "char-nr   description        clr-pattern                                clr-def
 " 205      no color           -
 "*206      Color0 (inactive)  ^\\%(k\\|bla\\%[ck]\\)$,c:Black,g:#000000  #000000
@@ -5220,6 +5236,15 @@ endfu
 " 208      Color2             ^g\\%[reen]$,c:DarkGreen,g:#00FF00         #00FF00
 " .
 " .
+"
+"=== EXTENDED FORMATS (e.g., undercurl, strikethrough) ===
+"char-nr   description           spec
+" 214      undercurl             -
+" 215      underline,undercurl   i
+" 216      bold,undercurl        i
+" .
+" .
+
 " FIXME_SQUIGGLE: Hold off on this purely cosmetic function until I've gotten
 " colored undercurl basically working.
 fu! s:ShowTokenMap()
@@ -5227,27 +5252,35 @@ fu! s:ShowTokenMap()
 	let cw1 = 0 | let cw2 = 0 | let cw3 = 0 | let cw4 = 0
 	" Define an array, indexed by fgbg_idx, which may be used to build fg/bg
 	" specific var names.
-	let clr_or_bgc{0} = 'clr'
-	let clr_or_bgc{1} = 'bgc'
+	" FIXME: Probably rename clr_bgc_sqc to rgn or some such.
+	let clr_bgc_sqc{0} = 'clr'
+	let clr_bgc_sqc{1} = 'bgc'
+	let clr_bgc_sqc{2} = 'sqc'
 	" Initialize the vars that will accumulate table text
+	" FIXME: Probably make this a dict, keyed by rgn.
 	let fmt_header = '' | let fmt_lines = ''
 	let clr_header = '' | let clr_lines = ''
 	let bgc_header = '' | let bgc_lines = ''
+	let sqc_header = '' | let sqc_lines = ''
 	" Determine number format to use for char-nr column
 	let use_hex = strpart(b:txtfmt_cfg_starttok_display, 0, 2) == '0x'
 	let i = 0
 	while i < 2
 		" Loop over all format lines (1 hdr and b:txtfmt_num_formats-1 fmt)
 		let iFmt = -1	" start with header line
-		while iFmt < b:txtfmt_num_formats
+		" FIXME_SQUIGGLE: Decide whether it makes sense to show all formats
+		" together...
+		while iFmt < b:txtfmt_num_formats + b:txtfmt_num_ex_formats
 			let line = ''	" Initialize text for current line
 			" Column 1
 			if iFmt == -1
 				let col1_text = ' char-nr'
 			else
-				let col1_text = b:txtfmt_fmt_first_tok + iFmt
+				" Handle discontinuity
+				let col1_text = s:Tok_nr_to_charidx('fmt', iFmt)
 				if use_hex
 					" Convert to hex
+					" FIXME: Safe to upgrade to printf() or something?
 					let col1_text = TxtfmtUtil_num_to_hex_str(col1_text)
 				endif
 				" Prepend space for alignment
@@ -5277,7 +5310,7 @@ fu! s:ShowTokenMap()
 				endif
 			else
 				" Output line
-				let line = line.(col2_text.s:MakeString(' ', cw2 + 2 - strlen(col2_text)))
+				let line = line . (col2_text.s:MakeString(' ', cw2 + 2 - strlen(col2_text)))
 			endif
 			" Column 3
 			if iFmt == -1
@@ -5294,7 +5327,7 @@ fu! s:ShowTokenMap()
 				endif
 			else
 				" Output line
-				let line = line.(col3_text.s:MakeString(' ', cw3 + 2 - strlen(col3_text)))
+				let line = line . (col3_text.s:MakeString(' ', cw3 + 2 - strlen(col3_text)))
 			endif
 			" Accumulate line just built into the list of lines
 			if i == 1
@@ -5308,15 +5341,20 @@ fu! s:ShowTokenMap()
 			endif
 			let iFmt = iFmt + 1
 		endwhile
-		" Loop over fg colors and (if necessary) bg colors
-		let fgbg_idx = 0
-		while fgbg_idx < (b:txtfmt_cfg_bgcolor ? 2 : 1)
-			if fgbg_idx == 0
+		" Loop over fg colors and (if necessary) bg colors and sp colors
+		" FIXME_SQUIGGLE: Use a dictionary or something in lieu of this indexed
+		" approach.
+		let fgbgsp_idx = 0
+		while fgbgsp_idx < (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_sqcolor ? 3 : 2 : 1)
+			if fgbgsp_idx == 0
 				let first_tok = b:txtfmt_clr_first_tok
 				let colormask = b:txtfmt_cfg_fgcolormask
-			else
+			elseif fgbgsp_idx == 1
 				let first_tok = b:txtfmt_bgc_first_tok
 				let colormask = b:txtfmt_cfg_bgcolormask
+			else
+				let first_tok = b:txtfmt_sqc_first_tok
+				let colormask = b:txtfmt_cfg_sqcolormask
 			endif
 			" Loop over all color tokens (even inactive ones)
 			" Index note: In this loop, index 0 refers to 'no color', while index
@@ -5351,7 +5389,7 @@ fu! s:ShowTokenMap()
 					endif
 				else
 					" Output line
-					let line = line.(col1_text.s:MakeString(' ', cw1 + 2 - strlen(col1_text)))
+					let line = line . (col1_text.s:MakeString(' ', cw1 + 2 - strlen(col1_text)))
 				endif
 				" Column 2
 				if iClr == -1
@@ -5371,7 +5409,7 @@ fu! s:ShowTokenMap()
 					endif
 				else
 					" Output line
-					let line = line.(col2_text.s:MakeString(' ', cw2 + 2 - strlen(col2_text)))
+					let line = line . (col2_text.s:MakeString(' ', cw2 + 2 - strlen(col2_text)))
 				endif
 				" Column 3
 				if iClr == -1
@@ -5379,7 +5417,7 @@ fu! s:ShowTokenMap()
 				elseif iClr == 0
 					let col3_text = '-'
 				else
-					let col3_text = b:txtfmt_{clr_or_bgc{fgbg_idx}}_namepat{iClr}
+					let col3_text = b:txtfmt_{clr_bgc_sqc{fgbgsp_idx}}_namepat{iClr}
 				endif
 				if i == 0
 					" Calculate col width
@@ -5388,7 +5426,7 @@ fu! s:ShowTokenMap()
 					endif
 				else
 					" Output line
-					let line = line.(col3_text.s:MakeString(' ', cw3 + 2 - strlen(col3_text)))
+					let line = line . (col3_text.s:MakeString(' ', cw3 + 2 - strlen(col3_text)))
 				endif
 				" Column 4
 				if iClr == -1
@@ -5396,7 +5434,7 @@ fu! s:ShowTokenMap()
 				elseif iClr == 0
 					let col4_text = 'N.A.'
 				else
-					let col4_text = b:txtfmt_{clr_or_bgc{fgbg_idx}}{iClr}
+					let col4_text = b:txtfmt_{clr_bgc_sqc{fgbgsp_idx}}{iClr}
 				endif
 				if i == 0
 					" Calculate col width
@@ -5405,29 +5443,33 @@ fu! s:ShowTokenMap()
 					endif
 				else
 					" Output line
-					let line = line.(col4_text.s:MakeString(' ', cw4 + 2 - strlen(col4_text)))
+					let line = line . (col4_text.s:MakeString(' ', cw4 + 2 - strlen(col4_text)))
 				endif
 				" Accumulate line just built into the list of lines
 				if i == 1
 					if iClr == -1
 						" Store header line separately so that echohl can be used
-						if fgbg_idx == 0
+						if fgbgsp_idx == 0
 							let clr_header = line
 						else
 							let bgc_header = line
 						endif
 					else
 						" Regular row in table (non-header)
-						if fgbg_idx == 0
+						" FIXME_SQUIGGLE: Really need to switch to an approach
+						" that's cleaner than fgbgsp_idx...
+						if fgbgsp_idx == 0
 							let clr_lines = clr_lines.(iClr==0?'':"\<NL>").line
-						else
+						elseif fgbgsp_idx == 1
 							let bgc_lines = bgc_lines.(iClr==0?'':"\<NL>").line
+						else
+							let sqc_lines = sqc_lines.(iClr==0?'':"\<NL>").line
 						endif
 					endif
 				endif
 				let iClr = iClr + 1
 			endwhile
-			let fgbg_idx = fgbg_idx + 1
+			let fgbgsp_idx = fgbgsp_idx + 1
 		endwhile
 		let i = i + 1
 	endwhile
@@ -5448,6 +5490,15 @@ fu! s:ShowTokenMap()
 		echo bgc_header
 		echohl None
 		echo bgc_lines
+		if b:txtfmt_cfg_sqcolor
+			" FIXME_SQUIGGLE: Decide whether sqcolor should imply sqcolor...
+			" Currently, it does, hence the containing if...
+			echohl Title
+			echo ' === SP COLORS ==='
+			echo sqc_header
+			echohl None
+			echo sqc_lines
+		endif
 	endif
 endfu
 " >>>
@@ -5705,8 +5756,7 @@ endif	" if !exists('*s:MoveStartTok')
 " assumes cursor position) and from a command (which permits user to specify
 " position).
 " IMPORTANT NOTE: This function is multibyte-safe.
-" FIXME_SQUIGGLE: Hold off on auxiliary functions till colored undercurl is
-" basically working.
+" FIXME_SQUIGGLE: Need to account for discontinuity in format ranges.
 fu! s:GetTokInfo(...)
 	" The output of the if/else will be line/col of character of interest,
 	" assuming the inputs are valid.

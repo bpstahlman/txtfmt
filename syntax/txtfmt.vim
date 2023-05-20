@@ -476,15 +476,24 @@ endfu
 " whole point of the exe builder was speed...
 fu! s:Make_exe_builder()
 	let o = {'st': 0, 'st_beg': 0, 's': ''}
-	" Add list of deferred exprs and const separator.
-	" Note: The resulting construct is effectively an expr, since the
-	" separator will be interior if it is used at all.
-	" FIXME: Consider making sep optional.
-	fu! o.add_list(ls, sep)
-		" Special Case: If sep is null, prefer `blah . blah' over `blah . "" . blah'
-		call self.add(join(a:ls, !empty(a:sep) ? " . '" . a:sep . "' . " : " . "))
+	" Add list of objects/exprs/literals, joned with provided const separator.
+	" FIXME: Consider making sep optional; for now, empty sep requests simple
+	" concatenation: e.g., prefer `blah . blah' over `blah . "" . blah'
+	fu! o.add_list(ls, sep, ...)
+		let need_sep = 0
+		for it in a:ls
+			if need_sep
+				call self.add(a:sep, 1)
+			elseif !empty(a:sep)
+				let need_sep = 1
+			endif
+			" Default to non-literal (expr).
+			call self.add(it, a:0 ? a:1 : 0)
+		endfor
 	endfu
 	" Prepare to append, taking current and next state into account.
+	" Note: The extra (state) arg is needed only for objects, whose initial (st)
+	" and final (a:1) states can differ.
 	fu! o.prep(st, ...)
 		if !self.st
 			" Save initial state.
@@ -500,16 +509,18 @@ fu! s:Make_exe_builder()
 				let self.s .= "' . "
 			endif
 		endif
-
 		let self.st = a:0 ? a:1 : a:st
 	endfu
-	" Optional arg:
-	"   literal
+	" Add another object, expr or literal to the builder.
+	" Note: If not an object, o will be a string, and the optional flag tells us
+	" whether it's an expr or literal (true => literal).
 	fu! o.add(o, ...)
 		if type(a:o) == 4
 			" Object
 			" Note: Only non-empty objects have any effect.
 			if a:o.st
+				" Note: An object's initial and final state can differ, and both
+				" are relevant to the prep().
 				call self.prep(a:o.st_beg, a:o.st)
 				let self.s .= a:o.s
 			endif
@@ -522,6 +533,7 @@ fu! s:Make_exe_builder()
 	fu! o.get()
 		return self.s
 	endfu
+	" Expand the template.
 	" Note: This doesn't change state in any way.
 	fu! o.get_estr()
 		" TODO: Might be able to handle empty as empty literal.
@@ -614,10 +626,13 @@ fu! s:Map_rgn_types(fn_or_expr)
 endfu
 " >>>
 " Function: s:Offset_to_char() <<<
+" FIXME_SQUIGGLE: Tok_nr_to_charidx() can be used in place of this if it's moved
+" to plugin file or (better) autoload.
 fu! s:Offset_to_char(rgn, off)
-	if a:rgn == 'fmt' && b:txtfmt_cfg_sqcolor && a:off > 8
+	" TODO: Handle 'long' formats.
+	if a:rgn == 'fmt' && b:txtfmt_cfg_sqcolor && a:off >= b:txtfmt_num_formats
 		" Need to handle discontiguous region.
-		let ch = b:txtfmt_sqf_first_tok + a:off - 8
+		let ch = b:txtfmt_sqf_first_tok + a:off - b:txtfmt_num_formats
 	else
 		let ch = b:txtfmt_{a:rgn}_first_tok + a:off
 	endif
@@ -853,7 +868,7 @@ fu! s:Define_syntax()
 			\ + (sqc_enabled
 			\ ? [{'name': 'sqc', 'abbrev': 'sq', 'max': b:txtfmt_cfg_numsqcolors, 'offs': []}]
 			\ : [])
-			\ + [{'name': 'fmt', 'max': b:txtfmt_num_formats - 1, 'offs': []}]
+			\ + [{'name': 'fmt', 'max': b:txtfmt_num_formats + b:txtfmt_num_ex_formats - 1, 'offs': []}]
 		" For color elements (all but final element of rgn_info), build a list
 		" mapping 0-based indices to actual color numbers (as used in txtfmtColor
 		" and txtfmtBgColor).
@@ -868,7 +883,7 @@ fu! s:Define_syntax()
 		" FIXME_COMBINATIONS: Decide whether to use this list comprehension or the
 		" stuff in the if...
 		" Note: This would be less messy if I used lambdas, but I don't like
-		" requiring upgrad to Vim 8.
+		" requiring upgrade to Vim 8.
 		let rgn_info = s:Map_rgn_types(
 			\ 'name == "fmt"'
 			\ . ' ? {"name": "fmt", "max": b:txtfmt_num_formats - 1, "offs": []}'
@@ -890,9 +905,11 @@ fu! s:Define_syntax()
 	while iord < num_rgn_typs
 		" Process current 'order'.
 		" Build all combinations...
-		" Note: Each element of rgn_combs is a list of dicts that exist in
-		" rgn_info[]. It should be considered a read-only view of only those
-		" regions implicated in a particular combination.
+		" Note: Each element of rgn_combs is a pair of lists of dicts that exist
+		" in rgn_info[]. The first element of the pair is for region types that
+		" are used in this combination; the second element of the pair is for
+		" those that aren't used. The dicts themselves should be considered
+		" read-only views of the corresponding rgn_info[] items.
 		let rgn_combs = s:Get_rgn_combinations(rgn_info, iord + 1)
 		" Note: Intentionally iterating regions from higher to lower order to
 		" ensure that for 1 regions, higher order regions have lower priority.
@@ -933,6 +950,9 @@ fu! s:Define_syntax()
 			" greater parallelism.
 			let rgns = map(rgn_objs[:], 'v:val.name')
 			let rest = map(rem_objs[:], 'v:val.name')
+			"echomsg "Order: " . (iord + 1)
+			"echomsg "rgns: " . string(rgn_objs[:])
+			"echomsg "rest: " . string(rem_objs[:])
 			" Assumption: Indices already in fiducial order (required by cterm=).
 			" Note: cterm= MUST come *after* ctermfg= to ensure that bold
 			" attribute is handled correctly in a cterm.
@@ -968,7 +988,11 @@ fu! s:Define_syntax()
 			if iord
 				for idx in range(iord + 1)
 					" Transitions to lower-order groups (used to be rtd group)
+					" Note: An Nth-order group will have N lower order regions.
+					" Rationale: Each lower order group lacks one of the rgn
+					" types present in the Nth-order group.
 					" TODO: Consider whether better way to do this now that no '_rtd' appended.
+					" FIXME: Use true lambdas for these map()s.
 					call ng_xb.add((need_comma ? "," : "")
 						\ . "Tf" . cui . "_"
 						\ . join(filter(rgns[:], 'v:key != l:idx'), "")
@@ -982,6 +1006,7 @@ fu! s:Define_syntax()
 			endif
 			" >>>
 			" Transitions to same order regions <<<
+			" Add same order region transitions to the template.
 			for idx in range(iord + 1)
 				call ng_xb.add((need_comma ? "," : "") . "@Tf" . cui . "_"
 					\ . join(rgns[:], "") . '_', 1)
@@ -991,7 +1016,8 @@ fu! s:Define_syntax()
 			endfor
 			" >>>
 			" Transitions to higher order regions <<<
-			" Loop over the other regions (in rest)
+			" Add higher order region transitions to the template.
+			" Pull in the "other" regions (orgn) (in loop over rest)
 			for orgn in rest
 				" Assumption: need_comma check unnecessary, since same order
 				" region ensures it will be needed.
@@ -1001,6 +1027,8 @@ fu! s:Define_syntax()
 				" FIXME_COMBINATIONS: Given that we're inserting element into
 				" already-sorted list, this approach may be overkill. Revisit
 				" if efficiency matters.
+				" TODO: Definitely profile this, as efficiency has become a
+				" concern with the addition of sqc/sqf regions.
 				let objs = sort(map(rgns[:],
 					\ '{"name": v:val, "idx": "offs[" . v:key . "]"}')
 					\ + [{'name': orgn, 'idx': "'all'"}],
@@ -1018,7 +1046,7 @@ fu! s:Define_syntax()
 			"let rel = reltime(ts)
 			"let profs['ng-pre'] += str2float(reltimestr(reltime(ts)))
 			" >>>
-			" Create tok/esc templates, which may be bgc-specific <<<
+			" Create tok/esc group list templates, which may be bgc-specific <<<
 			" TODO: Create somewhere in single loop, or perhaps on first encounter.
 			let bgc_idx = index(rgns, 'bgc')
 			" TODO: Embed this logic later, changing only when necessary...
@@ -1041,16 +1069,15 @@ fu! s:Define_syntax()
 				endif
 			endif
 			" >>>
-			" Build templates for rgns, clusters and highlighting <<<
+			" Build templates for syntax rgns, clusters and highlighting <<<
 			"let ts = reltime()
-			" Common name and common stuff...
+			" Create template for group name and other common stuff...
 			let rgn_name_xb = s:Make_exe_builder()
 			call rgn_name_xb.add('Tf' . cui . '_' . join(rgns, "") . '_', 1)
-			" TODO: Consider loopifying this to avoid hybrid arg to add.
+			" TODO: Consider loopifying this.
 			call rgn_name_xb.add_list(map(range(iord + 1), '"offs[" . v:val . "]"'), "_")
 
 			" Create builders for the combination-specific "all" clusters.
-			" Note: Eval loop will need to loop over all builders in cls_xbs.
 			let cls_xbs = []
 			for idx in range(iord + 1)
 				let cls_xb = s:Make_exe_builder()
@@ -1063,18 +1090,18 @@ fu! s:Define_syntax()
 				call cls_xb.add(rgn_name_xb)
 			endfor
 
-			" Create builder used to augment the non-specific "all" cluster.
+			" Create builder used to augment (add=) the non-specific "all" cluster.
 			let cls_all_xb = s:Make_exe_builder()
 			call cls_all_xb.add('syn cluster Tf' . cui . '_all add=', 1)
 			call cls_all_xb.add(rgn_name_xb)
 
-			" Create builder for the common portion of syn region
+			" Create builder for the common portion of syn region.
 			let rgn_cmn_xb = s:Make_exe_builder()
 			call rgn_cmn_xb.add('syn region ', 1)
 			call rgn_cmn_xb.add(rgn_name_xb)
 			" Note: The pattern for start toks involved in the current
 			" combination is needed in both end and start patterns, so go
-			" ahead and cache xb for it now.
+			" ahead and cache builder for it now.
 			let rgn_stoks_atom_xb = s:Make_exe_builder()
 			" FIXME_SQUIGGLE: Is there a simpler way to invoke
 			" s:Offset_to_char? Need to look at the possible ways to invoke
@@ -1101,13 +1128,11 @@ fu! s:Define_syntax()
 			" which is the simplest and most efficient.
 			call rgn_cmn_xb.add(skip . ' end=/[^', 1)
 			call rgn_cmn_xb.add(rgn_stoks_atom_xb)
-			" Finish the branch that excludes start toks in current
-			" combination, and begin branch that includes start toks which are
-			" *not* in current combination, and end toks which are.
+			" Finish the regex branch that excludes start toks in current
+			" combination, and begin branch that includes all start toks...
 			call rgn_cmn_xb.add(']\&[', 1)
 			call rgn_cmn_xb.add(b:txtfmt_re_any_stok_atom, 1)
-			" Region is ended by end tok for any rgn type in current
-			" combination.
+			" ...and only those end toks that appear in the current combination.
 			call rgn_cmn_xb.add(join(map(copy(rgns), 'b:txtfmt_re_{v:val}_etok_atom'), "")
 				\. ']/me=e-' . tok_off . ',he=e-' . tok_off
 				\.' keepend contains=', 1)
@@ -1123,20 +1148,9 @@ fu! s:Define_syntax()
 			" transition to same or higher order)
 			" rgn2 refers to a region begun by an end token (always
 			" transitions to lower order)
-			" FIXME_COMBINATIONS: Remove misleading "cmn" from these 2 var
-			" names. Actually, could just add directly in the builder add() call.
-			let rgn_cmn1 = 
-				\(iord == 0
-				\ ? containedin_def
-				\ : ' contained')
-			let rgn_cmn2 =
-				\' start=/['
-				\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
-				\.']/'
-				\.' contained'
 			let rgn1_xb = s:Make_exe_builder()
 			call rgn1_xb.add(rgn_cmn_xb)
-			call rgn1_xb.add(rgn_cmn1 . ' start=/[', 1)
+			call rgn1_xb.add((iord == 0 ? containedin_def : ' contained') . ' start=/[', 1)
 			" Region can start with the start tok of *any* of the regions in
 			" the current combination. (Re-use cached xb.)
 			call rgn1_xb.add(rgn_stoks_atom_xb)
@@ -1155,9 +1169,10 @@ fu! s:Define_syntax()
 			let rgn2_xb = s:Make_exe_builder()
 			if iord < num_rgn_typs - 1
 				call rgn2_xb.add(rgn_cmn_xb)
-				" TODO: Definitely move the common stuff down here since it
-				" may not even be needed...
-				call rgn2_xb.add(rgn_cmn2, 1)
+				call rgn2_xb.add(' start=/['
+					\.join(map(copy(rest), 'b:txtfmt_re_{v:val}_etok_atom'), "")
+					\.']/'
+					\.' contained', 1)
 			endif
 			" >>>
 			" Process templates for current permutation of rgn types for current 'order' <<<
@@ -1173,23 +1188,12 @@ fu! s:Define_syntax()
 			let cls_all_estr = cls_all_xb.get_estr()
 			let rgn1_estr = rgn1_xb.get_estr()
 			let hi_estr = hi_xb.get_estr()
-			" FIXME_SQUIGGLE: This is a short-term hack!!!!!!!
-			if hi_estr =~ 'sp='
-				" Make sure there's a gui= containing undercurl
-				if hi_estr !~ '\v<(gui|cterm)\='
-					let hi_estr .= " . ' gui=undercurl cterm=undercurl'"
-				else
-					let hi_estr = substitute(hi_estr,
-						\ '\v%(gui|cterm)\=', '&undercurl,', 'g')
-				endif
-			endif
-			" END SHORT-TERM HACK!!!!!
 			let rgn2_estr = rgn2_xb.get_estr()
 			"let profs['cmn'] += str2float(reltimestr(reltime(ts)))
 			"let ts = reltime()
 			" Loop over all permutations of rgn indices <<<
-			" Note: jdxs[] represents rgn indices for all positions involved
-			" in current 'order'.
+			" Note: jdxs[] represents (logical) rgn indices for all positions
+			" involved in current 'order'.
 			let jdxs = repeat([1], iord + 1)
 			" Initialize offs[] with first used non-default index for each rgn
 			" type (1 for fmt, first used color number for color rgns).
@@ -1197,7 +1201,10 @@ fu! s:Define_syntax()
 			" checking name.
 			let offs = map(range(iord + 1), 'rgn_objs[v:val].name == "fmt"'
 				\.' ? 1 : rgn_objs[v:val].offs[0]')
-			" Count down
+			" The following nested while implements a ripple up-counter whose
+			" bit positions correspond to rgn types in the current combination.
+			" Outside the nested while, 'i' is not really used except for loop
+			" termination: could be initialized to either 0 or iord.
 			let i = iord
 			" Evaluate templates in loop over all permutations of indices for
 			" the current permutation of rgn types: e.g., fmt1-clr1,
@@ -1243,6 +1250,9 @@ fu! s:Define_syntax()
 				" group name may not correspond to the 1-based, contiguous
 				" ranges in jdxs[]; the mapping of conceptual to real offsets
 				" is maintained in offs[].
+				" Question: Do we even need the offs list in rgn_obs for fmt???
+				" Note: reset i to the rightmost rgn position since the purpose
+				" of the following loop is to increment the ripple counter by 1.
 				let i = iord
 				while i >= 0
 					let jdxs[i] += 1
@@ -1258,6 +1268,8 @@ fu! s:Define_syntax()
 						endif
 					else
 						" j hasn't rolled over
+						" FIXME_SQUIGGLE: Figure out best way to handle the
+						" discontinuity in fmt range!!!
 						if rgn_objs[i].name == "fmt"
 							let offs[i] += 1
 						else
