@@ -1,7 +1,7 @@
 #! /bin/bash
 
 declare OUTDIR=${1:-./}
-declare -A tfbrs=([master]=master [li_rework]=leading-indent-rework)
+declare -A tfbrs=([master]=master [special]=colored-undercurl)
 declare -A exes=([invloop]=~/src/vim/src/vim-invloop [master]=~/src/vim/src/vim)
 declare -a lis=(li=none li=smart)
 declare -a escs=(esc=none esc=bslash)
@@ -9,7 +9,7 @@ declare -a nesteds=(nonested nested)
 declare cmd1= cmd2=
 cmd1+='+set nomore rdt=100000|let txtfmtAllowxl=1'
 # Leave dq string open since options will be inserted.
-cmd1+='|let txtfmtMapwarn=""|exe "MakeTestPage rng=0xe000xl'
+cmd1+='|let txtfmtMapwarn=""|exe "MakeTestPage rng=0xe000xu'
 # Scroll 3 screens to get into the thick of the costly regions.
 cmd2+='"|exe "normal 3\<c-f>"'
 # In case there's a HitEnter prompt that's not prevented by 'nomore'...

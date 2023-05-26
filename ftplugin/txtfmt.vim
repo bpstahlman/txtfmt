@@ -2494,14 +2494,25 @@ endfu
 " >>>
 " Function: s:Get_at_offset() <<<
 " Return position at signed (character) offset from input position.
-" TODO: Add detailed documentation...
-fu! s:Get_at_offset(offset, pos = [], what = '')
+" Inputs:
+" offset    signed character offset from input position
+" pos       (optional) position as [line, col], defaults to current pos
+" what      (optional) what to return, defaults to both position and char
+"           'pos'    => [line, col]
+"           'char'   => char
+"           <empty>  => [[line, col], char] 
+" TODO: pos and what initially used explicit default arguments, but I'm still
+" trying to allow versions as old as Vim 7.4. Consider requiring Vim8 at
+" least.
+fu! s:Get_at_offset(offset, pos, what)
 	let off_inc = a:offset < 0 ? 1 : -1
-	if !empty(a:pos) && !s:Is_pos_valid(a:pos)
+	let pos = a:0 >= 1 ? a:1 : []
+	let what = a:0 >= 2 ? a:2 : ''
+	if !empty(pos) && !s:Is_pos_valid(pos)
 		" Invalid char position! Return something empty().
 		return []
 	endif
-	let [line, col] = empty(a:pos) ? getpos('.')[1:2] : a:pos
+	let [line, col] = empty(pos) ? getpos('.')[1:2] : pos
 	let off = a:offset
 	let fwd = a:offset > 0
 	let ltext = getline(line)
@@ -2552,18 +2563,18 @@ fu! s:Get_at_offset(offset, pos = [], what = '')
 					let byte = idx_next
 					let sz = idx - idx_next
 				endif
-				if a:what == 'pos'
+				if what == 'pos'
 					return [line, byte + 1]
 				else
 					let ch = strpart(ltext, byte, sz)
-					if empty(a:what)
+					if empty(what)
 						return [[line, byte + 1], ch]
-					elseif a:what == 'char'
+					elseif what == 'char'
 						return ch
 					endif
 				endif
 				" Shouldn't get here!
-				throw "Internal error: Invalid `what` value passed to s:Get_at_offset: " . a:what
+				throw "Internal error: Invalid `what` value passed to s:Get_at_offset: " . what
 			endif
 			" Record step taken.
 			let off += off_inc

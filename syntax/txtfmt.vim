@@ -733,13 +733,15 @@ fu! s:Define_syntax()
 	exe 'syn match Tf_tok /['.b:txtfmt_re_any_tok_atom.']/'
 		\ . (b:txtfmt_cfg_conceal ? '' : ' containedin=ALLBUT,@Tf'.cui.'_tok')
 		\ . conceal.transparent
-		\ . ' contains=Tf_li_tok'
+		\ . (b:txtfmt_cfg_leadingindent != 'none' ? ' contains=Tf_li_tok' : '')
 	" Note: When 'conceal' is set, transparent and conceal attributes obviate
 	" need to define highlighting for Tf_tok group, but NOT for Tf_li_tok.
 	" Rationale: The purpose of Tf_li_tok is to *hide* highlighting of
 	" containing group (e.g., group with bg color, underline, etc.), not allow
 	" it to shine through.
-	hi link Tf_li_tok Tf_conceal
+	if b:txtfmt_cfg_leadingindent != 'none'
+		hi link Tf_li_tok Tf_conceal
+	endif
 	if !b:txtfmt_cfg_conceal
 		hi link Tf_tok Tf_conceal
 		" Create bgc-specific tok concealment groups and associated
@@ -770,7 +772,8 @@ fu! s:Define_syntax()
 		while pi <= (b:txtfmt_cfg_bgcolor ? b:txtfmt_cfg_numbgcolors : 0)
 			let i = b:txtfmt_cfg_bgcolor{pi}
 			exe 'syn match Tf'.cui.'_tok_'.i.' /['.b:txtfmt_re_any_tok_atom
-				\.']/ contained contains=Tf_li_tok'.conceal
+				\.']/ contained'
+				\.(b:txtfmt_cfg_leadingindent != 'none' ? ' contains=Tf_li_tok' : '').conceal
 			" FIXME_SQUIGGLE: Are any changes required by addition of colored
 			" undercurl? The colored_undercurl branch didn't do anything for
 			" sqc, but need to analyze after fixing merge conflicts...

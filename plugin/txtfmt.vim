@@ -1873,10 +1873,10 @@ fu! s:Define_attrib_mask_vars(scope, var, attribs, zero_val, sep)
 			endif
 			" Advance to next most significant bit.
 			let bi += 1
-			let bits /= 2
+			let bits = bits / 2
 		endwhile
 		" Join the components.
-		let b:{a:var}{i} = attribs->join(a:sep)
+		let b:{a:var}{i} = join(attribs, a:sep)
 	endfor
 endfu
 " >>>
@@ -2008,6 +2008,9 @@ fu! s:Define_fmtclr_regexes()
 	let bgc = b:txtfmt_cfg_bgcolor && b:txtfmt_cfg_numbgcolors > 0
 	let sqc = b:txtfmt_cfg_sqcolor && b:txtfmt_cfg_numsqcolors > 0
 	let clr = b:txtfmt_cfg_numfgcolors > 0
+	" Also cache whether the rgn type is disabled explicitly (as opposed to
+	" implicitly disabled via zero colormask).
+	let [bgc_enabled, sqc_enabled, clr_enabled] = [b:txtfmt_cfg_bgcolor, b:txtfmt_cfg_sqcolor, 1]
 
 	for rgn in TxtfmtCommon_Get_active_color_rgn_abbrevs()
 		" Note: Handle first active color here, outside the loop. To handle it
@@ -2066,65 +2069,98 @@ fu! s:Define_fmtclr_regexes()
 		" highlighting (and a significant one is doubtful in my opinion), it
 		" would depend upon the specific color masks, which seems inconsistent
 		" and therefore inappropriate.
-		let b:txtfmt_re_{rgn.long}_tok_atom =
-			\ nr2char(b:txtfmt_{rgn.long}_first_tok)
-			\ . b:txtfmt_re_{rgn.long}_stok_atom
-		let b:txtfmt_re_{rgn.long}_etok_atom =
-			\ nr2char(b:txtfmt_{rgn.long}_first_tok)
+		" Upper region name will be used to define regexes in which inactive
+		" colors are treated the same as active ones (but only if the rgn type
+		" itself is enabled): e.g., txtfmt_re_CLR_stok_atom includes start
+		" tokens for all fg colors, even those disabled by colormask.
+		let upperRgnName = toupper(rgn.long)
+		" Design Decision: Differentiate between all colors disable (zero
+		" colormask) and color rgn type disable.
+		" TODO: Decide whether this is best approach...
+		if !{rgn.long}_enabled
+			let b:txtfmt_re_{rgn.long}_tok_atom = ''
+			let b:txtfmt_re_{rgn.long}_etok_atom = ''
+			let b:txtfmt_re_{upperRgnName}_tok_atom = ''
+			let b:txtfmt_re_{upperRgnName}_stok_atom = ''
+			let b:txtfmt_re_{upperRgnName}_etok_atom = ''
+		else
+			" Note: Because we differentiate between zero colormask and disabled
+			" rgn type, it's possible that *_stok_atom will be empty here.
+			let b:txtfmt_re_{rgn.long}_tok_atom = nr2char(b:txtfmt_{rgn.long}_first_tok) . b:txtfmt_re_{rgn.long}_stok_atom
+			let b:txtfmt_re_{rgn.long}_etok_atom = nr2char(b:txtfmt_{rgn.long}_first_tok)
+			let b:txtfmt_re_{upperRgnName}_tok_atom = nr2char(b:txtfmt_{rgn.long}_first_tok).'-'.nr2char(b:txtfmt_{rgn.long}_last_tok)
+			let b:txtfmt_re_{upperRgnName}_stok_atom = nr2char(b:txtfmt_{rgn.long}_first_tok + 1).'-'.nr2char(b:txtfmt_{rgn.long}_last_tok)
+			let b:txtfmt_re_{upperRgnName}_etok_atom = nr2char(b:txtfmt_{rgn.long}_first_tok)
+		endif
 	endfor
 	" Format region tokens
 	let b:txtfmt_re_fmt_tok_atom = nr2char(b:txtfmt_fmt_first_tok).'-'.nr2char(b:txtfmt_fmt_last_tok)
-				\ . nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok)
+				\ . (sqc ? nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
 	let b:txtfmt_re_fmt_stok_atom = nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
-				\ . nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) 
+				\ . (sqc ? nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
 	let b:txtfmt_re_fmt_etok_atom = nr2char(b:txtfmt_fmt_first_tok)
-	" FIXME_SQUIGGLE: Is this one needed?
-	let b:txtfmt_re_sqf_etok_atom = nr2char(b:txtfmt_sqf_first_tok)
-	" Color regions that include inactive colors
-	" FIXME_SQUIGGLE: No reason not to parameterize the following.
-	if clr
-		let b:txtfmt_re_CLR_tok_atom = nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok)
-		let b:txtfmt_re_CLR_stok_atom = nr2char(b:txtfmt_clr_first_tok + 1).'-'.nr2char(b:txtfmt_clr_last_tok)
-		let b:txtfmt_re_CLR_etok_atom = nr2char(b:txtfmt_clr_first_tok)
-	endif
-	if bgc
-		let b:txtfmt_re_BGC_tok_atom = nr2char(b:txtfmt_bgc_first_tok).'-'.nr2char(b:txtfmt_bgc_last_tok)
-		let b:txtfmt_re_BGC_stok_atom = nr2char(b:txtfmt_bgc_first_tok + 1).'-'.nr2char(b:txtfmt_bgc_last_tok)
-		let b:txtfmt_re_BGC_etok_atom = nr2char(b:txtfmt_bgc_first_tok)
-	endif
-	if sqc
-		let b:txtfmt_re_SQC_tok_atom = nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok)
-		let b:txtfmt_re_SQC_stok_atom = nr2char(b:txtfmt_sqc_first_tok + 1).'-'.nr2char(b:txtfmt_sqc_last_tok)
-		let b:txtfmt_re_SQC_etok_atom = nr2char(b:txtfmt_sqc_first_tok)
-	endif
 	" Combined regions
+	" Note: Atoms for disabled regions are empty at this point.
 	let b:txtfmt_re_any_tok_atom =
-				\(clr ? b:txtfmt_re_clr_tok_atom : '')
-				\.b:txtfmt_re_fmt_tok_atom
-				\.(bgc ? b:txtfmt_re_bgc_tok_atom : '')
-				\.(sqc ? b:txtfmt_re_sqc_tok_atom : '')
-	" TODO: Perhaps get rid of dependence upon b:txtfmt_clr_last_tok?
-	" TODO: Refactor to use newly-created CLR and BGC atoms
+				\   get(b:, 'txtfmt_re_clr_tok_atom', '')
+				\ . b:txtfmt_re_fmt_tok_atom
+				\ . get(b:, 'txtfmt_re_bgc_tok_atom', '')
+				\ . get(b:, 'txtfmt_re_sqc_tok_atom', '')
 	let b:txtfmt_re_ANY_tok_atom =
-				\(clr ? nr2char(b:txtfmt_clr_first_tok).'-'.nr2char(b:txtfmt_clr_last_tok) : '')
-				\.b:txtfmt_re_fmt_tok_atom
-				\.(sqc ? nr2char(b:txtfmt_sqf_first_tok).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
-				\.(bgc ? nr2char(b:txtfmt_bgc_first_tok).'-'.nr2char(b:txtfmt_bgc_last_tok) : '')
-				\.(sqc ? nr2char(b:txtfmt_sqc_first_tok).'-'.nr2char(b:txtfmt_sqc_last_tok) : '')
+				\   get(b:, 'txtfmt_re_CLR_tok_atom', '')
+				\ . b:txtfmt_re_fmt_tok_atom
+				\ . get(b:, 'txtfmt_re_BGC_tok_atom', '')
+				\ . get(b:, 'txtfmt_re_SQC_tok_atom', '')
 	let b:txtfmt_re_any_stok_atom =
-				\(clr ? b:txtfmt_re_clr_stok_atom : '')
-				\.b:txtfmt_re_fmt_stok_atom
-				\.nr2char(b:txtfmt_fmt_first_tok + 1).'-'.nr2char(b:txtfmt_fmt_last_tok)
-				\.(sqc ? nr2char(b:txtfmt_sqf_first_tok + 1).'-'.nr2char(b:txtfmt_sqf_last_tok) : '')
-				\.(bgc ? b:txtfmt_re_bgc_stok_atom : '')
-				\.(sqc ? b:txtfmt_re_sqc_stok_atom : '')
+				\   get(b:, 'txtfmt_re_clr_stok_atom', '')
+				\ . b:txtfmt_re_fmt_stok_atom
+				\ . get(b:, 'txtfmt_re_bgc_stok_atom', '')
+				\ . get(b:, 'txtfmt_re_sqc_stok_atom', '')
 	let b:txtfmt_re_any_etok_atom =
-				\(clr ? b:txtfmt_re_clr_etok_atom : '')
-				\.b:txtfmt_re_fmt_etok_atom
-				\.(sqc ? b:txtfmt_re_sqf_etok_atom : '')
-				\.(bgc ? b:txtfmt_re_bgc_etok_atom : '')
-				\.(sqc ? b:txtfmt_re_sqc_etok_atom : '')
+				\   get(b:, 'txtfmt_re_clr_etok_atom', '')
+				\ . b:txtfmt_re_fmt_etok_atom
+				\ . get(b:, 'txtfmt_re_bgc_etok_atom', '')
+				\ . get(b:, 'txtfmt_re_sqc_etok_atom', '')
 
+	" This helper function accepts an optional lambda (defaults to identity
+	" transform), which it uses to transform the various buf-local fmt/clr
+	" regex atoms into non-atomic forms which take tok escaping into account.
+	fu! s:Define_nonatomic_fmtclr_regexes(...)
+		" Loop over all region types, including 'any' and the virtual
+		" (uppercase) types that include inactive colors.
+		for rgn in ['clr', 'CLR', 'bgc', 'BGC', 'sqc', 'SQC', 'fmt', 'any']
+			" Note: Could use 'closure' property on function to examine the
+			" rgn-specific enable flags, but it's not available in Vim 7.4
+			" (which I'm still targeting). At any rate, the atom emptiness test
+			" should provide the same information.
+			if !exists('b:txtfmt_re_' . rgn . '_tok_atom') || empty(b:txtfmt_re_{rgn}_tok_atom)
+				" Skip disabled region type.
+				continue
+			endif
+			let tok = '[' . b:txtfmt_re_{rgn}_tok_atom . ']'
+			let stok = '[' . b:txtfmt_re_{rgn}_stok_atom . ']'
+			if a:0
+				" Use supplied transform.
+				let b:txtfmt_re_{rgn}_tok = a:fn(tok)
+				let b:txtfmt_re_{rgn}_stok = a:fn(stok)
+				let b:txtfmt_re_{rgn}_etok = a:fn(b:txtfmt_re_{rgn}_etok_atom)
+				let b:txtfmt_re_{rgn}_ntok = '\%(' . b:txtfmt_re_{rgn}_tok . '\)\@!.'
+			else
+				" Use identity transform.
+				let b:txtfmt_re_{rgn}_tok = tok
+				let b:txtfmt_re_{rgn}_stok = stok
+				let b:txtfmt_re_{rgn}_etok = b:txtfmt_re_{rgn}_etok_atom
+				" Identity transform means non-atomic is same as atomic; hence,
+				" we can use a negated character class in lieu of negative
+				" lookahead.
+				let b:txtfmt_re_{rgn}_ntok = '[^' . b:txtfmt_re_{rgn}_tok_atom . ']'
+			endif
+		endfor
+		" ANY is a special case in that we need only the *ANY_tok form.
+		let b:txtfmt_re_ANY_etok = a:0 ? a:fn('[' . b:txtfmt_re_ANY_tok_atom . ']') : b:txtfmt_re_ANY_tok_atom
+	endfu
+
+	" Take token escaping mode into account.
 	if b:txtfmt_cfg_escape == 'bslash'
 		" The following pattern is a zero-width look-behind assertion, which
 		" matches only at a non-backslash-escaped position.
@@ -2134,63 +2170,8 @@ fu! s:Define_fmtclr_regexes()
 		let noesc = '\%(\%(^\|[^\\]\)\%(\\\\\)*\)\@<='
 		" Make this persistent, as it's used elsewhere...
 		let b:re_no_bslash_esc = noesc
-		" FIXME_SQUIGGLE: No reason not to parameterize the following.
-		" clr
-		if clr
-			" Active clr only
-			let b:txtfmt_re_clr_tok = noesc.'['.b:txtfmt_re_clr_tok_atom.']'
-			let b:txtfmt_re_clr_stok = noesc.'['.b:txtfmt_re_clr_stok_atom.']'
-			let b:txtfmt_re_clr_etok = noesc.b:txtfmt_re_clr_etok_atom
-			let b:txtfmt_re_clr_ntok = '\%('.b:txtfmt_re_clr_tok.'\)\@!.'
-			" Active and inactive clr
-			let b:txtfmt_re_CLR_tok = noesc.'['.b:txtfmt_re_CLR_tok_atom.']'
-			let b:txtfmt_re_CLR_stok = noesc.'['.b:txtfmt_re_CLR_stok_atom.']'
-			let b:txtfmt_re_CLR_etok = noesc.b:txtfmt_re_CLR_etok_atom
-			let b:txtfmt_re_CLR_ntok = '\%('.b:txtfmt_re_CLR_tok.'\)\@!.'
-		endif
-		" bgc
-		if bgc
-			" Active bgc only
-			let b:txtfmt_re_bgc_tok = noesc.'['.b:txtfmt_re_bgc_tok_atom.']'
-			let b:txtfmt_re_bgc_stok = noesc.'['.b:txtfmt_re_bgc_stok_atom.']'
-			let b:txtfmt_re_bgc_etok = noesc.b:txtfmt_re_bgc_etok_atom
-			let b:txtfmt_re_bgc_ntok = '\%('.b:txtfmt_re_bgc_tok.'\)\@!.'
-			" Active and inactive bgc
-			let b:txtfmt_re_BGC_tok = noesc.'['.b:txtfmt_re_BGC_tok_atom.']'
-			let b:txtfmt_re_BGC_stok = noesc.'['.b:txtfmt_re_BGC_stok_atom.']'
-			let b:txtfmt_re_BGC_etok = noesc.b:txtfmt_re_BGC_etok_atom
-			let b:txtfmt_re_BGC_ntok = '\%('.b:txtfmt_re_BGC_tok.'\)\@!.'
-		endif
-		" sqc
-		if sqc
-			" Active sqc only
-			let b:txtfmt_re_sqc_tok = noesc.'['.b:txtfmt_re_sqc_tok_atom.']'
-			let b:txtfmt_re_sqc_stok = noesc.'['.b:txtfmt_re_sqc_stok_atom.']'
-			let b:txtfmt_re_sqc_etok = noesc.b:txtfmt_re_sqc_etok_atom
-			let b:txtfmt_re_sqc_ntok = '\%('.b:txtfmt_re_sqc_tok.'\)\@!.'
-			" Active and inactive sqc
-			let b:txtfmt_re_SQC_tok = noesc.'['.b:txtfmt_re_SQC_tok_atom.']'
-			let b:txtfmt_re_SQC_stok = noesc.'['.b:txtfmt_re_SQC_stok_atom.']'
-			let b:txtfmt_re_SQC_etok = noesc.b:txtfmt_re_SQC_etok_atom
-			let b:txtfmt_re_SQC_ntok = '\%('.b:txtfmt_re_SQC_tok.'\)\@!.'
-		endif
-		" fmt
-		let b:txtfmt_re_fmt_tok = noesc.'['.b:txtfmt_re_fmt_tok_atom.']'
-		let b:txtfmt_re_fmt_stok = noesc.'['.b:txtfmt_re_fmt_stok_atom.']'
-		let b:txtfmt_re_fmt_etok = noesc.b:txtfmt_re_fmt_etok_atom
-		let b:txtfmt_re_fmt_ntok = '\%('.b:txtfmt_re_fmt_tok.'\)\@!.'
-		" clr/bgc/sqc/fmt combined
-		let b:txtfmt_re_any_tok = noesc.'['.b:txtfmt_re_any_tok_atom.']'
-		let b:txtfmt_re_ANY_tok = noesc.'['.b:txtfmt_re_ANY_tok_atom.']'
-		let b:txtfmt_re_any_stok = noesc.'['.b:txtfmt_re_any_stok_atom.']'
-		let b:txtfmt_re_any_etok =
-					\ noesc.'['
-						\ . (clr ? b:txtfmt_re_clr_etok_atom : '')
-						\ . (bgc ? b:txtfmt_re_bgc_etok_atom : '')
-						\ . (sqc ? b:txtfmt_re_sqc_etok_atom : '')
-						\ . b:txtfmt_re_fmt_etok_atom
-					\ . ']'
-		let b:txtfmt_re_any_ntok = '\%('.b:txtfmt_re_any_tok.'\)\@!.'
+
+		call s:Define_nonatomic_fmtclr_regexes({v -> noesc . v})
 	elseif b:txtfmt_cfg_escape == 'self'
 		" The following pattern serves as the template for finding tokens that
 		" are neither escaping nor escaped.
@@ -2206,128 +2187,11 @@ fu! s:Define_fmtclr_regexes()
 		let g:tmp = tmpl
 		" Make this persistent, as it's used elsewhere...
 		let b:re_no_self_esc = tmpl
-		" FIXME_SQUIGGLE: No reason not to parameterize the following.
-		" clr
-		if clr
-			" Active clr only
-			let b:txtfmt_re_clr_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_clr_tok_atom.']', '')
-			let b:txtfmt_re_clr_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_clr_stok_atom.']', '')
-			let b:txtfmt_re_clr_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_clr_etok_atom, '')
-			let b:txtfmt_re_clr_ntok = '\%('.b:txtfmt_re_clr_tok.'\)\@!.'
-			" Active and inactive clr
-			let b:txtfmt_re_CLR_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_CLR_tok_atom.']', '')
-			let b:txtfmt_re_CLR_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_CLR_stok_atom.']', '')
-			let b:txtfmt_re_CLR_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_CLR_etok_atom, '')
-			let b:txtfmt_re_CLR_ntok = '\%('.b:txtfmt_re_CLR_tok.'\)\@!.'
-		endif
-		" bgc
-		if bgc
-			" Active bgc only
-			let b:txtfmt_re_bgc_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_bgc_tok_atom.']', '')
-			let b:txtfmt_re_bgc_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_bgc_stok_atom.']', '')
-			let b:txtfmt_re_bgc_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_bgc_etok_atom, '')
-			let b:txtfmt_re_bgc_ntok = '\%('.b:txtfmt_re_bgc_tok.'\)\@!.'
-			" Active and inactive bgc
-			let b:txtfmt_re_BGC_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_BGC_tok_atom.']', '')
-			let b:txtfmt_re_BGC_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_BGC_stok_atom.']', '')
-			let b:txtfmt_re_BGC_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_BGC_etok_atom, '')
-			let b:txtfmt_re_BGC_ntok = '\%('.b:txtfmt_re_BGC_tok.'\)\@!.'
-		endif
-		" sqc
-		if sqc
-			" Active sqc only
-			let b:txtfmt_re_sqc_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_sqc_tok_atom.']', '')
-			let b:txtfmt_re_sqc_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_sqc_stok_atom.']', '')
-			let b:txtfmt_re_sqc_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_sqc_etok_atom, '')
-			let b:txtfmt_re_sqc_ntok = '\%('.b:txtfmt_re_sqc_tok.'\)\@!.'
-			" Active and inactive sqc
-			let b:txtfmt_re_SQC_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_SQC_tok_atom.']', '')
-			let b:txtfmt_re_SQC_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_SQC_stok_atom.']', '')
-			let b:txtfmt_re_SQC_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_SQC_etok_atom, '')
-			let b:txtfmt_re_SQC_ntok = '\%('.b:txtfmt_re_SQC_tok.'\)\@!.'
-		endif
-		" fmt
-		let b:txtfmt_re_fmt_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_fmt_tok_atom.']', '')
-		let b:txtfmt_re_fmt_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_fmt_stok_atom.']', '')
-		let b:txtfmt_re_fmt_etok = substitute(tmpl, 'placeholder', b:txtfmt_re_fmt_etok_atom, '')
-		let b:txtfmt_re_fmt_ntok = '\%('.b:txtfmt_re_fmt_tok.'\)\@!.'
-		" clr/bgc/fmt combined
-		let b:txtfmt_re_any_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_any_tok_atom.']', '')
-		let b:txtfmt_re_ANY_tok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_ANY_tok_atom.']', '')
-		let b:txtfmt_re_any_stok = substitute(tmpl, 'placeholder', '['.b:txtfmt_re_any_stok_atom.']', '')
-		let b:txtfmt_re_any_etok = substitute(tmpl, 'placeholder',
-					\'['
-					\.(clr ? nr2char(b:txtfmt_clr_first_tok) : '')
-					\.(bgc ? nr2char(b:txtfmt_bgc_first_tok) : '')
-					\.(sqc ? nr2char(b:txtfmt_sqc_first_tok) : '')
-					\.nr2char(b:txtfmt_fmt_first_tok)
-					\.']', '')
-		let b:txtfmt_re_any_ntok = '\%('.b:txtfmt_re_any_tok.'\)\@!.'
+
+		call s:Define_nonatomic_fmtclr_regexes({v -> substitute(tmpl, 'placeholder', v)})
 	else
 		" No escaping of tokens
-		" FIXME_SQUIGGLE: No reason not to parameterize the following.
-		" clr
-		if clr
-			" Active clr only
-			let b:txtfmt_re_clr_tok = '['.b:txtfmt_re_clr_tok_atom.']'
-			let b:txtfmt_re_clr_stok = '['.b:txtfmt_re_clr_stok_atom.']'
-			let b:txtfmt_re_clr_etok = b:txtfmt_re_clr_etok_atom
-			let b:txtfmt_re_clr_ntok = '[^'.b:txtfmt_re_clr_tok_atom.']'
-			" Active and inactive clr
-			let b:txtfmt_re_CLR_tok = '['.b:txtfmt_re_CLR_tok_atom.']'
-			let b:txtfmt_re_CLR_stok = '['.b:txtfmt_re_CLR_stok_atom.']'
-			let b:txtfmt_re_CLR_etok = b:txtfmt_re_CLR_etok_atom
-			let b:txtfmt_re_CLR_ntok = '[^'.b:txtfmt_re_CLR_tok_atom.']'
-		endif
-		" bgc
-		if bgc
-			" Active bgc only
-			let b:txtfmt_re_bgc_tok = '['.b:txtfmt_re_bgc_tok_atom.']'
-			let b:txtfmt_re_bgc_stok = '['.b:txtfmt_re_bgc_stok_atom.']'
-			let b:txtfmt_re_bgc_etok = b:txtfmt_re_bgc_etok_atom
-			let b:txtfmt_re_bgc_ntok = '[^'.b:txtfmt_re_bgc_tok_atom.']'
-			" Active and inactive bgc
-			let b:txtfmt_re_BGC_tok = '['.b:txtfmt_re_BGC_tok_atom.']'
-			let b:txtfmt_re_BGC_stok = '['.b:txtfmt_re_BGC_stok_atom.']'
-			let b:txtfmt_re_BGC_etok = b:txtfmt_re_BGC_etok_atom
-			let b:txtfmt_re_BGC_ntok = '[^'.b:txtfmt_re_BGC_tok_atom.']'
-		endif
-		" sqc
-		if sqc
-			" Active sqc only
-			let b:txtfmt_re_sqc_tok = '['.b:txtfmt_re_sqc_tok_atom.']'
-			let b:txtfmt_re_sqc_stok = '['.b:txtfmt_re_sqc_stok_atom.']'
-			let b:txtfmt_re_sqc_etok = b:txtfmt_re_sqc_etok_atom
-			let b:txtfmt_re_sqc_ntok = '[^'.b:txtfmt_re_sqc_tok_atom.']'
-			" Active and inactive sqc
-			let b:txtfmt_re_SQC_tok = '['.b:txtfmt_re_SQC_tok_atom.']'
-			let b:txtfmt_re_SQC_stok = '['.b:txtfmt_re_SQC_stok_atom.']'
-			let b:txtfmt_re_SQC_etok = b:txtfmt_re_SQC_etok_atom
-			let b:txtfmt_re_SQC_ntok = '[^'.b:txtfmt_re_SQC_tok_atom.']'
-		endif
-		" fmt
-		let b:txtfmt_re_fmt_tok = '['.b:txtfmt_re_fmt_tok_atom.']'
-		let b:txtfmt_re_fmt_stok = '['.b:txtfmt_re_fmt_stok_atom.']'
-		let b:txtfmt_re_fmt_etok = b:txtfmt_re_fmt_etok_atom
-		let b:txtfmt_re_fmt_ntok = '[^'.b:txtfmt_re_fmt_tok_atom.']'
-		" clr/bgc/fmt combined
-		let b:txtfmt_re_any_tok = '['.b:txtfmt_re_any_tok_atom.']'
-		let b:txtfmt_re_ANY_tok = '['.b:txtfmt_re_ANY_tok_atom.']'
-		let b:txtfmt_re_any_stok = '['.b:txtfmt_re_any_stok_atom.']'
-		let b:txtfmt_re_any_etok =
-					\'['
-					\.(clr ? b:txtfmt_re_clr_etok_atom : '')
-					\.(bgc ? b:txtfmt_re_bgc_etok_atom : '')
-					\.(sqc ? b:txtfmt_re_sqc_etok_atom : '')
-					\.b:txtfmt_re_fmt_etok_atom
-					\.']'
-		let b:txtfmt_re_any_ntok =
-					\'[^'
-					\.(clr ? b:txtfmt_re_clr_tok_atom : '')
-					\.(bgc ? b:txtfmt_re_bgc_tok_atom : '')
-					\.(sqc ? b:txtfmt_re_sqc_tok_atom : '')
-					\.b:txtfmt_re_fmt_tok_atom
-					\.']'
+		call s:Define_nonatomic_fmtclr_regexes()
 	endif
 endfu
 " >>>
